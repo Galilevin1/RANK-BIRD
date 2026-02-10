@@ -1,0 +1,27 @@
+# ------------------
+# Environments
+# ------------------
+.venv/
+.env
+
+# ------------------
+# Data
+# ------------------
+data/
+raw_data/
+processed_data/
+
+# ------------------
+# Python
+# ------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ------------------
+# Editors / OS
+# ------------------
+.vscode/
+.DS_Store
+Thumbs.db
