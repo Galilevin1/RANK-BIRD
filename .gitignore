@@ -26,3 +26,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .idea/
+
+# ------------------
+# Experiment results (generated files)
+# ------------------
+experiments/results/*.csv
+
