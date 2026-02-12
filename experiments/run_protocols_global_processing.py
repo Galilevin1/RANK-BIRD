@@ -35,7 +35,7 @@ def _run_protocols_on_group(microbiome_dfs, target_dfs, dataset_names, phenotype
 def _run_global_for_dtype(phenotypes,
                           apply_normalization=False,
                           apply_decompose=False,
-                          min_samples_per_dataset=550,  # 550
+                          min_samples_per_dataset=550, 
                           stability_percentile_local=0.3,
                           stability_percentile_global=0.5,
                           min_dataset_support=5,
@@ -116,7 +116,7 @@ def run_protocol_benchmark_global_preprocessing(
     phenotypes: list,
     apply_normalization: bool = False,
     apply_decompose: bool = False,
-    min_samples_per_dataset=550,  # 550
+    min_samples_per_dataset=550,
     stability_percentile_local=0.3,
     stability_percentile_global=0.5,
     min_dataset_support=5,
@@ -137,7 +137,7 @@ def run_protocol_benchmark_global_preprocessing(
             phenotype_list,
             apply_normalization=apply_normalization,
             apply_decompose=apply_decompose,
-            min_samples_per_dataset=min_samples_per_dataset,  # 550
+            min_samples_per_dataset=min_samples_per_dataset, 
             stability_percentile_local=stability_percentile_local,
             stability_percentile_global=stability_percentile_global,
             min_dataset_support=min_dataset_support,
