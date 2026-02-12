@@ -1,5 +1,5 @@
 import pandas as pd
-import matplotlib as plt
+import matplotlib.pyplot as plt
 import seaborn as sns
 
 def plot_protocol_heatmap(summary_df: pd.DataFrame):
@@ -10,7 +10,7 @@ def plot_protocol_heatmap(summary_df: pd.DataFrame):
         values="mean_auc"
     )
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(18, 6))
 
     sns.heatmap(
         pivot,
@@ -23,6 +23,9 @@ def plot_protocol_heatmap(summary_df: pd.DataFrame):
         annot_kws={"size": 18},
         ax=ax
     )
+
+    ax.set_aspect("auto")
+
 
     # Axis labels
     ax.set_ylabel("Phenotype", fontsize=20, fontweight="bold")

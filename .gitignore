@@ -30,5 +30,6 @@ Thumbs.db
 # ------------------
 # Experiment results (generated files)
 # ------------------
-experiments/results/*.csv
-
+experiments/results/
+experiments/results_*/
+figures_out/

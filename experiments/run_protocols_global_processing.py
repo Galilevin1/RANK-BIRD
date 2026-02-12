@@ -7,7 +7,7 @@ import seaborn as sns
 from scipy.stats import sem, mannwhitneyu
 from collections import defaultdict
 from src.rankbird.normalization.pipeline import apply_normalization_pipeline #### Change after package
-from src.rankbird.representation.multi_datasets_SPDR import bias_SPDR   ### Change after package
+from src.rankbird.representation.multi_datasets_SPDR import apply_bias_SPDR   ### Change after package
 from evaluation.data_loading import load_microbiome_datasets_with_targets
 from evaluation.learning_protocols import lodo_protocol, internal_validation_protocol, within_dataset_protocol
 
@@ -39,7 +39,9 @@ def _run_global_for_dtype(phenotypes,
                           stability_percentile_local=0.3,
                           stability_percentile_global=0.5,
                           min_dataset_support=5,
-                          z_thresh=3.0
+                          z_thresh=3.0,
+                          decompose_method='PCA',
+                          decompose_rank=30
                           ):
 
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -83,7 +85,7 @@ def _run_global_for_dtype(phenotypes,
         )
 
     if apply_decompose:
-        all_microbiome, eta, beta = bias_SPDR(all_microbiome, 'PCA', None)
+        all_microbiome, eta, beta = apply_bias_SPDR(all_microbiome, 'PCA', rank=decompose_rank)
 
     # ----------------------------------
     # 3. Split BACK by phenotype
@@ -100,16 +102,17 @@ def _run_global_for_dtype(phenotypes,
         target_grp = [all_targets[i] for i in idx]
         names_grp = [all_dataset_names[i] for i in idx]
 
-        records.extend(
-            _run_protocols_on_group(
-                microbiome_grp,
-                target_grp,
-                names_grp,
-                phenotype_str
-            )
+        df_grp = _run_protocols_on_group(
+            microbiome_grp,
+            target_grp,
+            names_grp,
+            phenotype_str
         )
 
-    return pd.DataFrame(records)
+        records.append(df_grp)
+
+
+    return pd.concat(records, ignore_index=True)
 
 
 def run_protocol_benchmark_global_preprocessing(
@@ -120,7 +123,9 @@ def run_protocol_benchmark_global_preprocessing(
     stability_percentile_local=0.3,
     stability_percentile_global=0.5,
     min_dataset_support=5,
-    z_thresh=3.0
+    z_thresh=3.0,
+    decompose_method='PCA',
+    decompose_rank=30
 ):
 
 
@@ -141,7 +146,9 @@ def run_protocol_benchmark_global_preprocessing(
             stability_percentile_local=stability_percentile_local,
             stability_percentile_global=stability_percentile_global,
             min_dataset_support=min_dataset_support,
-            z_thresh=z_thresh
+            z_thresh=z_thresh,
+            decompose_method=decompose_method,
+            decompose_rank=decompose_rank
         )
 
         all_records.append(records_dtype)

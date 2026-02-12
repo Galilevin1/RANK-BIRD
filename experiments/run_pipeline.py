@@ -10,7 +10,13 @@ from figures.protocol_comparison_heatmap import plot_protocol_heatmap
 from figures.protocol_comparison_boxplots import plot_protocol_boxplots
 from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
 
-RESULTS_DIR = Path(f"experiments\results")
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RESULTS_DIR = PROJECT_ROOT / "experiments" / "results_global_dim"
+#RESULTS_DIR = PROJECT_ROOT / "experiments" / "results_global_normalized"
+#RESULTS_DIR = PROJECT_ROOT / "experiments" / "results_local_normalized"
+#RESULTS_DIR = PROJECT_ROOT / "experiments" / "results_local_original"
 FIGURES_DIR = Path(f"figures_out")
 RESULTS_DIR.mkdir(exist_ok=True)
 FIGURES_DIR.mkdir(exist_ok=True)
@@ -48,7 +54,7 @@ def main():
     #     print("Running protocol benchmark...")
     #     results_df = run_protocol_benchmark(
     #         phenotypes=phenotypes,
-    #         apply_normalization=True,
+    #         apply_normalization=False,
     #         apply_decompose=False,
     #     )
     #     results_df.to_csv(results_path, index=False)
@@ -64,12 +70,14 @@ def main():
         results_df_global = run_protocol_benchmark_global_preprocessing(
             phenotypes=phenotypes,
             apply_normalization=True,
-            apply_decompose=False,
+            apply_decompose=True,
             min_samples_per_dataset=550, 
             stability_percentile_local=0.3,
             stability_percentile_global=0.5,
             min_dataset_support=5,
-            z_thresh=3.0
+            z_thresh=3.0,
+            decompose_method='PCA',
+            decompose_rank=300
         )
         results_df_global.to_csv(results_path_global, index=False)
 
