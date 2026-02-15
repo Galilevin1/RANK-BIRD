@@ -18,7 +18,6 @@ def apply_normalization_pipeline(
     min_samples_per_dataset=550, #550
     stability_percentile_local=0.3,
     stability_percentile_global=0.5,
-    min_dataset_support=5,
     z_thresh=3.0,
     random_state=42
 ):

@@ -12,17 +12,59 @@ from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
 
 from pathlib import Path
 
+
+# ================================
+# CONFIGURATION
+# ================================
+CONFIG = {
+
+    # -----------------------
+    # Pipeline control
+    # -----------------------
+    "run_compute": False,      # run heavy protocol training
+    "run_aggregate": False,    # recompute summary
+    "run_stats": False,
+    "run_figures": ["1d", "1e"], # choose which figures to run
+
+    # -----------------------
+    # Experiment config
+    # -----------------------
+    "preprocessing_scope": "global",   # "local" or "global"
+    "normalization": True,
+    "decomposition": False,
+    "decompose_method": "PCA",
+    "decompose_rank": 300,      
+    "min_samples_per_dataset": 550, 
+    "stability_percentile_local": 0.3,
+    "stability_percentile_global": 0.5,
+    "z_thresh": 3.0,
+}
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RESULTS_DIR = PROJECT_ROOT / "experiments" / "results_global_dim"
-#RESULTS_DIR = PROJECT_ROOT / "experiments" / "results_global_normalized"
-#RESULTS_DIR = PROJECT_ROOT / "experiments" / "results_local_normalized"
-#RESULTS_DIR = PROJECT_ROOT / "experiments" / "results_local_original"
+
+
+def build_results_dir(project_root: Path, config: dict) -> Path:
+    scope = config["preprocessing_scope"]
+
+    if not config["normalization"]:
+        mode = "original"
+    elif config["normalization"] and not config["decomposition"]:
+        mode = "normalized"
+    else:
+        mode = "dim"
+
+    return project_root / "experiments" / f"results_{scope}_{mode}"
+
+
+
 FIGURES_DIR = Path(f"figures_out")
-RESULTS_DIR.mkdir(exist_ok=True)
 FIGURES_DIR.mkdir(exist_ok=True)
 
 
 def main():
+
+    RESULTS_DIR = build_results_dir(PROJECT_ROOT, CONFIG)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
 
     phenotypes = [
         ("AD", "Amplicon"),
@@ -38,74 +80,72 @@ def main():
         ("UC", "Metagenomics"),
     ]
 
-    results_path = RESULTS_DIR / "protocol_results_per_dataset.csv"
-    results_path_global = RESULTS_DIR / "protocol_results_per_dataset_global.csv"
-    summary_path = RESULTS_DIR / "protocol_summary.csv"
 
-    compute_global = True
 
     # # ================================
     # # STEP 1: Compute or load results
     # # ================================
-    # if results_path.exists():
-    #     print("Loading existing protocol results...")
-    #     results_df = pd.read_csv(results_path)
-    # else:
-    #     print("Running protocol benchmark...")
-    #     results_df = run_protocol_benchmark(
-    #         phenotypes=phenotypes,
-    #         apply_normalization=False,
-    #         apply_decompose=False,
-    #     )
-    #     results_df.to_csv(results_path, index=False)
 
-    # ================================
-    # STEP 1.1: Compute or load results
-    # ================================
-    if results_path_global.exists():
-        print("Loading existing protocol results...")
-        results_df_global = pd.read_csv(results_path_global)
-    else:
-        print("Running protocol benchmark...")
-        results_df_global = run_protocol_benchmark_global_preprocessing(
-            phenotypes=phenotypes,
-            apply_normalization=True,
-            apply_decompose=True,
-            min_samples_per_dataset=550, 
-            stability_percentile_local=0.3,
-            stability_percentile_global=0.5,
-            min_dataset_support=5,
-            z_thresh=3.0,
-            decompose_method='PCA',
-            decompose_rank=300
-        )
-        results_df_global.to_csv(results_path_global, index=False)
+    results_path = RESULTS_DIR / "protocol_results_per_dataset.csv"
 
-    results_df = results_df_global.copy()
+    if CONFIG["run_compute"]:
+
+        if CONFIG["preprocessing_scope"] == "local":
+            runner = run_protocol_benchmark
+        else:
+            runner = run_protocol_benchmark_global_preprocessing
+
+        if results_path.exists():
+            print("Loading existing protocol results...")
+            results_df = pd.read_csv(results_path)
+        else:
+            print("Running protocol benchmark...")
+            results_df = runner(
+                phenotypes=phenotypes,
+                apply_normalization=CONFIG["normalization"],
+                apply_decompose=CONFIG["decomposition"],
+                decompose_method=CONFIG.get("decompose_method"),
+                decompose_rank=CONFIG.get("decompose_rank"),
+                min_samples_per_dataset=CONFIG.get("min_samples_per_dataset"),
+                stability_percentile_local=CONFIG.get("stability_percentile_local"),
+                stability_percentile_global=CONFIG.get("stability_percentile_global"),
+                z_thresh=CONFIG.get("z_thresh"),
+            )
+            results_df.to_csv(results_path, index=False)
+
 
     # ================================
     # STEP 2: Aggregate
     # ================================
-    if summary_path.exists():
-        summary_df = pd.read_csv(summary_path)
-    else:
-        summary_df = aggregate_protocol_performance(results_df)
-        summary_df.to_csv(summary_path, index=False)
+
+    summary_path = RESULTS_DIR / "protocol_summary.csv"
+
+    if CONFIG["run_aggregate"]:
+        if summary_path.exists():
+            summary_df = pd.read_csv(summary_path)
+        else:
+            summary_df = aggregate_protocol_performance(results_df)
+            summary_df.to_csv(summary_path, index=False)
 
     # ================================
     # STEP 3: Statistics
     # ================================
-    stats_df = compare_protocols_mann_whitney(results_df)
-    stats_df.to_csv(RESULTS_DIR / "protocol_stats.csv", index=False)
+    if CONFIG[ "run_stats"]:
+        stats_df = compare_protocols_mann_whitney(results_df)
+        stats_df.to_csv(RESULTS_DIR / "protocol_stats.csv", index=False)
 
     # ================================
     # STEP 4: Figures
     # ================================
-    fig, ax = plot_protocol_heatmap(summary_df)
-    fig.savefig(FIGURES_DIR / "protocol_heatmap.png", dpi=300)
+    if "1d" in CONFIG["run_figures"]:
+        summary_df = pd.read_csv(summary_path)
+        fig, ax = plot_protocol_heatmap(summary_df)
+        fig.savefig(FIGURES_DIR / "protocol_heatmap.png", dpi=300)
 
-    fig, ax = plot_protocol_boxplots(results_df)
-    fig.savefig(FIGURES_DIR / "protocol_boxplots.png", dpi=300)
+    if "1e" in CONFIG["run_figures"]:
+        results_df = pd.read_csv(results_path)
+        fig, ax = plot_protocol_boxplots(results_df)
+        fig.savefig(FIGURES_DIR / "protocol_boxplots.png", dpi=300)
     #
     # # ================================
     # # STEP 5: Papers vs LightGBM

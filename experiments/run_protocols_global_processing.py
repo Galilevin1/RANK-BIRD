@@ -38,7 +38,6 @@ def _run_global_for_dtype(phenotypes,
                           min_samples_per_dataset=550, 
                           stability_percentile_local=0.3,
                           stability_percentile_global=0.5,
-                          min_dataset_support=5,
                           z_thresh=3.0,
                           decompose_method='PCA',
                           decompose_rank=30
@@ -80,7 +79,6 @@ def _run_global_for_dtype(phenotypes,
             min_samples_per_dataset=min_samples_per_dataset,
             stability_percentile_local=stability_percentile_local,
             stability_percentile_global=stability_percentile_global,
-            min_dataset_support=min_dataset_support,
             z_thresh=z_thresh
         )
 
@@ -122,7 +120,6 @@ def run_protocol_benchmark_global_preprocessing(
     min_samples_per_dataset=550,
     stability_percentile_local=0.3,
     stability_percentile_global=0.5,
-    min_dataset_support=5,
     z_thresh=3.0,
     decompose_method='PCA',
     decompose_rank=30
@@ -145,7 +142,6 @@ def run_protocol_benchmark_global_preprocessing(
             min_samples_per_dataset=min_samples_per_dataset, 
             stability_percentile_local=stability_percentile_local,
             stability_percentile_global=stability_percentile_global,
-            min_dataset_support=min_dataset_support,
             z_thresh=z_thresh,
             decompose_method=decompose_method,
             decompose_rank=decompose_rank
