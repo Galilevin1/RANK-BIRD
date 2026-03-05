@@ -3,9 +3,21 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Tuple, Dict
 
+import MIPMLP
 
-def load_microbiome_datasets_with_targets(data_folder: str) -> Tuple[List[pd.DataFrame], List[pd.DataFrame], List[str]]:
-    """Load microbiome datasets and their corresponding target files from folder structure."""
+
+def load_microbiome_datasets_with_targets(
+    data_folder: str,
+    ) -> Tuple[List[pd.DataFrame], List[pd.DataFrame], List[str]]:
+    
+    """
+    Load microbiome datasets and targets,
+    apply taxonomy unification via MIPMLP,
+    and filter out sparse datasets.
+    Returns:
+      (microbiome_dfs, target_dfs, dataset_names, dropped_datasets)
+    """
+
     data_path = Path(data_folder)
     if not data_path.exists():
         raise ValueError(f"Data folder {data_folder} does not exist")
@@ -13,6 +25,7 @@ def load_microbiome_datasets_with_targets(data_folder: str) -> Tuple[List[pd.Dat
     microbiome_dataframes = []
     target_dataframes = []
     dataset_names = []
+    dropped_datasets = []
 
     for subdir in data_path.iterdir():
         if subdir.is_dir():
@@ -20,34 +33,46 @@ def load_microbiome_datasets_with_targets(data_folder: str) -> Tuple[List[pd.Dat
             target_file = subdir / "target.csv"
 
             if microbiome_file.exists() and target_file.exists():
-                try:
-                    microbiome_df = pd.read_csv(microbiome_file, index_col=0)
-                    microbiome_df = microbiome_df[(microbiome_df != 0).any(axis=1)]
-                    microbiome_df.columns = (
+                # try:
+
+                # Load microbiome ASVs
+                microbiome_df = pd.read_csv(microbiome_file, index_col=0)
+                microbiome_df = microbiome_df[(microbiome_df != 0).any(axis=1)]
+                microbiome_df.columns = (
                         microbiome_df.columns
                         .str.replace('|', ';', regex=False)
                         .str.replace('[{}"\\[\\],:]', '_', regex=True)
                         .str.replace(r'\s+', '_', regex=True)
                     )
-                    target_df = pd.read_csv(target_file, index_col=0)
-                    target_df = target_df.loc[microbiome_df.index]
-                    target_df = process_target_labels(target_df)
 
-                    microbiome_dataframes.append(microbiome_df)
-                    target_dataframes.append(target_df)
-                    dataset_names.append(subdir.name)
+                # Taxonomy merge
+                processed_df = merge_by_taxonomy_level(
+                    microbiome_df,
+                    taxonomy_level=7,
+                    method="mean"
+                )
+                
+                # Load target labels
+                target_df = pd.read_csv(target_file, index_col=0)
+                target_df = target_df.loc[microbiome_df.index]
+                target_df = process_target_labels(target_df)
 
-                    print(f"Loaded {subdir.name}:")
-                    print(f"  Microbiome: {microbiome_df.shape[0]} samples, {microbiome_df.shape[1]} microbes")
-                    print(f"  Targets: {len(target_df)} samples, {target_df.value_counts().to_dict()}")
+                # Save
+                microbiome_dataframes.append(processed_df )
+                target_dataframes.append(target_df)
+                dataset_names.append(subdir.name)
 
-                except Exception as e:
-                    print(f"Error loading {subdir}: {e}")
+                print(f"Loaded {subdir.name}:")
+                print(f"  Microbiome: {processed_df .shape[0]} samples, {processed_df .shape[1]} microbes")
+                print(f"  Targets: {len(target_df)} samples, {target_df.value_counts().to_dict()}")
+
+                # except Exception as e:
+                #     print(f"Error loading {subdir}: {e}")
 
     if not microbiome_dataframes:
         raise ValueError(f"No valid dataset pairs found in {data_folder}")
 
-    return microbiome_dataframes, target_dataframes, dataset_names
+    return microbiome_dataframes, target_dataframes, dataset_names, dropped_datasets
 
 
 def process_target_labels(target_df: pd.DataFrame) -> pd.DataFrame:
@@ -95,6 +120,33 @@ def combine_datasets(microbiome_dfs: List[pd.DataFrame], target_dfs: List[pd.Dat
 
 def build_papers_auc_df(csv_path_papers):
     return pd.read_csv(csv_path_papers)
+
+
+def merge_by_taxonomy_level(df, taxonomy_level=7, method="mean"):
+    """
+    Merge ASV columns by taxonomy level.
+    Compatible with pandas 3.0+
+    """
+
+    # Reduce taxonomy strings
+    reduced_tax = []
+    for col in df.columns:
+        parts = str(col).split(";")
+        parts = [p.strip() for p in parts]
+        reduced_tax.append(";".join(parts[:taxonomy_level]))
+
+    df_copy = df.copy()
+    df_copy.columns = reduced_tax
+
+    # Transpose -> group rows -> transpose back
+    if method == "mean":
+        df_merged = df_copy.T.groupby(level=0).mean().T
+    elif method == "sum":
+        df_merged = df_copy.T.groupby(level=0).sum().T
+    else:
+        raise ValueError("method must be 'mean' or 'sum'")
+
+    return df_merged
 
 
 

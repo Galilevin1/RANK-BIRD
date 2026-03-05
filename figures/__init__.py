@@ -1,1 +1,1 @@
-from .phenotype_grid import plot_paper_phenotype_grid_circles
+from .phenotype_grid import plot_paper_phenotype_grid_circles, plot_figure_1a

@@ -1,5 +1,5 @@
 import numpy as np
-import matplotlib as plt
+import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 def plot_paper_phenotype_grid_circles(data_shotgun, data_16s,
                                       primary_phenos=('CRC', 'IBD', 'CD', 'UC'),
@@ -257,4 +257,33 @@ def plot_paper_phenotype_grid_circles(data_shotgun, data_16s,
     plt.subplots_adjust(left=0.15, right=0.88, top=0.95, bottom=0.22)
 
 
+    return fig, ax
+
+
+def plot_figure_1a():
+    """Figure 1a: Paper–Phenotype grid showing dataset usage across papers and sequencing types."""
+    data_shotgun = {
+        "SIAMCAT": {"CRC": ["CRC"], "CD": ["CD"], "UC": ["UC"]},
+        "Li-et-al": {"CRC": ["CRC"], "Adenoma": ["Adenoma"], "RA": ["RA"], "ASD": ["ASD"], "CD": ["CD"],
+                     "UC": ["UC"]},
+        "melody": {"CRC": ["CRC"]},
+        "vänni-et-al": {},
+        "GCN": {"CRC": ["CRC"]},
+        "Debias-M": {"CRC": ["CRC"], "HIV": ["HIV"], "Carcinoma": ["Carcinoma"], "CIN": ["CIN"]},
+    }
+
+    data_16s = {
+        "SIAMCAT": {},
+        "Li-et-al": {"AD": ["AD"], "PD": ["PD"], "T2D": ["T2D"], "ASD": ["ASD"], "CD": ["CD"], "IBS": ["IBS"],
+                     "UC": ["UC"], "NAFLD": ["NAFLD"]},
+        "melody": {},
+        "vänni-et-al": {"Delivery mode": ["Delivery mode"]},
+        "GCN": {},
+        "Debias-M": {"Carcinoma": ["Carcinoma"], "CIN": ["CIN"], "HIV": ["HIV"]},
+    }
+
+    fig, ax = plot_paper_phenotype_grid_circles(
+        data_shotgun, data_16s,
+        title='Paper–Phenotype Grid: Dataset Usage Frequency'
+    )
     return fig, ax

@@ -9,6 +9,7 @@ from evaluation.statistics import compare_protocols_mann_whitney
 from figures.protocol_comparison_heatmap import plot_protocol_heatmap
 from figures.protocol_comparison_boxplots import plot_protocol_boxplots
 from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
+from figures.phenotype_grid import plot_figure_1a
 
 from pathlib import Path
 
@@ -21,10 +22,10 @@ CONFIG = {
     # -----------------------
     # Pipeline control
     # -----------------------
-    "run_compute": False,      # run heavy protocol training
-    "run_aggregate": False,    # recompute summary
-    "run_stats": False,
-    "run_figures": ["1d", "1e"], # choose which figures to run
+    "run_compute": True,      # run heavy protocol training
+    "run_aggregate": True,    # recompute summary
+    "run_stats": True,
+    "run_figures": ["1a"], # choose which figures to run
 
     # -----------------------
     # Experiment config
@@ -137,6 +138,10 @@ def main():
     # ================================
     # STEP 4: Figures
     # ================================
+    if "1a" in CONFIG["run_figures"]:
+        fig, ax = plot_figure_1a()
+        fig.savefig(FIGURES_DIR / "paper_phenotype_grid.png", dpi=300, bbox_inches='tight')
+
     if "1d" in CONFIG["run_figures"]:
         summary_df = pd.read_csv(summary_path)
         fig, ax = plot_protocol_heatmap(summary_df)

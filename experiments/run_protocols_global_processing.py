@@ -58,7 +58,7 @@ def _run_global_for_dtype(phenotypes,
         phenotype_str = f"{phenotype} {dtype}"
         folder = DATA_ROOT / phenotype_str
 
-        microbiome_dfs, target_dfs, dataset_names = \
+        microbiome_dfs, target_dfs, dataset_names, dropped_datasets = \
             load_microbiome_datasets_with_targets(folder)
 
         for df, y, name in zip(microbiome_dfs, target_dfs, dataset_names):
