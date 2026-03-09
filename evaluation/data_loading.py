@@ -22,7 +22,6 @@ def load_microbiome_datasets_with_targets(
     microbiome_dataframes = []
     target_dataframes = []
     dataset_names = []
-    dropped_datasets = []
 
     for subdir in data_path.iterdir():
         if subdir.is_dir():
@@ -69,7 +68,7 @@ def load_microbiome_datasets_with_targets(
     if not microbiome_dataframes:
         raise ValueError(f"No valid dataset pairs found in {data_folder}")
 
-    return microbiome_dataframes, target_dataframes, dataset_names, dropped_datasets
+    return microbiome_dataframes, target_dataframes, dataset_names
 
 
 def process_target_labels(target_df: pd.DataFrame) -> pd.DataFrame:
