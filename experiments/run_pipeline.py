@@ -10,6 +10,7 @@ from figures.protocol_comparison_heatmap import plot_protocol_heatmap
 from figures.protocol_comparison_boxplots import plot_protocol_boxplots
 from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
 from figures.phenotype_grid import plot_figure_1a
+from evaluation.data_loading import build_papers_auc_df
 
 from pathlib import Path
 
@@ -25,7 +26,12 @@ CONFIG = {
     "run_compute": True,      # run heavy protocol training
     "run_aggregate": True,    # recompute summary
     "run_stats": True,
-    "run_figures": ["1a"], # choose which figures to run
+    "run_figures": ["1c"], # choose which figures to run: "1a", "1c", "1d", "1e"
+
+    # -----------------------
+    # Papers CSV (for figure 1c)
+    # -----------------------
+    "papers_csv": "Data/Phenotype_Datasets_for_table.csv",
 
     # -----------------------
     # Experiment config
@@ -142,6 +148,20 @@ def main():
         fig, ax = plot_figure_1a()
         fig.savefig(FIGURES_DIR / "paper_phenotype_grid.png", dpi=300, bbox_inches='tight')
 
+    if "1c" in CONFIG["run_figures"]:
+        results_df = pd.read_csv(results_path)
+        df_papers = build_papers_auc_df(PROJECT_ROOT / CONFIG["papers_csv"])
+        fig, ax, stats = plot_auc_horizontal_bars_mann_whitney(
+            df_papers=df_papers,
+            df_lightGBM=results_df,
+            selected_combinations=phenotypes,
+            figsize=(12, 16),
+            bar_height=1,
+            fdr_alpha=0.05,
+        )
+        fig.savefig(FIGURES_DIR / "papers_vs_lgbm_lodo.png", dpi=300, bbox_inches='tight')
+        stats.to_csv(RESULTS_DIR / "papers_vs_lgbm_stats.csv", index=False)
+
     if "1d" in CONFIG["run_figures"]:
         summary_df = pd.read_csv(summary_path)
         fig, ax = plot_protocol_heatmap(summary_df)
@@ -151,18 +171,6 @@ def main():
         results_df = pd.read_csv(results_path)
         fig, ax = plot_protocol_boxplots(results_df)
         fig.savefig(FIGURES_DIR / "protocol_boxplots.png", dpi=300)
-    #
-    # # ================================
-    # # STEP 5: Papers vs LightGBM
-    # # ================================
-    # df_papers = pd.read_csv("Data/Phenotype_Datasets_for_table.csv")
-    #
-    # fig, ax, stats = plot_auc_horizontal_bars_mann_whitney(
-    #     df_papers=df_papers,
-    #     df_lightGBM=results_df,
-    # )
-    # fig.savefig(FIGURES_DIR / "papers_vs_lgbm_lodo.png", dpi=300)
-    # stats.to_csv(RESULTS_DIR / "papers_vs_lgbm_stats.csv", index=False)
 
 
 if __name__ == "__main__":

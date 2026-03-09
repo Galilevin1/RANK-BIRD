@@ -3,9 +3,6 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Tuple, Dict
 
-import MIPMLP
-
-
 def load_microbiome_datasets_with_targets(
     data_folder: str,
     ) -> Tuple[List[pd.DataFrame], List[pd.DataFrame], List[str]]:

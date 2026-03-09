@@ -8,6 +8,7 @@ def aggregate_protocol_performance(results_df: pd.DataFrame) -> pd.DataFrame:
 
     return (
         results_df
+        .dropna(subset=["auc"])
         .groupby(["phenotype", "protocol"])
         .agg(
             mean_auc=("auc", "mean"),

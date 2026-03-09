@@ -183,8 +183,8 @@ def compare_protocols_mann_whitney(results_df: pd.DataFrame) -> pd.DataFrame:
         for j in range(i + 1, len(protocols)):
             p1, p2 = protocols[i], protocols[j]
 
-            auc1 = results_df.loc[results_df["protocol"] == p1, "auc"].values
-            auc2 = results_df.loc[results_df["protocol"] == p2, "auc"].values
+            auc1 = results_df.loc[results_df["protocol"] == p1, "auc"].dropna().values
+            auc2 = results_df.loc[results_df["protocol"] == p2, "auc"].dropna().values
 
             stat, pval = mannwhitneyu(auc1, auc2, alternative="two-sided")
 

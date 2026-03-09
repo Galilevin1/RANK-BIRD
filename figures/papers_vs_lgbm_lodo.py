@@ -86,13 +86,11 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     lgbm_raw_data = {}
 
     for group in groups_to_plot:
-        phenotype = group.split(" ")[0]
-
         aucs = df_lightGBM.loc[
-            (df_lightGBM["phenotype"] == phenotype) &
+            (df_lightGBM["phenotype"] == group) &
             (df_lightGBM["protocol"] == "LODO"),
             "auc"
-        ].values
+        ].dropna().values
 
         if len(aucs) == 0:
             print(f"⚠️ No LODO results for {group}")
