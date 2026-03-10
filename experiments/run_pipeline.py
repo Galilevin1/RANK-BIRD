@@ -6,11 +6,17 @@ from experiments.run_protocols_global_processing import run_protocol_benchmark_g
 from evaluation.aggregation import aggregate_protocol_performance
 from evaluation.statistics import compare_protocols_mann_whitney
 
+import matplotlib.pyplot as plt
+
 from figures.protocol_comparison_heatmap import plot_protocol_heatmap
 from figures.protocol_comparison_boxplots import plot_protocol_boxplots
 from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
 from figures.phenotype_grid import plot_figure_1a
-from evaluation.data_loading import build_papers_auc_df
+from figures.figure3 import run_figure3
+from figures.figure4 import plot_figure4
+from figures.figure4e import run_figure4e_analysis, plot_figure4e
+from evaluation.data_loading import build_papers_auc_df, load_microbiome_datasets_with_targets
+from evaluation.pairwise_lodo import run_figure4_analysis
 
 from pathlib import Path
 
@@ -24,9 +30,9 @@ CONFIG = {
     # Pipeline control
     # -----------------------
     "run_compute": True,      # run heavy protocol training
-    "run_aggregate": True,    # recompute summary
+    "run_aggregate":True,    # recompute summary
     "run_stats": True,
-    "run_figures": ["1c"], # choose which figures to run: "1a", "1c", "1d", "1e"
+    "run_figures": ["1a", "1c", "1d", "1e", "3", "4"], # choose which figures to run: "1a", "1c", "1d", "1e", "3", "4", "4e"
 
     # -----------------------
     # Papers CSV (for figure 1c)
@@ -62,9 +68,25 @@ def build_results_dir(project_root: Path, config: dict) -> Path:
     return project_root / "experiments" / f"results_{scope}_{mode}"
 
 
+def _get_mode(config: dict) -> str:
+    if not config["normalization"]:
+        return "original"
+    elif not config["decomposition"]:
+        return "normalized"
+    return "dim"
 
-FIGURES_DIR = Path(f"figures_out")
-FIGURES_DIR.mkdir(exist_ok=True)
+
+def build_figures_dir(base: Path, config: dict, figure: str) -> Path:
+    """Return figures_out/<figure>/<scope>_<mode>/ and create it."""
+    scope = config["preprocessing_scope"]
+    mode  = _get_mode(config)
+    path  = base / figure / f"{scope}_{mode}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+FIGURES_BASE = Path("figures_out")
+FIGURES_BASE.mkdir(exist_ok=True)
 
 
 def main():
@@ -72,6 +94,9 @@ def main():
     RESULTS_DIR = build_results_dir(PROJECT_ROOT, CONFIG)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+    FIG1_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1")
+    FIG3_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_3")
+    FIG4_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_4")
 
     phenotypes = [
         ("AD", "Amplicon"),
@@ -146,7 +171,7 @@ def main():
     # ================================
     if "1a" in CONFIG["run_figures"]:
         fig, ax = plot_figure_1a()
-        fig.savefig(FIGURES_DIR / "paper_phenotype_grid.png", dpi=300, bbox_inches='tight')
+        fig.savefig(FIG1_DIR / "paper_phenotype_grid.png", dpi=300, bbox_inches='tight')
 
     if "1c" in CONFIG["run_figures"]:
         results_df = pd.read_csv(results_path)
@@ -159,18 +184,62 @@ def main():
             bar_height=1,
             fdr_alpha=0.05,
         )
-        fig.savefig(FIGURES_DIR / "papers_vs_lgbm_lodo.png", dpi=300, bbox_inches='tight')
+        fig.savefig(FIG1_DIR / "papers_vs_lgbm_lodo.png", dpi=300, bbox_inches='tight')
         stats.to_csv(RESULTS_DIR / "papers_vs_lgbm_stats.csv", index=False)
 
     if "1d" in CONFIG["run_figures"]:
         summary_df = pd.read_csv(summary_path)
         fig, ax = plot_protocol_heatmap(summary_df)
-        fig.savefig(FIGURES_DIR / "protocol_heatmap.png", dpi=300)
+        fig.savefig(FIG1_DIR / "protocol_heatmap.png", dpi=300)
 
     if "1e" in CONFIG["run_figures"]:
         results_df = pd.read_csv(results_path)
         fig, ax = plot_protocol_boxplots(results_df)
-        fig.savefig(FIGURES_DIR / "protocol_boxplots.png", dpi=300)
+        fig.savefig(FIG1_DIR / "protocol_boxplots.png", dpi=300)
+
+    if "3" in CONFIG["run_figures"]:
+        run_figure3(
+            phenotypes=phenotypes,
+            data_root=str(PROJECT_ROOT / "Data"),
+            figures_dir=str(FIG3_DIR),
+            apply_normalization=CONFIG["normalization"],
+        )
+
+    if "4" in CONFIG["run_figures"]:
+        figure4_data_dir = RESULTS_DIR / "figure4"
+        figure4_data_dir.mkdir(exist_ok=True)
+
+        for pt in phenotypes:
+            phenotype = f"{pt[0]} {pt[1]}"
+            data = run_figure4_analysis(
+                phenotype=phenotype,
+                data_root=str(PROJECT_ROOT / "Data"),
+                output_dir=str(figure4_data_dir),
+                load_function=load_microbiome_datasets_with_targets,
+            )
+            if data is None:
+                continue
+            fig = plot_figure4(
+                phenotype_name=phenotype,
+                pairwise_results=data['pairwise_results'],
+                full_lodo_shap=data['full_lodo_shap'],
+                dataset_names=data['dataset_names'],
+            )
+            fig.savefig(
+                FIG4_DIR / f"figure4_{phenotype.replace(' ', '_')}.png",
+                dpi=300, bbox_inches='tight'
+            )
+            plt.close(fig)
+
+
+    if "4e" in CONFIG["run_figures"]:
+        figure4_data_dir = RESULTS_DIR / "figure4"
+        results_4e = run_figure4e_analysis(
+            figure4_data_dir=str(figure4_data_dir),
+            metric='auc',
+        )
+        if results_4e is not None:
+            plot_figure4e(results_4e, output_dir=str(FIG4_DIR))
 
 
 if __name__ == "__main__":

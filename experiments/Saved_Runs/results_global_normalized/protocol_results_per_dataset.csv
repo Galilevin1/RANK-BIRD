@@ -1,0 +1,144 @@
+phenotype,dataset,protocol,auc
+Delivery_mode_6month Amplicon,PRJEB13896 WHEALS_T6month,LODO,0.5234067663257277
+Delivery_mode_6month Amplicon,PRJEB48451 JORVI_T6month,LODO,0.625
+Delivery_mode_6month Amplicon,PRJNA339264 INFANTMET_T6month,LODO,0.5954897815362932
+Delivery_mode_6month Amplicon,SDY1646 MARC43_T6month,LODO,0.6729651162790697
+Delivery_mode_6month Amplicon,PRJEB13896 WHEALS_T6month,Internal Validation,0.6315789473684211
+Delivery_mode_6month Amplicon,PRJEB48451 JORVI_T6month,Internal Validation,0.6713286713286714
+Delivery_mode_6month Amplicon,PRJNA339264 INFANTMET_T6month,Internal Validation,0.6444099378881987
+Delivery_mode_6month Amplicon,SDY1646 MARC43_T6month,Internal Validation,0.610546875
+Delivery_mode_6month Amplicon,PRJEB13896 WHEALS_T6month,Within Learning,0.7009803921568627
+Delivery_mode_6month Amplicon,PRJEB48451 JORVI_T6month,Within Learning,0.25
+Delivery_mode_6month Amplicon,PRJNA339264 INFANTMET_T6month,Within Learning,0.7008547008547008
+Delivery_mode_6month Amplicon,SDY1646 MARC43_T6month,Within Learning,0.7738095238095237
+T2D Amplicon,PRJNA448494,LODO,0.3824193548387097
+T2D Amplicon,PRJNA505546,LODO,0.5267379679144385
+T2D Amplicon,PRJNA448494,Internal Validation,0.8351648351648352
+T2D Amplicon,PRJNA505546,Internal Validation,0.9076923076923076
+T2D Amplicon,PRJNA448494,Within Learning,0.9076923076923076
+T2D Amplicon,PRJNA505546,Within Learning,0.8351648351648352
+Delivery_mode_year Amplicon,ERP111347 NOMIC_T1year,LODO,0.5654827741591906
+Delivery_mode_year Amplicon,PRJEB48451 JORVI_T1year,LODO,0.7134615384615385
+Delivery_mode_year Amplicon,PRJNA273694 SKOT1_T1year,LODO,0.6963383838383839
+Delivery_mode_year Amplicon,PRJNA273694 SKOT2_T1year,LODO,0.5837301587301588
+Delivery_mode_year Amplicon,PRJNA296814 NHBCS_T1year,LODO,0.6285946825827455
+Delivery_mode_year Amplicon,PRJNA417357 COPSAC_T1year,LODO,0.559148369926813
+Delivery_mode_year Amplicon,PRJNA510423 ABIS_T1year,LODO,0.6097074468085106
+Delivery_mode_year Amplicon,SRP152384 OULU_T1year,LODO,0.6414825374198146
+Delivery_mode_year Amplicon,ERP111347 NOMIC_T1year,Internal Validation,0.6620621162874685
+Delivery_mode_year Amplicon,PRJEB48451 JORVI_T1year,Internal Validation,0.5772957746478874
+Delivery_mode_year Amplicon,PRJNA273694 SKOT1_T1year,Internal Validation,0.6660653075951651
+Delivery_mode_year Amplicon,PRJNA273694 SKOT2_T1year,Internal Validation,0.611336032388664
+Delivery_mode_year Amplicon,PRJNA296814 NHBCS_T1year,Internal Validation,0.6054261091605491
+Delivery_mode_year Amplicon,PRJNA417357 COPSAC_T1year,Internal Validation,0.5842549203373946
+Delivery_mode_year Amplicon,PRJNA510423 ABIS_T1year,Internal Validation,0.5112606997423751
+Delivery_mode_year Amplicon,SRP152384 OULU_T1year,Internal Validation,0.5708717221828491
+Delivery_mode_year Amplicon,ERP111347 NOMIC_T1year,Within Learning,0.5876393110435664
+Delivery_mode_year Amplicon,PRJEB48451 JORVI_T1year,Within Learning,0.5227272727272727
+Delivery_mode_year Amplicon,PRJNA273694 SKOT1_T1year,Within Learning,0.5916666666666667
+Delivery_mode_year Amplicon,PRJNA273694 SKOT2_T1year,Within Learning,0.7238095238095238
+Delivery_mode_year Amplicon,PRJNA296814 NHBCS_T1year,Within Learning,0.6578947368421053
+Delivery_mode_year Amplicon,PRJNA417357 COPSAC_T1year,Within Learning,0.6011608623548922
+Delivery_mode_year Amplicon,PRJNA510423 ABIS_T1year,Within Learning,0.8544600938967135
+Delivery_mode_year Amplicon,SRP152384 OULU_T1year,Within Learning,0.7083333333333333
+Delivery_mode_month Amplicon,ERP111347 NOMIC_T1month,LODO,0.7411930393178223
+Delivery_mode_month Amplicon,PRJEB13896 WHEALS_T1month,LODO,0.7863823419378976
+Delivery_mode_month Amplicon,PRJEB48451 JORVI_T1month,LODO,0.805232558139535
+Delivery_mode_month Amplicon,PRJNA296814 NHBCS_T1month,LODO,0.7628806742003448
+Delivery_mode_month Amplicon,PRJNA322188 HOUSTON_T1month,LODO,0.8452088452088452
+Delivery_mode_month Amplicon,PRJNA339264 INFANTMET_T1month,LODO,0.7299145299145299
+Delivery_mode_month Amplicon,PRJNA417357 COPSAC_T1month,LODO,0.7493386243386243
+Delivery_mode_month Amplicon,ERP111347 NOMIC_T1month,Internal Validation,0.7263617677286742
+Delivery_mode_month Amplicon,PRJEB13896 WHEALS_T1month,Internal Validation,0.7257727924872831
+Delivery_mode_month Amplicon,PRJEB48451 JORVI_T1month,Internal Validation,0.7717653993516064
+Delivery_mode_month Amplicon,PRJNA296814 NHBCS_T1month,Internal Validation,0.8138336347197107
+Delivery_mode_month Amplicon,PRJNA322188 HOUSTON_T1month,Internal Validation,0.7667299477930708
+Delivery_mode_month Amplicon,PRJNA339264 INFANTMET_T1month,Internal Validation,0.7546384479717813
+Delivery_mode_month Amplicon,PRJNA417357 COPSAC_T1month,Internal Validation,0.774918230332243
+Delivery_mode_month Amplicon,ERP111347 NOMIC_T1month,Within Learning,0.8730769230769231
+Delivery_mode_month Amplicon,PRJEB13896 WHEALS_T1month,Within Learning,0.8839285714285714
+Delivery_mode_month Amplicon,PRJEB48451 JORVI_T1month,Within Learning,0.5
+Delivery_mode_month Amplicon,PRJNA296814 NHBCS_T1month,Within Learning,0.8731884057971014
+Delivery_mode_month Amplicon,PRJNA322188 HOUSTON_T1month,Within Learning,0.5
+Delivery_mode_month Amplicon,PRJNA339264 INFANTMET_T1month,Within Learning,0.9435897435897437
+Delivery_mode_month Amplicon,PRJNA417357 COPSAC_T1month,Within Learning,0.7051671732522797
+ASD Amplicon,PRJEB27306,LODO,0.44922341696535245
+ASD Amplicon,PRJNA453621,LODO,0.7312093500904691
+ASD Amplicon,PRJNA687773,LODO,0.462995337995338
+ASD Amplicon,PRJEB27306,Internal Validation,0.9926900584795322
+ASD Amplicon,PRJNA453621,Internal Validation,0.8666666666666667
+ASD Amplicon,PRJNA687773,Internal Validation,0.9966386554621849
+ASD Amplicon,PRJEB27306,Within Learning,0.6944444444444444
+ASD Amplicon,PRJNA453621,Within Learning,1.0
+ASD Amplicon,PRJNA687773,Within Learning,0.9166666666666666
+PD Amplicon,PRJEB30615,LODO,0.7439102564102564
+PD Amplicon,PRJNA381395,LODO,0.694331983805668
+PD Amplicon,PRJNA601994,LODO,0.6327062861757975
+PD Amplicon,PRJEB30615,Internal Validation,0.7825396825396825
+PD Amplicon,PRJNA381395,Internal Validation,0.8837719298245613
+PD Amplicon,PRJNA601994,Internal Validation,1.0
+PD Amplicon,PRJEB30615,Within Learning,1.0
+PD Amplicon,PRJNA381395,Within Learning,1.0
+PD Amplicon,PRJNA601994,Within Learning,0.7218295218295218
+AD Amplicon,PRJNA489760,LODO,0.94
+AD Amplicon,PRJNA554111,LODO,0.6603569497025419
+AD Amplicon,PRJNA633959,LODO,0.6392957746478873
+AD Amplicon,PRJNA489760,Internal Validation,0.9430284857571214
+AD Amplicon,PRJNA554111,Internal Validation,0.9743589743589745
+AD Amplicon,PRJNA633959,Internal Validation,0.9733333333333334
+AD Amplicon,PRJNA489760,Within Learning,1.0
+AD Amplicon,PRJNA554111,Within Learning,0.9259259259259258
+AD Amplicon,PRJNA633959,Within Learning,0.9666666666666667
+UC Metagenomics,PRJNA389280_UC,LODO,0.8222222222222223
+UC Metagenomics,PRJNA400072_UC,LODO,0.756578947368421
+UC Metagenomics,PRJNA487636_UC,LODO,0.8307291666666666
+UC Metagenomics,PRJNA389280_UC,Internal Validation,0.8166666666666667
+UC Metagenomics,PRJNA400072_UC,Internal Validation,0.8854166666666667
+UC Metagenomics,PRJNA487636_UC,Internal Validation,0.8794642857142856
+UC Metagenomics,PRJNA389280_UC,Within Learning,0.5
+UC Metagenomics,PRJNA400072_UC,Within Learning,0.9403409090909092
+UC Metagenomics,PRJNA487636_UC,Within Learning,0.8153846153846154
+CD Metagenomics,CD_PRJEB1220_justControl,LODO,
+CD Metagenomics,PRJEB15371,LODO,0.9236224768139661
+CD Metagenomics,PRJNA400072,LODO,0.9255275974025974
+CD Metagenomics,PRJNA487636,LODO,0.8012152777777778
+CD Metagenomics,SRP057027,LODO,0.8089851325145443
+CD Metagenomics,CD_PRJEB1220_justControl,Internal Validation,0.9072693383038211
+CD Metagenomics,PRJEB15371,Internal Validation,0.9816926770708284
+CD Metagenomics,PRJNA400072,Internal Validation,0.993796992481203
+CD Metagenomics,PRJNA487636,Internal Validation,0.9919173776380781
+CD Metagenomics,SRP057027,Internal Validation,0.9815911976301313
+CD Metagenomics,PRJEB15371,Within Learning,1.0
+CD Metagenomics,PRJNA400072,Within Learning,0.9848484848484849
+CD Metagenomics,PRJNA487636,Within Learning,0.8791208791208791
+CD Metagenomics,SRP057027,Within Learning,1.0
+CRC Metagenomics,PRJEB10878,LODO,0.8448448448448448
+CRC Metagenomics,PRJEB12449,LODO,0.7775198938992042
+CRC Metagenomics,PRJEB27928,LODO,0.8843589743589743
+CRC Metagenomics,PRJEB6070,LODO,0.6849007765314926
+CRC Metagenomics,PRJEB7774,LODO,0.7780715670720958
+CRC Metagenomics,PRJNA447983,LODO,0.8638392857142857
+CRC Metagenomics,PRJEB10878,Internal Validation,0.8396694214876033
+CRC Metagenomics,PRJEB12449,Internal Validation,0.7952529994783516
+CRC Metagenomics,PRJEB27928,Internal Validation,0.7856166256494393
+CRC Metagenomics,PRJEB6070,Internal Validation,0.7680443246480984
+CRC Metagenomics,PRJEB7774,Internal Validation,0.8023360287511231
+CRC Metagenomics,PRJNA447983,Internal Validation,0.8031111111111111
+CRC Metagenomics,PRJEB10878,Within Learning,0.9939393939393939
+CRC Metagenomics,PRJEB12449,Within Learning,0.65
+CRC Metagenomics,PRJEB27928,Within Learning,0.9006410256410255
+CRC Metagenomics,PRJEB6070,Within Learning,0.7044534412955465
+CRC Metagenomics,PRJEB7774,Within Learning,0.7982456140350876
+CRC Metagenomics,PRJNA447983,Within Learning,0.888888888888889
+ASD Metagenomics,PRJEB23052,LODO,0.9182295573893473
+ASD Metagenomics,PRJNA451479,LODO,0.7627777777777778
+ASD Metagenomics,PRJNA516054,LODO,0.3151515151515151
+ASD Metagenomics,PRJNA686821,LODO,0.78375
+ASD Metagenomics,PRJEB23052,Internal Validation,0.861111111111111
+ASD Metagenomics,PRJNA451479,Internal Validation,0.9206730769230769
+ASD Metagenomics,PRJNA516054,Internal Validation,0.9841269841269842
+ASD Metagenomics,PRJNA686821,Internal Validation,0.9254807692307693
+ASD Metagenomics,PRJEB23052,Within Learning,1.0
+ASD Metagenomics,PRJNA451479,Within Learning,1.0
+ASD Metagenomics,PRJNA516054,Within Learning,0.9583333333333333
+ASD Metagenomics,PRJNA686821,Within Learning,1.0
