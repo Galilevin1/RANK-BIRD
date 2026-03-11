@@ -12,6 +12,7 @@ from figures.protocol_comparison_heatmap import plot_protocol_heatmap
 from figures.protocol_comparison_boxplots import plot_protocol_boxplots
 from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
 from figures.phenotype_grid import plot_figure_1a
+from figures.figure2 import plot_figure2b, run_figure2c
 from figures.figure3 import run_figure3
 from figures.figure4 import plot_figure4
 from figures.figure4e import run_figure4e_analysis, plot_figure4e
@@ -29,10 +30,10 @@ CONFIG = {
     # -----------------------
     # Pipeline control
     # -----------------------
-    "run_compute": True,      # run heavy protocol training
-    "run_aggregate":True,    # recompute summary
-    "run_stats": True,
-    "run_figures": ["1a", "1c", "1d", "1e", "3", "4"], # choose which figures to run: "1a", "1c", "1d", "1e", "3", "4", "4e"
+    "run_compute": False,      # run heavy protocol training
+    "run_aggregate": False,    # recompute summary
+    "run_stats": False,
+    "run_figures": ["2b", "2c"], # choose which figures to run: "1a", "1c", "1d", "1e", "2b", "2c", "3", "4", "4e"
 
     # -----------------------
     # Papers CSV (for figure 1c)
@@ -95,6 +96,7 @@ def main():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     FIG1_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1")
+    FIG2_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2")
     FIG3_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_3")
     FIG4_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_4")
 
@@ -196,6 +198,19 @@ def main():
         results_df = pd.read_csv(results_path)
         fig, ax = plot_protocol_boxplots(results_df)
         fig.savefig(FIG1_DIR / "protocol_boxplots.png", dpi=300)
+
+    if "2b" in CONFIG["run_figures"]:
+        fig = plot_figure2b(csv_path=str(PROJECT_ROOT / "Data" / "microbiome_analysis_results.csv"))
+        fig.savefig(FIG2_DIR / "figure2b_confounder_correlations.png", dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
+    if "2c" in CONFIG["run_figures"]:
+        run_figure2c(
+            phenotypes=phenotypes,
+            data_root=str(PROJECT_ROOT / "Data"),
+            figures_dir=str(FIG2_DIR),
+            apply_normalization=CONFIG["normalization"],
+        )
 
     if "3" in CONFIG["run_figures"]:
         run_figure3(
