@@ -17,6 +17,7 @@ from figures.figure2 import plot_figure2b, run_figure2c
 from figures.figure3 import run_figure3
 from figures.figure4 import plot_figure4
 from figures.figure4e import run_figure4e_analysis, plot_figure4e
+from figures.figure5 import plot_figure5
 from evaluation.data_loading import build_papers_auc_df, load_microbiome_datasets_with_targets
 from evaluation.pairwise_lodo import run_figure4_analysis
 
@@ -34,7 +35,7 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["1"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e"
+    "run_figures": ["5"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e"
 
     # -----------------------
     # Papers CSV (for figure 1c)
@@ -269,6 +270,20 @@ def main():
         )
         if results_4e is not None:
             plot_figure4e(results_4e, output_dir=str(FIG4_DIR))
+
+    if "5" in CONFIG["run_figures"]:
+        FIG5_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_5")
+        path_orig = PROJECT_ROOT / "experiments" / "results_global_original" / "protocol_results_per_dataset.csv"
+        path_norm = PROJECT_ROOT / "experiments" / "results_global_normalized" / "protocol_results_per_dataset.csv"
+        if path_orig.exists() and path_norm.exists():
+            fig = plot_figure5(
+                results_df_original=pd.read_csv(path_orig),
+                results_df_normalized=pd.read_csv(path_norm),
+            )
+            fig.savefig(FIG5_DIR / "figure5_original_vs_normalized.png", dpi=300, bbox_inches='tight')
+            plt.close(fig)
+        else:
+            print("Figure 5: missing result files — run pipeline with both global_original and global_normalized first.")
 
 
 if __name__ == "__main__":

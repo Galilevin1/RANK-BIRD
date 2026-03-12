@@ -256,21 +256,48 @@ def create_comprehensive_boxplot_comparison(
 
 
 
-def plot_protocol_boxplots(results_df):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.boxplot(
-        data=results_df,
-        x="protocol",
-        y="auc",
-        ax=ax
+def plot_protocol_boxplots(
+    results_df_left: pd.DataFrame,
+    results_df_right: pd.DataFrame = None,
+    label_left: str = "Original",
+    label_right: str = "Normalized",
+):
+    """
+    Plot protocol boxplots. If results_df_right is provided, draws two
+    side-by-side subplots sharing the same y-axis scale.
+    """
+    has_two = results_df_right is not None
+
+    fig, axes = plt.subplots(
+        1, 2 if has_two else 1,
+        figsize=(14 if has_two else 7, 6),
+        sharey=True,
     )
-    sns.stripplot(
-        data=results_df,
-        x="protocol",
-        y="auc",
-        color="black",
-        alpha=0.4,
-        ax=ax
-    )
-    ax.set_ylabel("AUC")
-    return fig, ax
+    if not has_two:
+        axes = [axes]
+
+    def _draw(ax, df, title):
+        sns.boxplot(data=df, x="protocol", y="auc", ax=ax,
+                    order=sorted(df["protocol"].unique()))
+        sns.stripplot(data=df, x="protocol", y="auc", color="black",
+                      alpha=0.4, ax=ax,
+                      order=sorted(df["protocol"].unique()))
+        ax.set_title(title, fontsize=13, fontweight="bold")
+        ax.set_xlabel("Method", fontsize=11)
+        ax.set_ylabel("AUC" if ax is axes[0] else "", fontsize=11)
+        ax.tick_params(axis="x", rotation=15)
+
+    _draw(axes[0], results_df_left, label_left)
+    if has_two:
+        _draw(axes[1], results_df_right, label_right)
+
+    # Shared y-axis scale: use combined min/max
+    all_auc = results_df_left["auc"].dropna()
+    if has_two:
+        all_auc = pd.concat([all_auc, results_df_right["auc"].dropna()])
+    y_min = max(0.0, all_auc.min() - 0.05)
+    y_max = min(1.0, all_auc.max() + 0.05)
+    axes[0].set_ylim(y_min, y_max)
+
+    plt.tight_layout()
+    return fig, axes
