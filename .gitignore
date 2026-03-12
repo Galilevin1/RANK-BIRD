@@ -33,3 +33,8 @@ Thumbs.db
 experiments/results/
 experiments/results_*/
 figures_out/
+
+# -----------------
+# Helper functions
+#------------------
+trails_Figures.py
