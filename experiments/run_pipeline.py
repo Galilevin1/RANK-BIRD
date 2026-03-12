@@ -12,6 +12,7 @@ from figures.protocol_comparison_heatmap import plot_protocol_heatmap
 from figures.protocol_comparison_boxplots import plot_protocol_boxplots
 from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
 from figures.phenotype_grid import plot_figure_1a
+from figures.figure1 import plot_figure1
 from figures.figure2 import plot_figure2b, run_figure2c
 from figures.figure3 import run_figure3
 from figures.figure4 import plot_figure4
@@ -33,7 +34,7 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["2b", "2c"], # choose which figures to run: "1a", "1c", "1d", "1e", "2b", "2c", "3", "4", "4e"
+    "run_figures": ["1"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e"
 
     # -----------------------
     # Papers CSV (for figure 1c)
@@ -171,6 +172,19 @@ def main():
     # ================================
     # STEP 4: Figures
     # ================================
+    if "1" in CONFIG["run_figures"]:
+        results_df  = pd.read_csv(results_path)
+        summary_df  = pd.read_csv(summary_path)
+        fig, stats = plot_figure1(
+            results_df=results_df,
+            summary_df=summary_df,
+            papers_csv=str(PROJECT_ROOT / CONFIG["papers_csv"]),
+            phenotypes=phenotypes,
+        )
+        fig.savefig(FIG1_DIR / "figure1_combined.png", dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        stats.to_csv(RESULTS_DIR / "papers_vs_lgbm_stats.csv", index=False)
+
     if "1a" in CONFIG["run_figures"]:
         fig, ax = plot_figure_1a()
         fig.savefig(FIG1_DIR / "paper_phenotype_grid.png", dpi=300, bbox_inches='tight')
