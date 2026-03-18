@@ -390,3 +390,557 @@ def run_stability_investigation(
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"\nSaved: {out_path}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STEP 2 — Microbe characterization at best thresholds
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_BEST_THRESHOLDS = {
+    "Metagenomics": 0.25,
+    "Amplicon":     0.40,
+}
+
+
+def _get_taxonomy_level(feature: str) -> str:
+    for prefix, label in [("s__", "species"), ("g__", "genus"),
+                           ("f__", "family"),  ("o__", "order"),
+                           ("c__", "class"),   ("p__", "phylum")]:
+        if _has_named(feature, prefix):
+            return label
+    return "unknown"
+
+
+_LEVEL_PREFIX = {
+    "species": "s__", "genus": "g__", "family": "f__",
+    "order":   "o__", "class": "c__", "phylum": "p__",
+}
+
+
+def _extract_level_name(feature: str, level: str) -> str:
+    """Extract the taxon name at the given level from a feature string."""
+    prefix = _LEVEL_PREFIX.get(level)
+    if prefix is None:
+        return feature
+    m = re.search(re.escape(prefix) + r'(\w+)', feature)
+    return m.group(1) if m else feature
+
+
+def _build_taxa_counts(stats_df: pd.DataFrame, levels: list) -> pd.DataFrame:
+    """
+    For each microbe, extract its taxon name at its assigned level.
+    Returns a long-form DataFrame: [level, taxon_name, status, count].
+    """
+    rows = []
+    for lvl in levels:
+        if lvl == "unknown":
+            continue
+        sub = stats_df[stats_df["taxonomy_level"] == lvl]
+        for status in ("kept", "dropped"):
+            names = (
+                sub[sub["status"] == status]["microbe"]
+                .apply(lambda m: _extract_level_name(m, lvl))
+            )
+            for name, cnt in names.value_counts().items():
+                rows.append({"level": lvl, "taxon_name": name, "status": status, "count": cnt})
+    return pd.DataFrame(rows)
+
+
+def _count_unique_taxa(df_group: pd.DataFrame, levels: list) -> pd.Series:
+    """For each taxonomy level, count unique taxon names in df_group."""
+    counts = {}
+    for lvl in levels:
+        sub = df_group[df_group["taxonomy_level"] == lvl]
+        if sub.empty or lvl == "unknown":
+            counts[lvl] = int(sub.shape[0])
+            continue
+        counts[lvl] = sub["microbe"].apply(
+            lambda m: _extract_level_name(m, lvl)
+        ).nunique()
+    return pd.Series(counts, dtype=int)
+
+
+def _shannon_diversity(row: np.ndarray) -> float:
+    row = row[row > 0]
+    if len(row) == 0:
+        return 0.0
+    p = row / row.sum()
+    return float(-np.sum(p * np.log(p + 1e-12)))
+
+
+def _compute_per_microbe_stats(
+    microbiome_dfs: list,
+    target_dfs: list,
+    dataset_names: list,
+    all_microbes: list,
+    kept_set: set,
+) -> pd.DataFrame:
+    """
+    Build a per-microbe DataFrame with sparsity, abundance, prevalence,
+    CV (stability metric), taxonomy level, MI with target, and kept/dropped label.
+    """
+    from sklearn.feature_selection import mutual_info_classif
+
+    # Pool all samples
+    frames = [df.reindex(columns=all_microbes, fill_value=0.0)
+              for df in microbiome_dfs]
+    combined = pd.concat(frames, axis=0, ignore_index=True)
+
+    # Per-microbe MI across all datasets
+    mi_sums   = {m: [] for m in all_microbes}
+    for df, target in zip(microbiome_dfs, target_dfs):
+        X = df.reindex(columns=all_microbes, fill_value=0.0)
+        y = target.values if hasattr(target, "values") else np.array(target)
+        if len(np.unique(y)) < 2 or len(y) < 10:
+            continue
+        try:
+            mi = mutual_info_classif(X, y, discrete_features=False, random_state=42)
+            for i, m in enumerate(all_microbes):
+                mi_sums[m].append(mi[i])
+        except Exception:
+            pass
+
+    # CV per microbe across datasets (non-zero fraction per dataset)
+    nz_df = nonzero_percent_by_dataset(microbiome_dfs, dataset_names, all_microbes)
+    means = nz_df.mean(axis=0)
+    stds  = nz_df.std(axis=0, ddof=1)
+    cv    = (stds / means.replace(0, np.nan)).fillna(0)
+
+    rows = []
+    for m in all_microbes:
+        col = combined[m]
+        rows.append({
+            "microbe":               m,
+            "status":                "kept" if m in kept_set else "dropped",
+            "taxonomy_level":        _get_taxonomy_level(m),
+            "sparsity":              float((col == 0).mean()),
+            "mean_nonzero_abund":    float(col[col > 0].mean()) if (col > 0).any() else 0.0,
+            "std_abund":             float(col.std()),
+            "prevalence_datasets":   float((nz_df[m] > 0).mean()),
+            "cv_across_datasets":    float(cv[m]),
+            "mean_MI_with_target":   float(np.mean(mi_sums[m])) if mi_sums[m] else 0.0,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def _plot_characterization(stats_df: pd.DataFrame, dtype: str, output_dir: Path):
+    """Six-panel figure comparing kept vs dropped microbes."""
+    kept    = stats_df[stats_df["status"] == "kept"]
+    dropped = stats_df[stats_df["status"] == "dropped"]
+
+    fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+    fig.suptitle(f"Kept vs Dropped Microbes — {dtype}", fontsize=14, fontweight="bold")
+
+    def _box(ax, col, title, ylabel):
+        data = [kept[col].dropna().values, dropped[col].dropna().values]
+        bp = ax.boxplot(data, labels=["Kept", "Dropped"], patch_artist=True,
+                        medianprops=dict(color="red", linewidth=2))
+        bp["boxes"][0].set_facecolor("#AED6F1")
+        bp["boxes"][1].set_facecolor("#F9A825")
+        ax.set_title(title, fontsize=11, fontweight="bold")
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    _box(axes[0, 0], "sparsity",            "Sparsity (fraction zeros)",       "Fraction zeros")
+    _box(axes[0, 1], "cv_across_datasets",  "CV across datasets (stability)",  "CV (std/mean)")
+    _box(axes[0, 2], "mean_MI_with_target", "Mean MI with target",             "MI")
+    _box(axes[1, 0], "mean_nonzero_abund",  "Mean non-zero abundance",         "Abundance")
+    _box(axes[1, 1], "prevalence_datasets", "Prevalence (fraction datasets)",  "Fraction datasets")
+
+    # Taxonomy level distribution — unique taxon names per level
+    ax = axes[1, 2]
+    levels = ["species", "genus", "family", "order", "class", "phylum", "unknown"]
+    kept_counts    = _count_unique_taxa(kept,    levels).reindex(levels, fill_value=0)
+    dropped_counts = _count_unique_taxa(dropped, levels).reindex(levels, fill_value=0)
+    x = np.arange(len(levels))
+    w = 0.35
+    ax.bar(x - w/2, kept_counts.values,    w, label="Kept",    color="#AED6F1")
+    ax.bar(x + w/2, dropped_counts.values, w, label="Dropped", color="#F9A825")
+    ax.set_xticks(x)
+    ax.set_xticklabels(levels, rotation=30, ha="right", fontsize=9)
+    ax.set_title("Taxonomy level distribution (unique taxa)", fontsize=11, fontweight="bold")
+    ax.set_ylabel("# unique taxon names", fontsize=10)
+    ax.legend(fontsize=9)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    path = output_dir / f"characterization_{dtype.lower()}.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
+def _plot_alpha_diversity(
+    microbiome_dfs: list,
+    all_microbes: list,
+    kept_set: set,
+    dtype: str,
+    output_dir: Path,
+):
+    """Compare per-sample Shannon diversity using all vs kept-only microbes."""
+    all_cols  = list(all_microbes)
+    kept_cols = [m for m in all_microbes if m in kept_set]
+
+    div_all, div_kept = [], []
+    for df in microbiome_dfs:
+        X_all  = df.reindex(columns=all_cols,  fill_value=0.0).values
+        X_kept = df.reindex(columns=kept_cols, fill_value=0.0).values
+        div_all.extend( [_shannon_diversity(r) for r in X_all])
+        div_kept.extend([_shannon_diversity(r) for r in X_kept])
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    bp = ax.boxplot([div_all, div_kept],
+                    labels=["All microbes", "Kept microbes"],
+                    patch_artist=True,
+                    medianprops=dict(color="red", linewidth=2))
+    bp["boxes"][0].set_facecolor("#D5F5E3")
+    bp["boxes"][1].set_facecolor("#AED6F1")
+    ax.set_title(f"Per-sample Shannon diversity — {dtype}", fontsize=12, fontweight="bold")
+    ax.set_ylabel("Shannon index", fontsize=11)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+    plt.tight_layout()
+    path = output_dir / f"alpha_diversity_{dtype.lower()}.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
+# ── Statistical tests & feature importance ────────────────────────────────────
+
+_CONTINUOUS_METRICS = [
+    "sparsity",
+    "cv_across_datasets",
+    "mean_MI_with_target",
+    "mean_nonzero_abund",
+    "prevalence_datasets",
+]
+
+
+def _run_statistical_tests(stats_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    For each continuous metric: Mann-Whitney U test (kept vs dropped).
+    Returns a DataFrame with columns:
+        metric, U_stat, p_value, p_fdr, significant, median_kept, median_dropped, effect_direction
+    """
+    from scipy.stats import mannwhitneyu
+    from statsmodels.stats.multitest import multipletests
+
+    kept    = stats_df[stats_df["status"] == "kept"]
+    dropped = stats_df[stats_df["status"] == "dropped"]
+
+    rows = []
+    for metric in _CONTINUOUS_METRICS:
+        k = kept[metric].dropna().values
+        d = dropped[metric].dropna().values
+        if len(k) < 2 or len(d) < 2:
+            rows.append({"metric": metric, "U_stat": np.nan, "p_value": np.nan,
+                         "median_kept": np.nan, "median_dropped": np.nan,
+                         "effect_direction": "n/a"})
+            continue
+        U, p = mannwhitneyu(k, d, alternative="two-sided")
+        direction = "kept > dropped" if np.median(k) > np.median(d) else "kept < dropped"
+        rows.append({
+            "metric":           metric,
+            "U_stat":           U,
+            "p_value":          p,
+            "median_kept":      float(np.median(k)),
+            "median_dropped":   float(np.median(d)),
+            "effect_direction": direction,
+        })
+
+    result = pd.DataFrame(rows)
+    valid  = result["p_value"].notna()
+    if valid.any():
+        _, p_fdr, _, _ = multipletests(result.loc[valid, "p_value"], method="fdr_bh")
+        result.loc[valid, "p_fdr"] = p_fdr
+    result["significant"] = result.get("p_fdr", result["p_value"]) < 0.05
+    return result
+
+
+def _run_importance_model(stats_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Train logistic regression and random forest to predict kept/dropped.
+    Returns a DataFrame with columns: metric, logistic_coef (abs), rf_importance, mean_importance.
+    Rows sorted by mean_importance descending.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.preprocessing import StandardScaler
+
+    df = stats_df[_CONTINUOUS_METRICS + ["status"]].dropna()
+    X  = df[_CONTINUOUS_METRICS].values
+    y  = (df["status"] == "kept").astype(int).values
+
+    if len(np.unique(y)) < 2 or len(y) < 10:
+        return pd.DataFrame({"metric": _CONTINUOUS_METRICS})
+
+    # Logistic regression on standardised features
+    scaler = StandardScaler()
+    X_sc   = scaler.fit_transform(X)
+    lr     = LogisticRegression(max_iter=1000, random_state=42)
+    lr.fit(X_sc, y)
+    lr_coef = np.abs(lr.coef_[0])
+
+    # Random forest
+    rf = RandomForestClassifier(n_estimators=500, random_state=42, n_jobs=-1)
+    rf.fit(X, y)
+    rf_imp = rf.feature_importances_
+
+    # Normalise both to [0, 1] for a fair combined rank
+    lr_norm = lr_coef / (lr_coef.sum() + 1e-12)
+    rf_norm = rf_imp  / (rf_imp.sum()  + 1e-12)
+
+    result = pd.DataFrame({
+        "metric":          _CONTINUOUS_METRICS,
+        "logistic_coef":   lr_coef,
+        "rf_importance":   rf_imp,
+        "lr_norm":         lr_norm,
+        "rf_norm":         rf_norm,
+        "mean_importance": (lr_norm + rf_norm) / 2,
+    }).sort_values("mean_importance", ascending=False).reset_index(drop=True)
+
+    return result
+
+
+def _plot_statistical_summary(
+    stats_df: pd.DataFrame,
+    test_results: pd.DataFrame,
+    importance_df: pd.DataFrame,
+    dtype: str,
+    output_dir: Path,
+):
+    """
+    Two-panel figure:
+      Left  — feature importance (LR + RF bars, sorted by mean importance)
+      Right — significance table (metric, medians, p_fdr, direction)
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    fig.suptitle(
+        f"Kept vs Dropped Microbes — Statistical Analysis ({dtype})",
+        fontsize=14, fontweight="bold",
+    )
+
+    # ── Left: importance bars ────────────────────────────────────────────────
+    ax = axes[0]
+    if "logistic_coef" in importance_df.columns:
+        metrics = importance_df["metric"].tolist()
+        x = np.arange(len(metrics))
+        w = 0.35
+        ax.barh(x + w/2, importance_df["lr_norm"], w,
+                label="Logistic Regression (|coef|)", color="#5DADE2", alpha=0.85)
+        ax.barh(x - w/2, importance_df["rf_norm"], w,
+                label="Random Forest (importance)", color="#F39C12", alpha=0.85)
+        ax.set_yticks(x)
+        ax.set_yticklabels(metrics, fontsize=10)
+        ax.invert_yaxis()
+        ax.set_xlabel("Normalised importance", fontsize=11)
+        ax.set_title("Feature importance for kept/dropped prediction", fontsize=11, fontweight="bold")
+        ax.legend(fontsize=9)
+        ax.grid(axis="x", linestyle="--", alpha=0.3)
+    else:
+        ax.text(0.5, 0.5, "Not enough data", ha="center", va="center", transform=ax.transAxes)
+
+    # ── Right: significance table ────────────────────────────────────────────
+    ax = axes[1]
+    ax.axis("off")
+
+    _METRIC_LABELS = {
+        "sparsity":            "Sparsity\n(frac. zeros)",
+        "cv_across_datasets":  "CV across\ndatasets",
+        "mean_MI_with_target": "MI with target\n(mean/dataset)",
+        "mean_nonzero_abund":  "Non-zero abund.\n(mean/sample)",
+        "prevalence_datasets": "Prevalence\n(frac. datasets)",
+    }
+
+    tr = test_results.copy()
+    tr["p_fdr"]  = tr.get("p_fdr", pd.Series(np.nan, index=tr.index))
+    tr["sig"]    = tr["significant"].map({True: "**", False: ""}).fillna("")
+
+    col_labels = ["Metric", "Median\n(kept)", "Median\n(dropped)", "p (FDR)", "Sig", "Direction"]
+    table_data = []
+    for _, row in tr.iterrows():
+        table_data.append([
+            _METRIC_LABELS.get(row["metric"], row["metric"]),
+            f"{row['median_kept']:.4f}"    if pd.notna(row.get("median_kept"))    else "—",
+            f"{row['median_dropped']:.4f}" if pd.notna(row.get("median_dropped")) else "—",
+            f"{row['p_fdr']:.2e}"          if pd.notna(row.get("p_fdr"))          else "—",
+            row["sig"],
+            row.get("effect_direction", ""),
+        ])
+
+    col_widths = [0.28, 0.13, 0.13, 0.12, 0.06, 0.22]
+    tbl = ax.table(
+        cellText=table_data,
+        colLabels=col_labels,
+        colWidths=col_widths,
+        loc="center",
+        cellLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.scale(1, 2.2)
+    # Highlight significant rows
+    for (r, c), cell in tbl.get_celld().items():
+        if r == 0:
+            cell.set_facecolor("#D6EAF8")
+            cell.set_text_props(fontweight="bold")
+        elif r > 0 and r <= len(table_data):
+            sig_val = table_data[r - 1][4]
+            cell.set_facecolor("#D5F5E3" if sig_val else "white")
+
+    ax.set_title("Mann-Whitney U test (FDR-corrected)", fontsize=11, fontweight="bold", pad=20)
+
+    plt.tight_layout()
+    path = output_dir / f"statistical_summary_{dtype.lower()}.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
+def _plot_top_taxa_per_level(
+    stats_df: pd.DataFrame,
+    dtype: str,
+    output_dir: Path,
+    top_n: int = 15,
+):
+    """
+    For each taxonomy level: horizontal grouped bar chart of the top_n most
+    common specific taxon names in kept vs dropped microbes.
+
+    E.g. at family level it shows how many microbes carrying 'Lachnospiraceae'
+    are kept vs dropped.
+    """
+    levels = ["species", "genus", "family", "order", "class", "phylum"]
+    taxa_df = _build_taxa_counts(stats_df, levels)
+
+    fig, axes = plt.subplots(2, 3, figsize=(20, 14))
+    fig.suptitle(
+        f"Top taxa per level: Kept vs Dropped ({dtype})",
+        fontsize=14, fontweight="bold",
+    )
+
+    for ax, lvl in zip(axes.flat, levels):
+        sub = taxa_df[taxa_df["level"] == lvl]
+        if sub.empty:
+            ax.set_title(lvl, fontsize=11)
+            ax.axis("off")
+            continue
+
+        # Pivot to wide: index=taxon_name, cols=kept/dropped
+        wide = (
+            sub.pivot_table(index="taxon_name", columns="status",
+                            values="count", aggfunc="sum", fill_value=0)
+            .assign(total=lambda d: d.get("kept", 0) + d.get("dropped", 0))
+            .sort_values("total", ascending=False)
+            .head(top_n)
+            .drop(columns="total")
+            .sort_values("kept" if "kept" in sub["status"].values else sub["status"].iloc[0],
+                         ascending=True)   # ascending so top is at top of chart
+        )
+
+        taxa   = wide.index.tolist()
+        kept_v = wide.get("kept",    pd.Series(0, index=wide.index)).values
+        drop_v = wide.get("dropped", pd.Series(0, index=wide.index)).values
+
+        y = np.arange(len(taxa))
+        h = 0.35
+        ax.barh(y + h/2, kept_v, h, label="Kept",    color="#AED6F1", alpha=0.9)
+        ax.barh(y - h/2, drop_v, h, label="Dropped", color="#F9A825", alpha=0.9)
+        ax.set_yticks(y)
+        ax.set_yticklabels(taxa, fontsize=8)
+        ax.set_xlabel("# microbe features", fontsize=9)
+        ax.set_title(f"{lvl.capitalize()} level (top {top_n})",
+                     fontsize=11, fontweight="bold")
+        ax.legend(fontsize=8, loc="lower right")
+        ax.grid(axis="x", linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    path = output_dir / f"top_taxa_per_level_{dtype.lower()}.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: {path}")
+
+
+def run_microbe_characterization(
+    phenotypes: list,
+    output_dir: Path,
+    threshold_metagenomics: float = None,
+    threshold_amplicon: float = None,
+):
+    """
+    Step 2: characterize kept vs dropped microbes at the best stability threshold.
+
+    Parameters
+    ----------
+    phenotypes             : list of (phenotype, dtype) tuples
+    output_dir             : directory to write outputs
+    threshold_metagenomics : stability percentile for Metagenomics (default 0.25)
+    threshold_amplicon     : stability percentile for Amplicon (default 0.40)
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    thresholds = {
+        "Metagenomics": threshold_metagenomics or _BEST_THRESHOLDS["Metagenomics"],
+        "Amplicon":     threshold_amplicon     or _BEST_THRESHOLDS["Amplicon"],
+    }
+
+    for dtype, threshold in thresholds.items():
+        print(f"\n=== Characterization: {dtype}  (threshold={threshold}) ===")
+
+        # Load all datasets for this dtype
+        all_microbiome, all_names = _load_microbiome_for_dtype(phenotypes, dtype)
+        # Also load targets for MI
+        all_targets = []
+        for phenotype, t in phenotypes:
+            if t != dtype:
+                continue
+            folder = DATA_ROOT / f"{phenotype} {t}"
+            _, tgts, names = load_microbiome_datasets_with_targets(folder)
+            all_targets.extend(tgts)
+
+        # Compute stability filter
+        all_microbes = union_microbes(all_microbiome)
+        nz_df        = nonzero_percent_by_dataset(all_microbiome, all_names, all_microbes)
+        kept_list    = auto_stability_filter(nz_df, percentile=threshold)
+        kept_set     = set(kept_list)
+        dropped_list = [m for m in all_microbes if m not in kept_set]
+
+        # Save microbe lists
+        pd.DataFrame({"microbe": kept_list,    "status": "kept"}).to_csv(
+            output_dir / f"kept_microbes_{dtype.lower()}.csv", index=False)
+        pd.DataFrame({"microbe": dropped_list, "status": "dropped"}).to_csv(
+            output_dir / f"dropped_microbes_{dtype.lower()}.csv", index=False)
+        print(f"  Kept: {len(kept_list)}  |  Dropped: {len(dropped_list)}")
+
+        # Per-microbe statistics
+        print("  Computing per-microbe statistics + MI ...")
+        stats_df = _compute_per_microbe_stats(
+            all_microbiome, all_targets, all_names, all_microbes, kept_set
+        )
+        stats_df.to_csv(output_dir / f"microbe_stats_{dtype.lower()}.csv", index=False)
+
+        # Characterization plots
+        _plot_characterization(stats_df, dtype, output_dir)
+
+        # Top taxa per level (kept vs dropped)
+        print("  Plotting top taxa per level ...")
+        _plot_top_taxa_per_level(stats_df, dtype, output_dir)
+
+        # Alpha diversity comparison
+        print("  Computing alpha diversity ...")
+        _plot_alpha_diversity(all_microbiome, all_microbes, kept_set, dtype, output_dir)
+
+        # Statistical tests + feature importance
+        print("  Running statistical tests ...")
+        test_results = _run_statistical_tests(stats_df)
+        test_results.to_csv(output_dir / f"statistical_tests_{dtype.lower()}.csv", index=False)
+
+        print("  Running importance model ...")
+        importance_df = _run_importance_model(stats_df)
+        importance_df.to_csv(output_dir / f"feature_importance_{dtype.lower()}.csv", index=False)
+
+        _plot_statistical_summary(stats_df, test_results, importance_df, dtype, output_dir)
+
+    print("\nCharacterization complete.")

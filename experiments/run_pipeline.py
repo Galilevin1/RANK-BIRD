@@ -18,7 +18,9 @@ from figures.figure3 import run_figure3
 from figures.figure4 import plot_figure4
 from figures.figure4e import run_figure4e_analysis, plot_figure4e
 from figures.figure5 import plot_figure5
-from experiments.investigate_stability_threshold import run_stability_investigation
+from experiments.investigate_stability_threshold import (
+    run_stability_investigation, run_microbe_characterization,
+)
 from evaluation.data_loading import build_papers_auc_df, load_microbiome_datasets_with_targets
 from evaluation.pairwise_lodo import run_figure4_analysis
 
@@ -37,8 +39,10 @@ CONFIG = {
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
     "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-    "run_investigations": ["stability_threshold"],  # "stability_threshold"
-    "investigations_plot_only": True,   # True = reload CSVs, False = recompute
+    "run_investigations": ["stability_characterization"],  # "stability_threshold", "stability_characterization"
+    "investigations_plot_only": True,   # For  "stability_threshold" invastigation # True = reload CSVs, False = recompute
+    "characterization_threshold_metagenomics": 0.25,
+    "characterization_threshold_amplicon":     0.40,
 
     # -----------------------
     # Papers CSV (for figure 1c)
@@ -280,6 +284,15 @@ def main():
             phenotypes=phenotypes,
             output_dir=inv_dir,
             plot_only=CONFIG.get("investigations_plot_only", False),
+        )
+
+    if "stability_characterization" in CONFIG["run_investigations"]:
+        char_dir = PROJECT_ROOT / "investigations" / "stability_characterization"
+        run_microbe_characterization(
+            phenotypes=phenotypes,
+            output_dir=char_dir,
+            threshold_metagenomics=CONFIG["characterization_threshold_metagenomics"],
+            threshold_amplicon=CONFIG["characterization_threshold_amplicon"],
         )
 
     if "5" in CONFIG["run_figures"]:
