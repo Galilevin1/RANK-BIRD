@@ -293,6 +293,7 @@ def main():
             output_dir=char_dir,
             threshold_metagenomics=CONFIG["characterization_threshold_metagenomics"],
             threshold_amplicon=CONFIG["characterization_threshold_amplicon"],
+            plot_only=CONFIG.get("investigations_plot_only", False),
         )
 
     if "5" in CONFIG["run_figures"]:

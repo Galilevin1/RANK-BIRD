@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend — avoids tkinter threading errors
 import matplotlib.pyplot as plt
 
 from src.rankbird.normalization.stability import (
@@ -490,7 +492,7 @@ def _compute_per_microbe_stats(
     mi_sums   = {m: [] for m in all_microbes}
     for df, target in zip(microbiome_dfs, target_dfs):
         X = df.reindex(columns=all_microbes, fill_value=0.0)
-        y = target.values if hasattr(target, "values") else np.array(target)
+        y = (target.values if hasattr(target, "values") else np.array(target)).ravel()
         if len(np.unique(y)) < 2 or len(y) < 10:
             continue
         try:
@@ -513,7 +515,7 @@ def _compute_per_microbe_stats(
             "microbe":               m,
             "status":                "kept" if m in kept_set else "dropped",
             "taxonomy_level":        _get_taxonomy_level(m),
-            "sparsity":              float((col == 0).mean()),
+            "nonzero_fraction":       float((col != 0).mean()),
             "mean_nonzero_abund":    float(col[col > 0].mean()) if (col > 0).any() else 0.0,
             "std_abund":             float(col.std()),
             "prevalence_datasets":   float((nz_df[m] > 0).mean()),
@@ -542,7 +544,7 @@ def _plot_characterization(stats_df: pd.DataFrame, dtype: str, output_dir: Path)
         ax.set_ylabel(ylabel, fontsize=10)
         ax.grid(axis="y", linestyle="--", alpha=0.3)
 
-    _box(axes[0, 0], "sparsity",            "Sparsity (fraction zeros)",       "Fraction zeros")
+    _box(axes[0, 0], "nonzero_fraction",      "Non-zero fraction",               "Fraction non-zero")
     _box(axes[0, 1], "cv_across_datasets",  "CV across datasets (stability)",  "CV (std/mean)")
     _box(axes[0, 2], "mean_MI_with_target", "Mean MI with target",             "MI")
     _box(axes[1, 0], "mean_nonzero_abund",  "Mean non-zero abundance",         "Abundance")
@@ -550,7 +552,7 @@ def _plot_characterization(stats_df: pd.DataFrame, dtype: str, output_dir: Path)
 
     # Taxonomy level distribution — unique taxon names per level
     ax = axes[1, 2]
-    levels = ["species", "genus", "family", "order", "class", "phylum", "unknown"]
+    levels = ["species", "genus", "family", "order", "class", "phylum"]
     kept_counts    = _count_unique_taxa(kept,    levels).reindex(levels, fill_value=0)
     dropped_counts = _count_unique_taxa(dropped, levels).reindex(levels, fill_value=0)
     x = np.arange(len(levels))
@@ -609,7 +611,7 @@ def _plot_alpha_diversity(
 # ── Statistical tests & feature importance ────────────────────────────────────
 
 _CONTINUOUS_METRICS = [
-    "sparsity",
+    "nonzero_fraction",
     "cv_across_datasets",
     "mean_MI_with_target",
     "mean_nonzero_abund",
@@ -667,6 +669,8 @@ def _run_importance_model(stats_df: pd.DataFrame) -> pd.DataFrame:
     from sklearn.linear_model import LogisticRegression
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.preprocessing import StandardScaler
+    from sklearn.model_selection import StratifiedKFold, cross_val_score
+    from sklearn.pipeline import make_pipeline
 
     df = stats_df[_CONTINUOUS_METRICS + ["status"]].dropna()
     X  = df[_CONTINUOUS_METRICS].values
@@ -675,17 +679,27 @@ def _run_importance_model(stats_df: pd.DataFrame) -> pd.DataFrame:
     if len(np.unique(y)) < 2 or len(y) < 10:
         return pd.DataFrame({"metric": _CONTINUOUS_METRICS})
 
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
     # Logistic regression on standardised features
     scaler = StandardScaler()
     X_sc   = scaler.fit_transform(X)
     lr     = LogisticRegression(max_iter=1000, random_state=42)
     lr.fit(X_sc, y)
     lr_coef = np.abs(lr.coef_[0])
+    lr_auc_scores = cross_val_score(
+        make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, random_state=42)),
+        X, y, cv=cv, scoring="roc_auc"
+    )
 
     # Random forest
     rf = RandomForestClassifier(n_estimators=500, random_state=42, n_jobs=-1)
     rf.fit(X, y)
     rf_imp = rf.feature_importances_
+    rf_auc_scores = cross_val_score(
+        RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1),
+        X, y, cv=cv, scoring="roc_auc"
+    )
 
     # Normalise both to [0, 1] for a fair combined rank
     lr_norm = lr_coef / (lr_coef.sum() + 1e-12)
@@ -699,6 +713,12 @@ def _run_importance_model(stats_df: pd.DataFrame) -> pd.DataFrame:
         "rf_norm":         rf_norm,
         "mean_importance": (lr_norm + rf_norm) / 2,
     }).sort_values("mean_importance", ascending=False).reset_index(drop=True)
+
+    # Attach AUC scores as metadata columns (same value repeated for convenience)
+    result["lr_auc_mean"] = lr_auc_scores.mean()
+    result["lr_auc_std"]  = lr_auc_scores.std()
+    result["rf_auc_mean"] = rf_auc_scores.mean()
+    result["rf_auc_std"]  = rf_auc_scores.std()
 
     return result
 
@@ -735,7 +755,21 @@ def _plot_statistical_summary(
         ax.set_yticklabels(metrics, fontsize=10)
         ax.invert_yaxis()
         ax.set_xlabel("Normalised importance", fontsize=11)
-        ax.set_title("Feature importance for kept/dropped prediction", fontsize=11, fontweight="bold")
+
+        # AUC subtitle
+        if "lr_auc_mean" in importance_df.columns:
+            lr_auc = importance_df["lr_auc_mean"].iloc[0]
+            lr_std = importance_df["lr_auc_std"].iloc[0]
+            rf_auc = importance_df["rf_auc_mean"].iloc[0]
+            rf_std = importance_df["rf_auc_std"].iloc[0]
+            auc_str = (f"5-fold CV AUC — LR: {lr_auc:.3f} ± {lr_std:.3f}  |  "
+                       f"RF: {rf_auc:.3f} ± {rf_std:.3f}")
+        else:
+            auc_str = ""
+        ax.set_title(
+            f"Feature importance for kept/dropped prediction\n{auc_str}",
+            fontsize=10, fontweight="bold",
+        )
         ax.legend(fontsize=9)
         ax.grid(axis="x", linestyle="--", alpha=0.3)
     else:
@@ -746,7 +780,7 @@ def _plot_statistical_summary(
     ax.axis("off")
 
     _METRIC_LABELS = {
-        "sparsity":            "Sparsity\n(frac. zeros)",
+        "nonzero_fraction":    "Non-zero\nfraction",
         "cv_across_datasets":  "CV across\ndatasets",
         "mean_MI_with_target": "MI with target\n(mean/dataset)",
         "mean_nonzero_abund":  "Non-zero abund.\n(mean/sample)",
@@ -867,6 +901,7 @@ def run_microbe_characterization(
     output_dir: Path,
     threshold_metagenomics: float = None,
     threshold_amplicon: float = None,
+    plot_only: bool = False,
 ):
     """
     Step 2: characterize kept vs dropped microbes at the best stability threshold.
@@ -877,6 +912,7 @@ def run_microbe_characterization(
     output_dir             : directory to write outputs
     threshold_metagenomics : stability percentile for Metagenomics (default 0.25)
     threshold_amplicon     : stability percentile for Amplicon (default 0.40)
+    plot_only              : if True, reload existing CSVs and only regenerate figures
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -889,37 +925,52 @@ def run_microbe_characterization(
     for dtype, threshold in thresholds.items():
         print(f"\n=== Characterization: {dtype}  (threshold={threshold}) ===")
 
-        # Load all datasets for this dtype
-        all_microbiome, all_names = _load_microbiome_for_dtype(phenotypes, dtype)
-        # Also load targets for MI
-        all_targets = []
-        for phenotype, t in phenotypes:
-            if t != dtype:
+        stats_path = output_dir / f"microbe_stats_{dtype.lower()}.csv"
+
+        if plot_only:
+            if not stats_path.exists():
+                print(f"  [SKIP] {stats_path} not found — run without plot_only first.")
                 continue
-            folder = DATA_ROOT / f"{phenotype} {t}"
-            _, tgts, names = load_microbiome_datasets_with_targets(folder)
-            all_targets.extend(tgts)
+            print("  [plot_only] Loading existing microbe stats ...")
+            stats_df = pd.read_csv(stats_path)
 
-        # Compute stability filter
-        all_microbes = union_microbes(all_microbiome)
-        nz_df        = nonzero_percent_by_dataset(all_microbiome, all_names, all_microbes)
-        kept_list    = auto_stability_filter(nz_df, percentile=threshold)
-        kept_set     = set(kept_list)
-        dropped_list = [m for m in all_microbes if m not in kept_set]
+            # Load raw data only for alpha diversity (cheap I/O, no MI)
+            all_microbiome, all_names = _load_microbiome_for_dtype(phenotypes, dtype)
+            all_microbes = union_microbes(all_microbiome)
+            kept_set     = set(stats_df.loc[stats_df["status"] == "kept", "microbe"])
 
-        # Save microbe lists
-        pd.DataFrame({"microbe": kept_list,    "status": "kept"}).to_csv(
-            output_dir / f"kept_microbes_{dtype.lower()}.csv", index=False)
-        pd.DataFrame({"microbe": dropped_list, "status": "dropped"}).to_csv(
-            output_dir / f"dropped_microbes_{dtype.lower()}.csv", index=False)
-        print(f"  Kept: {len(kept_list)}  |  Dropped: {len(dropped_list)}")
+        else:
+            # Load all datasets for this dtype
+            all_microbiome, all_names = _load_microbiome_for_dtype(phenotypes, dtype)
+            # Also load targets for MI
+            all_targets = []
+            for phenotype, t in phenotypes:
+                if t != dtype:
+                    continue
+                folder = DATA_ROOT / f"{phenotype} {t}"
+                _, tgts, names = load_microbiome_datasets_with_targets(folder)
+                all_targets.extend(tgts)
 
-        # Per-microbe statistics
-        print("  Computing per-microbe statistics + MI ...")
-        stats_df = _compute_per_microbe_stats(
-            all_microbiome, all_targets, all_names, all_microbes, kept_set
-        )
-        stats_df.to_csv(output_dir / f"microbe_stats_{dtype.lower()}.csv", index=False)
+            # Compute stability filter
+            all_microbes = union_microbes(all_microbiome)
+            nz_df        = nonzero_percent_by_dataset(all_microbiome, all_names, all_microbes)
+            kept_list    = auto_stability_filter(nz_df, percentile=threshold)
+            kept_set     = set(kept_list)
+            dropped_list = [m for m in all_microbes if m not in kept_set]
+
+            # Save microbe lists
+            pd.DataFrame({"microbe": kept_list,    "status": "kept"}).to_csv(
+                output_dir / f"kept_microbes_{dtype.lower()}.csv", index=False)
+            pd.DataFrame({"microbe": dropped_list, "status": "dropped"}).to_csv(
+                output_dir / f"dropped_microbes_{dtype.lower()}.csv", index=False)
+            print(f"  Kept: {len(kept_list)}  |  Dropped: {len(dropped_list)}")
+
+            # Per-microbe statistics
+            print("  Computing per-microbe statistics + MI ...")
+            stats_df = _compute_per_microbe_stats(
+                all_microbiome, all_targets, all_names, all_microbes, kept_set
+            )
+            stats_df.to_csv(stats_path, index=False)
 
         # Characterization plots
         _plot_characterization(stats_df, dtype, output_dir)
