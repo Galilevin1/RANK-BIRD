@@ -59,7 +59,8 @@ CONFIG = {
     "decompose_rank": 300,      
     "min_samples_per_dataset": 550, 
     "stability_percentile_local": 0.3,
-    "stability_percentile_global": 0.5,
+    "stability_percentile_global_amplicon":     0.40,
+    "stability_percentile_global_metagenomics": 0.25,
     "z_thresh": 3.0,
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -151,7 +152,8 @@ def main():
                 decompose_rank=CONFIG.get("decompose_rank"),
                 min_samples_per_dataset=CONFIG.get("min_samples_per_dataset"),
                 stability_percentile_local=CONFIG.get("stability_percentile_local"),
-                stability_percentile_global=CONFIG.get("stability_percentile_global"),
+                stability_percentile_global_amplicon=CONFIG.get("stability_percentile_global_amplicon"),
+                stability_percentile_global_metagenomics=CONFIG.get("stability_percentile_global_metagenomics"),
                 z_thresh=CONFIG.get("z_thresh"),
             )
             results_df.to_csv(results_path, index=False)

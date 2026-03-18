@@ -119,7 +119,8 @@ def run_protocol_benchmark_global_preprocessing(
     apply_decompose: bool = False,
     min_samples_per_dataset=550,
     stability_percentile_local=0.3,
-    stability_percentile_global=0.5,
+    stability_percentile_global_amplicon=0.40,
+    stability_percentile_global_metagenomics=0.25,
     z_thresh=3.0,
     decompose_method='PCA',
     decompose_rank=30
@@ -132,6 +133,11 @@ def run_protocol_benchmark_global_preprocessing(
 
     all_records = []
 
+    stability_percentile_by_dtype = {
+        "Amplicon":     stability_percentile_global_amplicon,
+        "Metagenomics": stability_percentile_global_metagenomics,
+    }
+
     for dtype, phenotype_list in phenotypes_by_dtype.items():
         print(f"\n[Global preprocessing] dtype = {dtype}")
 
@@ -139,9 +145,9 @@ def run_protocol_benchmark_global_preprocessing(
             phenotype_list,
             apply_normalization=apply_normalization,
             apply_decompose=apply_decompose,
-            min_samples_per_dataset=min_samples_per_dataset, 
+            min_samples_per_dataset=min_samples_per_dataset,
             stability_percentile_local=stability_percentile_local,
-            stability_percentile_global=stability_percentile_global,
+            stability_percentile_global=stability_percentile_by_dtype.get(dtype, stability_percentile_global_amplicon),
             z_thresh=z_thresh,
             decompose_method=decompose_method,
             decompose_rank=decompose_rank
