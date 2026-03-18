@@ -18,6 +18,7 @@ from figures.figure3 import run_figure3
 from figures.figure4 import plot_figure4
 from figures.figure4e import run_figure4e_analysis, plot_figure4e
 from figures.figure5 import plot_figure5
+from experiments.investigate_stability_threshold import run_stability_investigation
 from evaluation.data_loading import build_papers_auc_df, load_microbiome_datasets_with_targets
 from evaluation.pairwise_lodo import run_figure4_analysis
 
@@ -35,7 +36,9 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["5"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e"
+    "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
+    "run_investigations": ["stability_threshold"],  # "stability_threshold"
+    "investigations_plot_only": True,   # True = reload CSVs, False = recompute
 
     # -----------------------
     # Papers CSV (for figure 1c)
@@ -270,6 +273,14 @@ def main():
         )
         if results_4e is not None:
             plot_figure4e(results_4e, output_dir=str(FIG4_DIR))
+
+    if "stability_threshold" in CONFIG["run_investigations"]:
+        inv_dir = PROJECT_ROOT / "investigations" / "stability_threshold"
+        run_stability_investigation(
+            phenotypes=phenotypes,
+            output_dir=inv_dir,
+            plot_only=CONFIG.get("investigations_plot_only", False),
+        )
 
     if "5" in CONFIG["run_figures"]:
         FIG5_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_5")
