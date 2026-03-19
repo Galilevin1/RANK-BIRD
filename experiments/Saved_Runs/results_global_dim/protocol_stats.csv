@@ -1,4 +1,0 @@
-protocol_1,protocol_2,n_1,n_2,mean_1,mean_2,u_statistic,p_value
-LODO,Internal Validation,49,49,,0.7331750028921391,,
-LODO,Within Learning,49,48,,0.7470565007589154,,
-Internal Validation,Within Learning,49,48,0.7331750028921391,0.7470565007589154,1095.0,0.5612764561247483
