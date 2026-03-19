@@ -35,11 +35,11 @@ CONFIG = {
     # -----------------------
     # Pipeline control
     # -----------------------
-    "run_compute": False,      # run heavy protocol training
-    "run_aggregate": False,    # recompute summary
-    "run_stats": False,
-    "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-    "run_investigations": ["stability_characterization"],  # "stability_threshold", "stability_characterization"
+    "run_compute": True,      # run heavy protocol training
+    "run_aggregate": True,    # recompute summary
+    "run_stats": True,
+    "run_figures": ["1e"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
+    "run_investigations": [],  # "stability_threshold", "stability_characterization"
     "investigations_plot_only": True,   # For  "stability_threshold" invastigation # True = reload CSVs, False = recompute
     "characterization_threshold_metagenomics": 0.25,
     "characterization_threshold_amplicon":     0.40,
@@ -59,8 +59,8 @@ CONFIG = {
     "decompose_rank": 300,      
     "min_samples_per_dataset": 550, 
     "stability_percentile_local": 0.3,
-    "stability_percentile_global_amplicon":     0.40,
     "stability_percentile_global_metagenomics": 0.25,
+    "stability_percentile_global_amplicon":     0.40,
     "z_thresh": 3.0,
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
