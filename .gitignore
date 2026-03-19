@@ -33,6 +33,7 @@ Thumbs.db
 experiments/results/
 experiments/results_*/
 figures_out/
+investigations/
 
 # -----------------
 # Helper functions
