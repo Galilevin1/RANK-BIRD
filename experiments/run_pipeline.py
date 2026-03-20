@@ -62,6 +62,15 @@ CONFIG = {
     "stability_percentile_global_metagenomics": 0.25,
     "stability_percentile_global_amplicon":     0.40,
     "z_thresh": 3.0,
+
+    # -----------------------
+    # Supervised autoencoder
+    # -----------------------
+    "autoencoder":    False,   # enable supervised DAE preprocessing
+    "ae_latent_dim":  64,      # latent space dimension
+    "ae_epochs":      100,     # max training epochs (early stopping applies)
+    "ae_batch_size":  32,
+    "ae_lr":          1e-3,
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -139,24 +148,47 @@ def main():
         else:
             runner = run_protocol_benchmark_global_preprocessing
 
+        results_path_ae = RESULTS_DIR / "protocol_results_ae.csv"
+
         if results_path.exists():
             print("Loading existing protocol results...")
             results_df = pd.read_csv(results_path)
         else:
             print("Running protocol benchmark...")
-            results_df = runner(
-                phenotypes=phenotypes,
-                apply_normalization=CONFIG["normalization"],
-                apply_decompose=CONFIG["decomposition"],
-                decompose_method=CONFIG.get("decompose_method"),
-                decompose_rank=CONFIG.get("decompose_rank"),
-                min_samples_per_dataset=CONFIG.get("min_samples_per_dataset"),
-                stability_percentile_local=CONFIG.get("stability_percentile_local"),
-                stability_percentile_global_amplicon=CONFIG.get("stability_percentile_global_amplicon"),
-                stability_percentile_global_metagenomics=CONFIG.get("stability_percentile_global_metagenomics"),
-                z_thresh=CONFIG.get("z_thresh"),
-            )
-            results_df.to_csv(results_path, index=False)
+            if CONFIG["preprocessing_scope"] == "global":
+                results_df, ae_df = runner(
+                    phenotypes=phenotypes,
+                    apply_normalization=CONFIG["normalization"],
+                    apply_decompose=CONFIG["decomposition"],
+                    decompose_method=CONFIG.get("decompose_method"),
+                    decompose_rank=CONFIG.get("decompose_rank"),
+                    min_samples_per_dataset=CONFIG.get("min_samples_per_dataset"),
+                    stability_percentile_local=CONFIG.get("stability_percentile_local"),
+                    stability_percentile_global_amplicon=CONFIG.get("stability_percentile_global_amplicon"),
+                    stability_percentile_global_metagenomics=CONFIG.get("stability_percentile_global_metagenomics"),
+                    z_thresh=CONFIG.get("z_thresh"),
+                    apply_autoencoder=CONFIG.get("autoencoder", False),
+                    ae_latent_dim=CONFIG.get("ae_latent_dim", 64),
+                    ae_epochs=CONFIG.get("ae_epochs", 100),
+                    ae_batch_size=CONFIG.get("ae_batch_size", 32),
+                    ae_lr=CONFIG.get("ae_lr", 1e-3),
+                )
+                results_df.to_csv(results_path, index=False)
+                if not ae_df.empty:
+                    ae_df.to_csv(results_path_ae, index=False)
+                    print(f"Saved AE results: {results_path_ae}")
+            else:
+                results_df = runner(
+                    phenotypes=phenotypes,
+                    apply_normalization=CONFIG["normalization"],
+                    apply_decompose=CONFIG["decomposition"],
+                    decompose_method=CONFIG.get("decompose_method"),
+                    decompose_rank=CONFIG.get("decompose_rank"),
+                    min_samples_per_dataset=CONFIG.get("min_samples_per_dataset"),
+                    stability_percentile_local=CONFIG.get("stability_percentile_local"),
+                    z_thresh=CONFIG.get("z_thresh"),
+                )
+                results_df.to_csv(results_path, index=False)
 
 
     # ================================
@@ -302,12 +334,16 @@ def main():
         FIG5_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_5")
         path_orig = PROJECT_ROOT / "experiments" / "results_global_original" / "protocol_results_per_dataset.csv"
         path_norm = PROJECT_ROOT / "experiments" / "results_global_normalized" / "protocol_results_per_dataset.csv"
+        path_ae   = RESULTS_DIR / "protocol_results_ae.csv"
         if path_orig.exists() and path_norm.exists():
+            df_ae = pd.read_csv(path_ae) if path_ae.exists() else None
             fig = plot_figure5(
                 results_df_original=pd.read_csv(path_orig),
                 results_df_normalized=pd.read_csv(path_norm),
+                results_df_autoencoder=df_ae,
             )
-            fig.savefig(FIG5_DIR / "figure5_original_vs_normalized.png", dpi=300, bbox_inches='tight')
+            suffix = "_with_ae" if df_ae is not None else "_original_vs_normalized"
+            fig.savefig(FIG5_DIR / f"figure5{suffix}.png", dpi=300, bbox_inches='tight')
             plt.close(fig)
         else:
             print("Figure 5: missing result files — run pipeline with both global_original and global_normalized first.")
