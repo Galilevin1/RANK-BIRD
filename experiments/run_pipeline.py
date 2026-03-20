@@ -352,13 +352,13 @@ def main():
         path_norm = PROJECT_ROOT / "experiments" / "results_global_normalized" / "protocol_results_per_dataset.csv"
         path_ae   = PROJECT_ROOT / "experiments" / "results_global_normalized_ae" / "protocol_results_per_dataset.csv"
         if path_orig.exists() and path_norm.exists():
-            df_ae = pd.read_csv(path_ae) if path_ae.exists() else None
+            df_ae = pd.read_csv(path_ae) if ae_enabled and path_ae.exists() else None
             fig = plot_figure5(
                 results_df_original=pd.read_csv(path_orig),
                 results_df_normalized=pd.read_csv(path_norm),
                 results_df_autoencoder=df_ae,
             )
-            suffix = "_with_ae" if df_ae is not None else "_original_vs_normalized"
+            suffix = "_with_ae" if ae_enabled else "_original_vs_normalized"
             fig.savefig(FIG5_DIR / f"figure5{suffix}.png", dpi=300, bbox_inches='tight')
             plt.close(fig)
         else:

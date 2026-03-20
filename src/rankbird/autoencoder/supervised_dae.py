@@ -15,9 +15,11 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
+from pathlib import Path
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -173,41 +175,63 @@ def train_supervised_dae(
     best_state = None
     no_improve = 0
 
+    history = {
+        "train_mse": [], "train_bce": [], "train_total": [],
+        "val_mse":   [], "val_bce":   [], "val_total":   [],
+    }
+
     X_val_dev = X_val.to(device)
     y_val_dev = y_val.to(device)
 
     for epoch in range(1, epochs + 1):
         model.train()
-        epoch_loss = 0.0
+        epoch_mse = 0.0
+        epoch_bce = 0.0
         for X_b, y_b in train_loader:
             X_b, y_b = X_b.to(device), y_b.to(device)
             optimizer.zero_grad()
             x_recon, y_pred, _ = model(X_b)
-            loss = mse_loss(x_recon, X_b) + cls_weight * bce_loss(y_pred, y_b)
+            loss_mse = mse_loss(x_recon, X_b)
+            loss_bce = bce_loss(y_pred, y_b)
+            loss = loss_mse + cls_weight * loss_bce
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.item() * len(X_b)
-        epoch_loss /= len(train_idx)
+            epoch_mse += loss_mse.item() * len(X_b)
+            epoch_bce += loss_bce.item() * len(X_b)
+        epoch_mse /= len(train_idx)
+        epoch_bce /= len(train_idx)
+        epoch_total = epoch_mse + cls_weight * epoch_bce
 
         # Validation
         model.eval()
         with torch.no_grad():
             xr_val, yp_val, _ = model(X_val_dev)
-            val_loss = (
-                mse_loss(xr_val, X_val_dev) + cls_weight * bce_loss(yp_val, y_val_dev)
-            ).item()
+            val_mse   = mse_loss(xr_val, X_val_dev).item()
+            val_bce   = bce_loss(yp_val, y_val_dev).item()
+            val_total = val_mse + cls_weight * val_bce
 
-        scheduler.step(val_loss)
+        history["train_mse"].append(epoch_mse)
+        history["train_bce"].append(epoch_bce)
+        history["train_total"].append(epoch_total)
+        history["val_mse"].append(val_mse)
+        history["val_bce"].append(val_bce)
+        history["val_total"].append(val_total)
 
-        if val_loss < best_val_loss - 1e-5:
-            best_val_loss = val_loss
+        scheduler.step(val_total)
+
+        if val_total < best_val_loss - 1e-5:
+            best_val_loss = val_total
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             no_improve = 0
         else:
             no_improve += 1
 
         if verbose and epoch % 10 == 0:
-            print(f"  [SDAE] epoch {epoch:03d}  train={epoch_loss:.4f}  val={val_loss:.4f}")
+            print(
+                f"  [SDAE] epoch {epoch:03d} | "
+                f"train  total={epoch_total:.4f}  mse={epoch_mse:.4f}  bce={epoch_bce:.4f} | "
+                f"val    total={val_total:.4f}  mse={val_mse:.4f}  bce={val_bce:.4f}"
+            )
 
         if no_improve >= patience:
             if verbose:
@@ -219,7 +243,62 @@ def train_supervised_dae(
         model.load_state_dict(best_state)
     model.eval()
 
-    return model, scaler
+    return model, scaler, history
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Loss plotting
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_ae_loss(
+    history: Dict[str, List[float]],
+    title: str = "",
+    save_path: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Plot training and validation loss curves split into three panels:
+        - Total loss (MSE + cls_weight * BCE)
+        - Reconstruction loss (MSE)
+        - Classification loss (BCE, unweighted)
+
+    Args:
+        history:   dict returned by train_supervised_dae
+        title:     figure suptitle (e.g. held-out dataset name)
+        save_path: if provided, save figure to this path
+
+    Returns:
+        fig
+    """
+    epochs = range(1, len(history["train_total"]) + 1)
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+    panels = [
+        ("Total loss",            "train_total", "val_total"),
+        ("Reconstruction (MSE)",  "train_mse",   "val_mse"),
+        ("Classification (BCE)",  "train_bce",   "val_bce"),
+    ]
+
+    for ax, (panel_title, train_key, val_key) in zip(axes, panels):
+        ax.plot(epochs, history[train_key], label="Train", linewidth=1.8, color="#2196F3")
+        ax.plot(epochs, history[val_key],   label="Val",   linewidth=1.8, color="#F44336", linestyle="--")
+        ax.set_title(panel_title, fontsize=12, fontweight="bold")
+        ax.set_xlabel("Epoch", fontsize=10)
+        ax.set_ylabel("Loss",  fontsize=10)
+        ax.legend(fontsize=9)
+        ax.grid(alpha=0.3)
+
+    if title:
+        fig.suptitle(title, fontsize=13, fontweight="bold", y=1.02)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+    return fig
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -52,7 +52,8 @@ def _run_ae_protocols(
     Internal Validation: AE trained on all dtype datasets, then standard internal validation.
     Within Learning:    Not run here — caller should keep normalized results for that protocol.
     """
-    from src.rankbird.autoencoder.supervised_dae import train_supervised_dae, encode_datasets
+    from src.rankbird.autoencoder.supervised_dae import train_supervised_dae, encode_datasets, plot_ae_loss
+    loss_plots_dir = Path(__file__).resolve().parents[1] / "figures_out" / "ae_loss_curves"
 
     records = []
     n = len(all_dataset_names)
@@ -73,11 +74,16 @@ def _run_ae_protocols(
         train_dfs_aligned = [df[common_cols] for df in train_dfs]
         test_df_aligned   = all_microbiome[i][common_cols]
 
-        model, scaler = train_supervised_dae(
+        model, scaler, history = train_supervised_dae(
             train_dfs_aligned, train_tgts,
             latent_dim=ae_latent_dim, epochs=ae_epochs,
             batch_size=ae_batch_size, lr=ae_lr,
             cls_weight=ae_cls_weight, noise_std=ae_noise_std, verbose=False,
+        )
+        safe_name = test_name.replace("/", "_").replace(" ", "_")
+        plot_ae_loss(
+            history, title=f"LODO — held-out: {test_name}",
+            save_path=str(loss_plots_dir / f"lodo_{safe_name}.png"),
         )
 
         # Encode test dataset
@@ -119,11 +125,15 @@ def _run_ae_protocols(
         common_cols_global = common_cols_global.intersection(df.columns)
     aligned_all = [df[common_cols_global] for df in all_microbiome]
 
-    model_global, scaler_global = train_supervised_dae(
+    model_global, scaler_global, history_global = train_supervised_dae(
         aligned_all, y_all,
         latent_dim=ae_latent_dim, epochs=ae_epochs,
         batch_size=ae_batch_size, lr=ae_lr,
         cls_weight=ae_cls_weight, noise_std=ae_noise_std, verbose=True,
+    )
+    plot_ae_loss(
+        history_global, title="Internal Validation — global AE",
+        save_path=str(loss_plots_dir / "internal_validation_global.png"),
     )
     encoded_all = encode_datasets(
         model_global, scaler_global, aligned_all, all_dataset_names, ae_latent_dim
