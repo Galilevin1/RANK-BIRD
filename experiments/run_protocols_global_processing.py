@@ -42,6 +42,8 @@ def _run_ae_protocols(
     ae_epochs=100,
     ae_batch_size=32,
     ae_lr=1e-3,
+    ae_cls_weight=5.0,
+    ae_noise_std=0.0,
 ):
     """
     Run LODO and Internal Validation protocols using a Supervised DAE encoder.
@@ -74,7 +76,8 @@ def _run_ae_protocols(
         model, scaler = train_supervised_dae(
             train_dfs_aligned, train_tgts,
             latent_dim=ae_latent_dim, epochs=ae_epochs,
-            batch_size=ae_batch_size, lr=ae_lr, verbose=False,
+            batch_size=ae_batch_size, lr=ae_lr,
+            cls_weight=ae_cls_weight, noise_std=ae_noise_std, verbose=False,
         )
 
         # Encode test dataset
@@ -119,7 +122,8 @@ def _run_ae_protocols(
     model_global, scaler_global = train_supervised_dae(
         aligned_all, y_all,
         latent_dim=ae_latent_dim, epochs=ae_epochs,
-        batch_size=ae_batch_size, lr=ae_lr, verbose=True,
+        batch_size=ae_batch_size, lr=ae_lr,
+        cls_weight=ae_cls_weight, noise_std=ae_noise_std, verbose=True,
     )
     encoded_all = encode_datasets(
         model_global, scaler_global, aligned_all, all_dataset_names, ae_latent_dim
@@ -161,6 +165,8 @@ def _run_global_for_dtype(phenotypes,
                           ae_epochs=100,
                           ae_batch_size=32,
                           ae_lr=1e-3,
+                          ae_cls_weight=5.0,
+                          ae_noise_std=0.0,
                           ):
 
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -244,6 +250,8 @@ def _run_global_for_dtype(phenotypes,
             ae_epochs=ae_epochs,
             ae_batch_size=ae_batch_size,
             ae_lr=ae_lr,
+            ae_cls_weight=ae_cls_weight,
+            ae_noise_std=ae_noise_std,
         )
         ae_records = ae_df
 
@@ -262,10 +270,14 @@ def run_protocol_benchmark_global_preprocessing(
     decompose_method='PCA',
     decompose_rank=30,
     apply_autoencoder=False,
-    ae_latent_dim=64,
+    ae_latent_dim_amplicon=128,
+    ae_latent_dim_metagenomics=256,
+    ae_cls_weight_amplicon=5.0,
+    ae_cls_weight_metagenomics=5.0,
     ae_epochs=100,
     ae_batch_size=32,
     ae_lr=1e-3,
+    ae_noise_std=0.0,
 ):
     phenotypes_by_dtype = defaultdict(list)
     for phenotype, dtype in phenotypes:
@@ -277,6 +289,14 @@ def run_protocol_benchmark_global_preprocessing(
     stability_percentile_by_dtype = {
         "Amplicon":     stability_percentile_global_amplicon,
         "Metagenomics": stability_percentile_global_metagenomics,
+    }
+    ae_latent_dim_by_dtype = {
+        "Amplicon":     ae_latent_dim_amplicon,
+        "Metagenomics": ae_latent_dim_metagenomics,
+    }
+    ae_cls_weight_by_dtype = {
+        "Amplicon":     ae_cls_weight_amplicon,
+        "Metagenomics": ae_cls_weight_metagenomics,
     }
 
     for dtype, phenotype_list in phenotypes_by_dtype.items():
@@ -293,10 +313,12 @@ def run_protocol_benchmark_global_preprocessing(
             decompose_method=decompose_method,
             decompose_rank=decompose_rank,
             apply_autoencoder=apply_autoencoder,
-            ae_latent_dim=ae_latent_dim,
+            ae_latent_dim=ae_latent_dim_by_dtype.get(dtype, ae_latent_dim_amplicon),
             ae_epochs=ae_epochs,
             ae_batch_size=ae_batch_size,
             ae_lr=ae_lr,
+            ae_cls_weight=ae_cls_weight_by_dtype.get(dtype, ae_cls_weight_amplicon),
+            ae_noise_std=ae_noise_std,
         )
 
         all_records.append(records_dtype)

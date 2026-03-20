@@ -66,11 +66,15 @@ CONFIG = {
     # -----------------------
     # Supervised autoencoder
     # -----------------------
-    "autoencoder":    False,   # enable supervised DAE preprocessing
-    "ae_latent_dim":  64,      # latent space dimension
-    "ae_epochs":      100,     # max training epochs (early stopping applies)
+    "autoencoder":                  False,  # enable supervised DAE preprocessing
+    "ae_latent_dim_amplicon":       128,    # latent dim for 16S
+    "ae_latent_dim_metagenomics":   256,    # latent dim for Shotgun (more features)
+    "ae_cls_weight_amplicon":       5.0,    # BCE weight for 16S
+    "ae_cls_weight_metagenomics":   5.0,    # BCE weight for Shotgun
+    "ae_epochs":      100,                  # max training epochs (early stopping applies)
     "ae_batch_size":  32,
     "ae_lr":          1e-3,
+    "ae_noise_std":   0.0,                  # denoising noise std (0 = disabled)
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -171,10 +175,14 @@ def main():
                     stability_percentile_global_metagenomics=CONFIG.get("stability_percentile_global_metagenomics"),
                     z_thresh=CONFIG.get("z_thresh"),
                     apply_autoencoder=CONFIG.get("autoencoder", False),
-                    ae_latent_dim=CONFIG.get("ae_latent_dim", 64),
+                    ae_latent_dim_amplicon=CONFIG.get("ae_latent_dim_amplicon", 128),
+                    ae_latent_dim_metagenomics=CONFIG.get("ae_latent_dim_metagenomics", 256),
+                    ae_cls_weight_amplicon=CONFIG.get("ae_cls_weight_amplicon", 5.0),
+                    ae_cls_weight_metagenomics=CONFIG.get("ae_cls_weight_metagenomics", 5.0),
                     ae_epochs=CONFIG.get("ae_epochs", 100),
                     ae_batch_size=CONFIG.get("ae_batch_size", 32),
                     ae_lr=CONFIG.get("ae_lr", 1e-3),
+                    ae_noise_std=CONFIG.get("ae_noise_std", 0.0),
                 )
                 results_df.to_csv(results_path, index=False)
                 if not ae_df.empty:

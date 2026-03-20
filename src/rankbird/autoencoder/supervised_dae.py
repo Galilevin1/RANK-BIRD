@@ -102,8 +102,9 @@ def train_supervised_dae(
     batch_size: int = 32,
     lr: float = 1e-3,
     val_split: float = 0.2,
-    noise_std: float = 0.1,
+    noise_std: float = 0.0,
     dropout: float = 0.2,
+    cls_weight: float = 5.0,
     patience: int = 15,
     device: Optional[str] = None,
     verbose: bool = True,
@@ -182,7 +183,7 @@ def train_supervised_dae(
             X_b, y_b = X_b.to(device), y_b.to(device)
             optimizer.zero_grad()
             x_recon, y_pred, _ = model(X_b)
-            loss = mse_loss(x_recon, X_b) + bce_loss(y_pred, y_b)
+            loss = mse_loss(x_recon, X_b) + cls_weight * bce_loss(y_pred, y_b)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item() * len(X_b)
@@ -193,7 +194,7 @@ def train_supervised_dae(
         with torch.no_grad():
             xr_val, yp_val, _ = model(X_val_dev)
             val_loss = (
-                mse_loss(xr_val, X_val_dev) + bce_loss(yp_val, y_val_dev)
+                mse_loss(xr_val, X_val_dev) + cls_weight * bce_loss(yp_val, y_val_dev)
             ).item()
 
         scheduler.step(val_loss)
