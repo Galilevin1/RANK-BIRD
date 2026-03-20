@@ -116,10 +116,13 @@ FIGURES_BASE.mkdir(exist_ok=True)
 
 def main():
 
-    RESULTS_DIR    = build_results_dir(PROJECT_ROOT, CONFIG)
-    RESULTS_DIR_AE = build_results_dir(PROJECT_ROOT, CONFIG, ae=True)
+    RESULTS_DIR = build_results_dir(PROJECT_ROOT, CONFIG)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    RESULTS_DIR_AE.mkdir(parents=True, exist_ok=True)
+
+    ae_enabled = CONFIG["normalization"] and CONFIG.get("autoencoder", False)
+    RESULTS_DIR_AE = build_results_dir(PROJECT_ROOT, CONFIG, ae=True) if ae_enabled else None
+    if RESULTS_DIR_AE is not None:
+        RESULTS_DIR_AE.mkdir(parents=True, exist_ok=True)
 
     FIG1_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1")
     FIG2_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2")
@@ -155,7 +158,7 @@ def main():
         else:
             runner = run_protocol_benchmark_global_preprocessing
 
-        results_path_ae = RESULTS_DIR_AE / "protocol_results_per_dataset.csv"
+        results_path_ae = RESULTS_DIR_AE / "protocol_results_per_dataset.csv" if RESULTS_DIR_AE else None
 
         if results_path.exists():
             print("Loading existing protocol results...")
@@ -185,7 +188,7 @@ def main():
                     ae_noise_std=CONFIG.get("ae_noise_std", 0.0),
                 )
                 results_df.to_csv(results_path, index=False)
-                if not ae_df.empty:
+                if results_path_ae is not None and not ae_df.empty:
                     ae_df.to_csv(results_path_ae, index=False)
                     print(f"Saved AE results: {results_path_ae}")
             else:
