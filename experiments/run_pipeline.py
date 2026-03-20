@@ -160,7 +160,9 @@ def main():
 
         results_path_ae = RESULTS_DIR_AE / "protocol_results_per_dataset.csv" if RESULTS_DIR_AE else None
 
-        if results_path.exists():
+        ae_results_missing = ae_enabled and (results_path_ae is None or not results_path_ae.exists())
+
+        if results_path.exists() and not ae_results_missing:
             print("Loading existing protocol results...")
             results_df = pd.read_csv(results_path)
         else:
