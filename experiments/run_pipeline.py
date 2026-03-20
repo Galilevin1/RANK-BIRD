@@ -75,7 +75,7 @@ CONFIG = {
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def build_results_dir(project_root: Path, config: dict) -> Path:
+def build_results_dir(project_root: Path, config: dict, ae: bool = False) -> Path:
     scope = config["preprocessing_scope"]
 
     if not config["normalization"]:
@@ -85,7 +85,8 @@ def build_results_dir(project_root: Path, config: dict) -> Path:
     else:
         mode = "dim"
 
-    return project_root / "experiments" / f"results_{scope}_{mode}"
+    suffix = "_ae" if ae else ""
+    return project_root / "experiments" / f"results_{scope}_{mode}{suffix}"
 
 
 def _get_mode(config: dict) -> str:
@@ -111,8 +112,10 @@ FIGURES_BASE.mkdir(exist_ok=True)
 
 def main():
 
-    RESULTS_DIR = build_results_dir(PROJECT_ROOT, CONFIG)
+    RESULTS_DIR    = build_results_dir(PROJECT_ROOT, CONFIG)
+    RESULTS_DIR_AE = build_results_dir(PROJECT_ROOT, CONFIG, ae=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    RESULTS_DIR_AE.mkdir(parents=True, exist_ok=True)
 
     FIG1_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1")
     FIG2_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2")
@@ -148,7 +151,7 @@ def main():
         else:
             runner = run_protocol_benchmark_global_preprocessing
 
-        results_path_ae = RESULTS_DIR / "protocol_results_ae.csv"
+        results_path_ae = RESULTS_DIR_AE / "protocol_results_per_dataset.csv"
 
         if results_path.exists():
             print("Loading existing protocol results...")
@@ -332,9 +335,9 @@ def main():
 
     if "5" in CONFIG["run_figures"]:
         FIG5_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_5")
-        path_orig = PROJECT_ROOT / "experiments" / "results_global_original" / "protocol_results_per_dataset.csv"
+        path_orig = PROJECT_ROOT / "experiments" / "results_global_original"  / "protocol_results_per_dataset.csv"
         path_norm = PROJECT_ROOT / "experiments" / "results_global_normalized" / "protocol_results_per_dataset.csv"
-        path_ae   = RESULTS_DIR / "protocol_results_ae.csv"
+        path_ae   = PROJECT_ROOT / "experiments" / "results_global_normalized_ae" / "protocol_results_per_dataset.csv"
         if path_orig.exists() and path_norm.exists():
             df_ae = pd.read_csv(path_ae) if path_ae.exists() else None
             fig = plot_figure5(
