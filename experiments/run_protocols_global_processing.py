@@ -45,6 +45,7 @@ def _run_ae_protocols(
     ae_cls_weight=5.0,
     ae_noise_std=0.0,
     ae_dropout=0.3,
+    ae_weight_decay=1e-4,
 ):
     """
     Run LODO and Internal Validation protocols using a Supervised DAE encoder.
@@ -81,7 +82,7 @@ def _run_ae_protocols(
             latent_dim=ae_latent_dim, epochs=ae_epochs,
             batch_size=ae_batch_size, lr=ae_lr,
             cls_weight=ae_cls_weight, noise_std=ae_noise_std,
-            dropout=ae_dropout, verbose=False,
+            dropout=ae_dropout, weight_decay=ae_weight_decay, verbose=False,
         )
         safe_name = test_name.replace("/", "_").replace(" ", "_")
         plot_ae_loss(
@@ -133,7 +134,7 @@ def _run_ae_protocols(
         latent_dim=ae_latent_dim, epochs=ae_epochs,
         batch_size=ae_batch_size, lr=ae_lr,
         cls_weight=ae_cls_weight, noise_std=ae_noise_std,
-        dropout=ae_dropout, verbose=True,
+        dropout=ae_dropout, weight_decay=ae_weight_decay, verbose=True,
     )
     plot_ae_loss(
         history_global, title="Internal Validation — global AE",
@@ -182,6 +183,7 @@ def _run_global_for_dtype(phenotypes,
                           ae_cls_weight=5.0,
                           ae_noise_std=0.0,
                           ae_dropout=0.3,
+                          ae_weight_decay=1e-4,
                           ):
 
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -268,6 +270,7 @@ def _run_global_for_dtype(phenotypes,
             ae_cls_weight=ae_cls_weight,
             ae_noise_std=ae_noise_std,
             ae_dropout=ae_dropout,
+            ae_weight_decay=ae_weight_decay,
         )
         ae_records = ae_df
 
@@ -295,6 +298,7 @@ def run_protocol_benchmark_global_preprocessing(
     ae_lr=1e-3,
     ae_noise_std=0.0,
     ae_dropout=0.3,
+    ae_weight_decay=1e-4,
 ):
     phenotypes_by_dtype = defaultdict(list)
     for phenotype, dtype in phenotypes:
@@ -337,6 +341,7 @@ def run_protocol_benchmark_global_preprocessing(
             ae_cls_weight=ae_cls_weight_by_dtype.get(dtype, ae_cls_weight_amplicon),
             ae_noise_std=ae_noise_std,
             ae_dropout=ae_dropout,
+            ae_weight_decay=ae_weight_decay,
         )
 
         all_records.append(records_dtype)

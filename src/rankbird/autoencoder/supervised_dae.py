@@ -144,6 +144,7 @@ def train_supervised_dae(
     noise_std: float = 0.0,    # unused in DANN, kept for interface compatibility
     dropout: float = 0.2,
     cls_weight: float = 1.0,   # λ_max for domain adversarial loss
+    weight_decay: float = 1e-4,
     patience: int = 15,
     device: Optional[str] = None,
     verbose: bool = True,
@@ -225,7 +226,7 @@ def train_supervised_dae(
         dropout=dropout,
     ).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, patience=5, factor=0.5, verbose=False
     )
