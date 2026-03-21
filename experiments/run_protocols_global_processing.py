@@ -76,6 +76,7 @@ def _run_ae_protocols(
 
         model, scaler, history = train_supervised_dae(
             train_dfs_aligned, train_tgts,
+            unlabeled_dfs=[test_df_aligned],   # test features for denoising, labels never seen
             latent_dim=ae_latent_dim, epochs=ae_epochs,
             batch_size=ae_batch_size, lr=ae_lr,
             cls_weight=ae_cls_weight, noise_std=ae_noise_std, verbose=False,

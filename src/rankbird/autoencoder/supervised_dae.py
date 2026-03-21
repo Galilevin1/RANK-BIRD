@@ -98,6 +98,7 @@ class SupervisedDAE(nn.Module):
 def train_supervised_dae(
     microbiome_dfs: List[pd.DataFrame],
     target_series: pd.Series,
+    unlabeled_dfs: Optional[List[pd.DataFrame]] = None,
     latent_dim: int = 64,
     hidden_dims: Optional[List[int]] = None,
     epochs: int = 100,
@@ -112,14 +113,20 @@ def train_supervised_dae(
     verbose: bool = True,
 ) -> Tuple[SupervisedDAE, StandardScaler]:
     """
-    Train a Supervised DAE on a list of microbiome DataFrames + binary labels.
+    Train a Supervised DAE on labeled microbiome DataFrames, with optional
+    unlabeled DataFrames (e.g. the held-out LODO test set) used exclusively
+    for the reconstruction objective.
+
+    Reconstruction loss : labeled train data  +  unlabeled data (features only)
+    Classification loss : labeled train data  only  (no label leakage)
 
     Args:
-        microbiome_dfs: list of (n_samples_i, n_features) DataFrames (all must share columns)
-        target_series:  binary labels aligned with the concatenated DataFrames
-        ...
+        microbiome_dfs : labeled training DataFrames
+        target_series  : binary labels for microbiome_dfs
+        unlabeled_dfs  : held-out test DataFrames — features used for denoising,
+                         labels NEVER seen during training
     Returns:
-        (trained_model, fitted_scaler)
+        (trained_model, fitted_scaler, history)
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -127,38 +134,47 @@ def train_supervised_dae(
         device = torch.device(device)
 
     if verbose:
-        print(f"  [SDAE] device={device}")
+        mode = "transductive" if unlabeled_dfs else "standard"
+        print(f"  [SDAE] device={device}  mode={mode}")
 
-    # ── Prepare data ─────────────────────────────────────────────────────────
-    X_all = pd.concat(microbiome_dfs, axis=0)
-    y_all = target_series.values.astype(np.float32).ravel()
-    assert len(X_all) == len(y_all), "Mismatch between features and labels"
+    # ── Prepare labeled data ──────────────────────────────────────────────────
+    X_labeled = pd.concat(microbiome_dfs, axis=0).values.astype(np.float32)
+    y_all     = target_series.values.astype(np.float32).ravel()
+    assert len(X_labeled) == len(y_all), "Mismatch between features and labels"
 
-    # Align feature union — fill missing with 0
-    X_np = X_all.values.astype(np.float32)
-
-    # Scale
+    # Scaler fit on labeled training split only
     scaler = StandardScaler()
-    idx = np.arange(len(X_np))
+    idx = np.arange(len(X_labeled))
     np.random.seed(42)
-    val_size = max(1, int(len(idx) * val_split))
-    val_idx = np.random.choice(idx, size=val_size, replace=False)
+    val_size  = max(1, int(len(idx) * val_split))
+    val_idx   = np.random.choice(idx, size=val_size, replace=False)
     train_idx = np.setdiff1d(idx, val_idx)
 
-    scaler.fit(X_np[train_idx])
-    X_scaled = scaler.transform(X_np)
+    scaler.fit(X_labeled[train_idx])
+    X_labeled_scaled = scaler.transform(X_labeled)
 
-    X_train = torch.tensor(X_scaled[train_idx], dtype=torch.float32)
-    y_train = torch.tensor(y_all[train_idx], dtype=torch.float32).unsqueeze(1)
-    X_val   = torch.tensor(X_scaled[val_idx],   dtype=torch.float32)
-    y_val   = torch.tensor(y_all[val_idx],   dtype=torch.float32).unsqueeze(1)
+    X_train = torch.tensor(X_labeled_scaled[train_idx], dtype=torch.float32)
+    y_train = torch.tensor(y_all[train_idx],             dtype=torch.float32).unsqueeze(1)
+    X_val   = torch.tensor(X_labeled_scaled[val_idx],   dtype=torch.float32)
+    y_val   = torch.tensor(y_all[val_idx],               dtype=torch.float32).unsqueeze(1)
 
+    # Labeled loader: reconstruction + classification
     train_loader = DataLoader(
         TensorDataset(X_train, y_train), batch_size=batch_size, shuffle=True
     )
 
+    # ── Prepare unlabeled data (held-out features, reconstruction only) ───────
+    unlabeled_loader = None
+    if unlabeled_dfs is not None:
+        X_unlabeled = pd.concat(unlabeled_dfs, axis=0).values.astype(np.float32)
+        X_unlabeled_scaled = scaler.transform(X_unlabeled)   # transform only, never fit
+        X_unlab_t = torch.tensor(X_unlabeled_scaled, dtype=torch.float32)
+        unlabeled_loader = DataLoader(
+            TensorDataset(X_unlab_t), batch_size=batch_size, shuffle=True
+        )
+
     # ── Model ─────────────────────────────────────────────────────────────────
-    input_dim = X_np.shape[1]
+    input_dim = X_labeled.shape[1]
     model = SupervisedDAE(
         input_dim, latent_dim=latent_dim, hidden_dims=hidden_dims,
         dropout=dropout, noise_std=noise_std,
@@ -187,6 +203,8 @@ def train_supervised_dae(
         model.train()
         epoch_mse = 0.0
         epoch_bce = 0.0
+
+        # ── Labeled pass: reconstruction + classification ─────────────────────
         for X_b, y_b in train_loader:
             X_b, y_b = X_b.to(device), y_b.to(device)
             optimizer.zero_grad()
@@ -200,6 +218,17 @@ def train_supervised_dae(
             epoch_bce += loss_bce.item() * len(X_b)
         epoch_mse /= len(train_idx)
         epoch_bce /= len(train_idx)
+
+        # ── Unlabeled pass: reconstruction only (no labels, no leakage) ───────
+        if unlabeled_loader is not None:
+            for (X_b,) in unlabeled_loader:
+                X_b = X_b.to(device)
+                optimizer.zero_grad()
+                x_recon, _, _ = model(X_b)
+                loss_recon = mse_loss(x_recon, X_b)
+                loss_recon.backward()
+                optimizer.step()
+
         epoch_total = epoch_mse + cls_weight * epoch_bce
 
         # Validation

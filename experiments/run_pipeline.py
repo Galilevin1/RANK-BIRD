@@ -64,17 +64,18 @@ CONFIG = {
     "z_thresh": 3.0,
 
     # -----------------------
-    # Supervised autoencoder
+    # Supervised autoencoder (transductive denoising mode)
+    # Encoder sees test features for denoising (no labels) — classifier trained on train only
     # -----------------------
-    "autoencoder":                  False,  # enable supervised DAE preprocessing
-    "ae_latent_dim_amplicon":       128,    # latent dim for 16S
-    "ae_latent_dim_metagenomics":   256,    # latent dim for Shotgun (more features)
-    "ae_cls_weight_amplicon":       5.0,    # BCE weight for 16S
-    "ae_cls_weight_metagenomics":   5.0,    # BCE weight for Shotgun
-    "ae_epochs":      100,                  # max training epochs (early stopping applies)
-    "ae_batch_size":  32,
+    "autoencoder":                  True,  # enable supervised DAE preprocessing
+    "ae_latent_dim_amplicon":       256,    # latent dim for 16S  (~4:1 compression from ~1000 features)
+    "ae_latent_dim_metagenomics":   256,    # latent dim for Shotgun (~4:1 compression from ~1000+ features)
+    "ae_cls_weight_amplicon":       3.0,    # BCE weight for 16S (lower: encoder already aligned)
+    "ae_cls_weight_metagenomics":   3.0,    # BCE weight for Shotgun
+    "ae_epochs":      150,                  # more room — early stopping still controls it
+    "ae_batch_size":  64,                   # larger batches = more stable gradients
     "ae_lr":          1e-3,
-    "ae_noise_std":   0.0,                  # denoising noise std (0 = disabled)
+    "ae_noise_std":   0.1,                  # now meaningful: learn to denoise across datasets
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
