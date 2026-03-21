@@ -38,7 +38,7 @@ CONFIG = {
     "run_compute": True,      # run heavy protocol training
     "run_aggregate": True,    # recompute summary
     "run_stats": True,
-    "run_figures": ["1e"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
+    "run_figures": ["5"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
     "run_investigations": [],  # "stability_threshold", "stability_characterization"
     "investigations_plot_only": True,   # For  "stability_threshold" invastigation # True = reload CSVs, False = recompute
     "characterization_threshold_metagenomics": 0.25,
@@ -76,6 +76,7 @@ CONFIG = {
     "ae_batch_size":  64,                   # larger batches = more stable gradients
     "ae_lr":          1e-3,
     "ae_noise_std":   0.1,                  # now meaningful: learn to denoise across datasets
+    "ae_dropout":     0.3,                  # applied in encoder layers + classifier head
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -189,6 +190,7 @@ def main():
                     ae_batch_size=CONFIG.get("ae_batch_size", 32),
                     ae_lr=CONFIG.get("ae_lr", 1e-3),
                     ae_noise_std=CONFIG.get("ae_noise_std", 0.0),
+                    ae_dropout=CONFIG.get("ae_dropout", 0.3),
                 )
                 results_df.to_csv(results_path, index=False)
                 if results_path_ae is not None and not ae_df.empty:

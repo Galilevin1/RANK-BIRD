@@ -43,11 +43,13 @@ class SupervisedDAE(nn.Module):
 
         self.noise_std = noise_std
 
-        # ── Encoder ──────────────────────────────────────────────────────────
+        # ── Encoder (BatchNorm after each linear — normalises across datasets) ─
         enc_layers: List[nn.Module] = []
         in_dim = input_dim
         for h in hidden_dims:
-            enc_layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)]
+            enc_layers += [
+                nn.Linear(in_dim, h), nn.BatchNorm1d(h), nn.ReLU(), nn.Dropout(dropout)
+            ]
             in_dim = h
         enc_layers.append(nn.Linear(in_dim, latent_dim))
         self.encoder = nn.Sequential(*enc_layers)
@@ -61,10 +63,11 @@ class SupervisedDAE(nn.Module):
         dec_layers.append(nn.Linear(in_dim, input_dim))
         self.decoder = nn.Sequential(*dec_layers)
 
-        # ── Classifier head ──────────────────────────────────────────────────
+        # ── Classifier head (dropout before final layer to regularise) ────────
         self.classifier = nn.Sequential(
             nn.Linear(latent_dim, 32),
             nn.ReLU(),
+            nn.Dropout(dropout),
             nn.Linear(32, 1),
             nn.Sigmoid(),
         )
@@ -248,8 +251,9 @@ def train_supervised_dae(
 
         scheduler.step(val_total)
 
-        if val_total < best_val_loss - 1e-5:
-            best_val_loss = val_total
+        # Track best model by val_bce — classifier generalisation is what matters
+        if val_bce < best_val_loss - 1e-5:
+            best_val_loss = val_bce
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             no_improve = 0
         else:
