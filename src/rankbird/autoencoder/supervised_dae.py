@@ -67,6 +67,7 @@ class DANN(nn.Module):
         latent_dim: int = 64,
         hidden_dims: List[int] = None,
         dropout: float = 0.2,
+        n_domains: int = 2,
     ):
         super().__init__()
         if hidden_dims is None:
@@ -93,13 +94,14 @@ class DANN(nn.Module):
         )
 
         # ── Domain discriminator + GRL ────────────────────────────────────────
+        # n_domains is computed from data in train_supervised_dae, not set by user
+        # Outputs logits (no Sigmoid) — CrossEntropyLoss handles softmax internally
         self.grl = GradientReversalLayer()
         self.domain_discriminator = nn.Sequential(
             nn.Linear(latent_dim, 32),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(32, 1),
-            nn.Sigmoid(),
+            nn.Linear(32, n_domains),
         )
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
@@ -108,8 +110,8 @@ class DANN(nn.Module):
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
-            y_pred      – phenotype probability (0–1)
-            domain_pred – domain probability (0=train, 1=test)
+            y_pred        – phenotype probability (0–1)
+            domain_logits – raw logits per domain (shape: batch × n_domains)
         """
         z = self.encoder(x)
         y_pred      = self.classifier(z)
@@ -135,6 +137,7 @@ def train_supervised_dae(
     microbiome_dfs: List[pd.DataFrame],
     target_series: pd.Series,
     unlabeled_dfs: Optional[List[pd.DataFrame]] = None,
+    dataset_ids: Optional[List[int]] = None,
     latent_dim: int = 64,
     hidden_dims: Optional[List[int]] = None,
     epochs: int = 100,
@@ -182,13 +185,35 @@ def train_supervised_dae(
     y_all     = target_series.values.astype(np.float32).ravel()
     assert len(X_labeled) == len(y_all), "Mismatch between features and labels"
 
-    scaler = StandardScaler()
-    idx = np.arange(len(X_labeled))
-    np.random.seed(42)
-    val_size  = max(1, int(len(idx) * val_split))
-    val_idx   = np.random.choice(idx, size=val_size, replace=False)
-    train_idx = np.setdiff1d(idx, val_idx)
+    # ── Domain IDs: one integer per training sample identifying its source dataset
+    if dataset_ids is not None:
+        ds_ids = np.array(dataset_ids, dtype=np.int64)
+        assert len(ds_ids) == len(X_labeled), "dataset_ids length must match training samples"
+    else:
+        ds_ids = np.zeros(len(X_labeled), dtype=np.int64)  # fallback: all one domain
 
+    n_train_domains = int(ds_ids.max()) + 1
+    test_domain_id  = n_train_domains          # held-out test gets a new unique ID
+    n_domains       = n_train_domains + 1      # computed from data, not set by user
+
+    if verbose:
+        print(f"  [DANN] n_train_domains={n_train_domains}  n_domains={n_domains}")
+
+    # ── Stratified train/val split by (dataset_id, phenotype_label) ──────────
+    from sklearn.model_selection import StratifiedShuffleSplit
+    strat_key = [f"{d}_{int(y)}" for d, y in zip(ds_ids, y_all)]
+    try:
+        sss = StratifiedShuffleSplit(n_splits=1, test_size=val_split, random_state=42)
+        train_idx, val_idx = next(sss.split(X_labeled, strat_key))
+    except ValueError:
+        # fallback if any (dataset, label) group has too few samples
+        np.random.seed(42)
+        all_idx  = np.arange(len(X_labeled))
+        val_size = max(1, int(len(all_idx) * val_split))
+        val_idx  = np.random.choice(all_idx, size=val_size, replace=False)
+        train_idx = np.setdiff1d(all_idx, val_idx)
+
+    scaler = StandardScaler()
     scaler.fit(X_labeled[train_idx])
     X_labeled_scaled = scaler.transform(X_labeled)
 
@@ -197,33 +222,30 @@ def train_supervised_dae(
     X_val   = torch.tensor(X_labeled_scaled[val_idx],   dtype=torch.float32)
     y_val   = torch.tensor(y_all[val_idx],               dtype=torch.float32).unsqueeze(1)
 
-    # Domain labels: training datasets = 0
-    d_train = torch.zeros(len(X_train), 1, dtype=torch.float32)
-    d_val   = torch.zeros(len(X_val),   1, dtype=torch.float32)
+    # Domain labels: per-dataset integer IDs (long for CrossEntropyLoss)
+    d_train = torch.tensor(ds_ids[train_idx], dtype=torch.long)
+    d_val   = torch.tensor(ds_ids[val_idx],   dtype=torch.long)
 
     train_loader = DataLoader(
         TensorDataset(X_train, y_train, d_train), batch_size=batch_size, shuffle=True
     )
 
-    # ── Prepare unlabeled (target) data: domain = 1 ──────────────────────────
+    # ── Prepare unlabeled (target/test) data: domain = test_domain_id ────────
     unlabeled_loader = None
-    X_unlab_val = None
     if unlabeled_dfs is not None:
         X_unlabeled        = pd.concat(unlabeled_dfs, axis=0).values.astype(np.float32)
         X_unlabeled_scaled = scaler.transform(X_unlabeled)
         X_unlab_t          = torch.tensor(X_unlabeled_scaled, dtype=torch.float32)
-        d_unlab            = torch.ones(len(X_unlab_t), 1, dtype=torch.float32)
+        d_unlab            = torch.full((len(X_unlab_t),), test_domain_id, dtype=torch.long)
         unlabeled_loader   = DataLoader(
             TensorDataset(X_unlab_t, d_unlab), batch_size=batch_size, shuffle=True
         )
-        # fixed slice for validation domain loss
-        X_unlab_val = X_unlab_t[:min(len(X_val), len(X_unlab_t))]
 
     # ── Model ─────────────────────────────────────────────────────────────────
     input_dim = X_labeled.shape[1]
     model = DANN(
         input_dim, latent_dim=latent_dim, hidden_dims=hidden_dims,
-        dropout=dropout,
+        dropout=dropout, n_domains=n_domains,
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -231,6 +253,7 @@ def train_supervised_dae(
         optimizer, patience=5, factor=0.5, verbose=False
     )
     bce_loss = nn.BCELoss()
+    ce_loss  = nn.CrossEntropyLoss()   # for domain (multi-class, handles softmax internally)
 
     best_val_cls  = float("inf")
     best_state    = None
@@ -260,7 +283,7 @@ def train_supervised_dae(
             optimizer.zero_grad()
             y_pred, d_pred = model(X_b)
             loss_cls = bce_loss(y_pred, y_b)
-            loss_dom = bce_loss(d_pred, d_b)
+            loss_dom = ce_loss(d_pred, d_b)    # d_b: long (dataset IDs), d_pred: (batch, n_domains)
             (loss_cls + loss_dom).backward()
             optimizer.step()
             epoch_cls += loss_cls.item() * len(X_b)
@@ -268,13 +291,13 @@ def train_supervised_dae(
         epoch_cls /= len(train_idx)
         epoch_dom /= len(train_idx)
 
-        # ── Unlabeled pass: domain loss only (test features, no labels) ───────
+        # ── Unlabeled pass: domain loss only (test features, no phenotype labels) ─
         if unlabeled_loader is not None:
             for X_b, d_b in unlabeled_loader:
                 X_b, d_b = X_b.to(device), d_b.to(device)
                 optimizer.zero_grad()
                 _, d_pred = model(X_b)
-                bce_loss(d_pred, d_b).backward()
+                ce_loss(d_pred, d_b).backward()
                 optimizer.step()
 
         epoch_total = epoch_cls + epoch_dom
@@ -284,15 +307,7 @@ def train_supervised_dae(
         with torch.no_grad():
             yp_val, dp_val_src = model(X_val_dev)
             val_cls     = bce_loss(yp_val, y_val_dev).item()
-            val_dom_src = bce_loss(dp_val_src, d_val_dev).item()
-
-            if X_unlab_val is not None:
-                X_uv  = X_unlab_val.to(device)
-                d_uv  = torch.ones(len(X_uv), 1, dtype=torch.float32).to(device)
-                _, dp_tgt = model(X_uv)
-                val_dom = (val_dom_src + bce_loss(dp_tgt, d_uv).item()) / 2.0
-            else:
-                val_dom = val_dom_src
+            val_dom = ce_loss(dp_val_src, d_val_dev).item()
 
             val_total = val_cls + val_dom
 

@@ -70,8 +70,8 @@ CONFIG = {
     "autoencoder":                  True,  # enable supervised DAE preprocessing
     "ae_latent_dim_amplicon":       64,    # latent dim for 16S  (~4:1 compression from ~1000 features)
     "ae_latent_dim_metagenomics":   64,    # latent dim for Shotgun (~4:1 compression from ~1000+ features)
-    "ae_cls_weight_amplicon":       0.5,    # BCE weight for 16S (lower: encoder already aligned)
-    "ae_cls_weight_metagenomics":   0.5,    # BCE weight for Shotgun
+    "ae_cls_weight_amplicon":       0.2,    # BCE weight for 16S (lower: encoder already aligned)
+    "ae_cls_weight_metagenomics":   0.4,    # BCE weight for Shotgun
     "ae_epochs":      150,                  # more room — early stopping still controls it
     "ae_batch_size":  64,                   # larger batches = more stable gradients
     "ae_lr":           3e-4,

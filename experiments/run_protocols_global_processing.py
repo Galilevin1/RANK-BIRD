@@ -77,9 +77,15 @@ def _run_ae_protocols(
         train_dfs_aligned = [df[common_cols] for df in train_dfs]
         test_df_aligned   = all_microbiome[i][common_cols]
 
+        # Per-sample dataset IDs: each training dataset gets its own integer domain label
+        dataset_ids_lodo = [
+            j_idx for j_idx, df in enumerate(train_dfs_aligned) for _ in range(len(df))
+        ]
+
         model, scaler, history = train_supervised_dae(
             train_dfs_aligned, train_tgts,
-            unlabeled_dfs=[test_df_aligned],   # test features for denoising, labels never seen
+            unlabeled_dfs=[test_df_aligned],   # test features only — labels never seen
+            dataset_ids=dataset_ids_lodo,
             latent_dim=ae_latent_dim, epochs=ae_epochs,
             batch_size=ae_batch_size, lr=ae_lr,
             cls_weight=ae_cls_weight, noise_std=ae_noise_std,
@@ -130,8 +136,14 @@ def _run_ae_protocols(
         common_cols_global = common_cols_global.intersection(df.columns)
     aligned_all = [df[common_cols_global] for df in all_microbiome]
 
+    # Per-sample dataset IDs for all datasets
+    dataset_ids_global = [
+        j_idx for j_idx, df in enumerate(aligned_all) for _ in range(len(df))
+    ]
+
     model_global, scaler_global, history_global = train_supervised_dae(
         aligned_all, y_all,
+        dataset_ids=dataset_ids_global,
         latent_dim=ae_latent_dim, epochs=ae_epochs,
         batch_size=ae_batch_size, lr=ae_lr,
         cls_weight=ae_cls_weight, noise_std=ae_noise_std,
