@@ -121,10 +121,10 @@ class DANN(nn.Module):
 # λ schedule
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _lambda_schedule(epoch: int, max_epoch: int) -> float:
-    """Standard DANN sigmoid ramp: 0 → 1 over training."""
+def _lambda_schedule(epoch: int, max_epoch: int, lam_max: float = 1.0) -> float:
+    """Standard DANN sigmoid ramp: 0 → lam_max over training."""
     p = epoch / max_epoch
-    return 2 / (1 + np.exp(-10 * p)) - 1
+    return lam_max * (2 / (1 + np.exp(-10 * p)) - 1)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -247,7 +247,7 @@ def train_supervised_dae(
     d_val_dev = d_val.to(device)
 
     for epoch in range(1, epochs + 1):
-        lam = _lambda_schedule(epoch, epochs)
+        lam = _lambda_schedule(epoch, epochs, lam_max=cls_weight)
         model.grl.lam = lam
         model.train()
 

@@ -68,16 +68,17 @@ CONFIG = {
     # Encoder sees test features for denoising (no labels) — classifier trained on train only
     # -----------------------
     "autoencoder":                  True,  # enable supervised DAE preprocessing
-    "ae_latent_dim_amplicon":       256,    # latent dim for 16S  (~4:1 compression from ~1000 features)
-    "ae_latent_dim_metagenomics":   256,    # latent dim for Shotgun (~4:1 compression from ~1000+ features)
+    "ae_latent_dim_amplicon":       64,    # latent dim for 16S  (~4:1 compression from ~1000 features)
+    "ae_latent_dim_metagenomics":   64,    # latent dim for Shotgun (~4:1 compression from ~1000+ features)
     "ae_cls_weight_amplicon":       0.5,    # BCE weight for 16S (lower: encoder already aligned)
     "ae_cls_weight_metagenomics":   0.5,    # BCE weight for Shotgun
     "ae_epochs":      150,                  # more room — early stopping still controls it
     "ae_batch_size":  64,                   # larger batches = more stable gradients
     "ae_lr":           3e-4,
     "ae_weight_decay": 1e-4,
-    "ae_noise_std":   0.1,                  # now meaningful: learn to denoise across datasets
-    "ae_dropout":     0.1,                  # applied in encoder layers + classifier head
+    "ae_patience":     15,
+    "ae_noise_std":   0.3,                  # now meaningful: learn to denoise across datasets
+    "ae_dropout":     0.4,                  # applied in encoder layers + classifier head
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -191,6 +192,7 @@ def main():
                     ae_batch_size=CONFIG.get("ae_batch_size", 32),
                     ae_lr=CONFIG.get("ae_lr", 1e-3),
                     ae_weight_decay=CONFIG.get("ae_weight_decay", 1e-4),
+                    ae_patience=CONFIG.get("ae_patience", 15),
                     ae_noise_std=CONFIG.get("ae_noise_std", 0.0),
                     ae_dropout=CONFIG.get("ae_dropout", 0.3),
                 )

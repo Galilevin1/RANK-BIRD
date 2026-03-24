@@ -46,6 +46,7 @@ def _run_ae_protocols(
     ae_noise_std=0.0,
     ae_dropout=0.3,
     ae_weight_decay=1e-4,
+    ae_patience=15,
 ):
     """
     Run LODO and Internal Validation protocols using a Supervised DAE encoder.
@@ -82,7 +83,7 @@ def _run_ae_protocols(
             latent_dim=ae_latent_dim, epochs=ae_epochs,
             batch_size=ae_batch_size, lr=ae_lr,
             cls_weight=ae_cls_weight, noise_std=ae_noise_std,
-            dropout=ae_dropout, weight_decay=ae_weight_decay, verbose=False,
+            dropout=ae_dropout, weight_decay=ae_weight_decay, patience=ae_patience, verbose=False,
         )
         safe_name = test_name.replace("/", "_").replace(" ", "_")
         plot_ae_loss(
@@ -134,7 +135,7 @@ def _run_ae_protocols(
         latent_dim=ae_latent_dim, epochs=ae_epochs,
         batch_size=ae_batch_size, lr=ae_lr,
         cls_weight=ae_cls_weight, noise_std=ae_noise_std,
-        dropout=ae_dropout, weight_decay=ae_weight_decay, verbose=True,
+        dropout=ae_dropout, weight_decay=ae_weight_decay, patience=ae_patience, verbose=True,
     )
     plot_ae_loss(
         history_global, title="Internal Validation — global AE",
@@ -184,6 +185,7 @@ def _run_global_for_dtype(phenotypes,
                           ae_noise_std=0.0,
                           ae_dropout=0.3,
                           ae_weight_decay=1e-4,
+                          ae_patience=15,
                           ):
 
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -253,26 +255,45 @@ def _run_global_for_dtype(phenotypes,
         records.append(df_grp)
 
     # ----------------------------------
-    # 4. Supervised DAE protocols (optional)
+    # 4. Supervised DANN protocols (optional, per phenotype group)
     # ----------------------------------
     ae_records = None
     if apply_autoencoder:
-        print("\n[AE] Running supervised DAE protocols...")
-        ae_df = _run_ae_protocols(
-            all_microbiome=all_microbiome,
-            all_targets=all_targets,
-            all_dataset_names=all_dataset_names,
-            dataset_to_phenotype=dataset_to_phenotype,
-            ae_latent_dim=ae_latent_dim,
-            ae_epochs=ae_epochs,
-            ae_batch_size=ae_batch_size,
-            ae_lr=ae_lr,
-            ae_cls_weight=ae_cls_weight,
-            ae_noise_std=ae_noise_std,
-            ae_dropout=ae_dropout,
-            ae_weight_decay=ae_weight_decay,
-        )
-        ae_records = ae_df
+        print("\n[AE] Running supervised DANN protocols (per phenotype group)...")
+        ae_dfs = []
+        for phenotype_str in set(dataset_to_phenotype.values()):
+            pheno_idx = [
+                i for i, name in enumerate(all_dataset_names)
+                if dataset_to_phenotype[name] == phenotype_str
+            ]
+            if len(pheno_idx) < 2:
+                print(f"  [AE] skip {phenotype_str}: need ≥2 datasets for LODO")
+                continue
+
+            pheno_microbiome = [all_microbiome[i] for i in pheno_idx]
+            pheno_targets    = [all_targets[i]    for i in pheno_idx]
+            pheno_names      = [all_dataset_names[i] for i in pheno_idx]
+            pheno_d2p        = {name: phenotype_str for name in pheno_names}
+
+            print(f"  [AE] phenotype group: {phenotype_str}  ({len(pheno_names)} datasets)")
+            ae_df_pheno = _run_ae_protocols(
+                all_microbiome=pheno_microbiome,
+                all_targets=pheno_targets,
+                all_dataset_names=pheno_names,
+                dataset_to_phenotype=pheno_d2p,
+                ae_latent_dim=ae_latent_dim,
+                ae_epochs=ae_epochs,
+                ae_batch_size=ae_batch_size,
+                ae_lr=ae_lr,
+                ae_cls_weight=ae_cls_weight,
+                ae_noise_std=ae_noise_std,
+                ae_dropout=ae_dropout,
+                ae_weight_decay=ae_weight_decay,
+                ae_patience=ae_patience,
+            )
+            ae_dfs.append(ae_df_pheno)
+
+        ae_records = pd.concat(ae_dfs, ignore_index=True) if ae_dfs else None
 
     return pd.concat(records, ignore_index=True), ae_records
 
@@ -299,6 +320,7 @@ def run_protocol_benchmark_global_preprocessing(
     ae_noise_std=0.0,
     ae_dropout=0.3,
     ae_weight_decay=1e-4,
+    ae_patience=15,
 ):
     phenotypes_by_dtype = defaultdict(list)
     for phenotype, dtype in phenotypes:
@@ -342,6 +364,7 @@ def run_protocol_benchmark_global_preprocessing(
             ae_noise_std=ae_noise_std,
             ae_dropout=ae_dropout,
             ae_weight_decay=ae_weight_decay,
+            ae_patience=ae_patience,
         )
 
         all_records.append(records_dtype)
