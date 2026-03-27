@@ -1,0 +1,72 @@
+Test Dataset: PRJEB10878
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Peptostreptococcaceae;g__Peptostreptococcus: 0.397869
+  k__Bacteria;p__Fusobacteria: 0.246786
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium: 0.204970
+  k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Bacteroidales_unclassified;g__Phocaeicola;s__Phocaeicola_coprocola: 0.115195
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia: 0.100783
+  k__Bacteria;p__Firmicutes;c__Negativicutes;o__Veillonellales;f__Veillonellaceae;g__Dialister;s__Dialister_pneumosintes: 0.074094
+  k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Porphyromonadaceae;g__Porphyromonas: 0.073431
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium;s__Fusobacterium_nucleatum: 0.068294
+  k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Bacteroidaceae;g__Bacteroides;s__Bacteroides_intestinalis: 0.067691
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Lachnospiraceae;g__Lachnospiraceae_unclassified: 0.066425
+
+Test Dataset: PRJEB12449
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Peptostreptococcaceae;g__Peptostreptococcus: 0.407661
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium;s__Fusobacterium_nucleatum: 0.233667
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium: 0.135860
+  k__Bacteria;p__Fusobacteria: 0.083253
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Ruminococcaceae;g__GGB9694;s__GGB9694_SGB15201: 0.070066
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridia_unclassified;f__Clostridia_unclassified;g__Clostridia_unclassified;s__Clostridia_unclassified_SGB4367: 0.068899
+  k__Bacteria;p__Firmicutes;c__Erysipelotrichia;o__Erysipelotrichales;f__Erysipelotrichaceae;g__Faecalibacillus;s__Faecalibacillus_intestinalis: 0.065247
+  k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Porphyromonadaceae;g__Porphyromonas: 0.055126
+  k__Bacteria;p__Actinobacteria;c__Actinobacteria;o__Bifidobacteriales;f__Bifidobacteriaceae;g__Bifidobacterium;s__Bifidobacterium_adolescentis: 0.053462
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridia_unclassified;f__Clostridia_unclassified;g__Candidatus_Pararuminococcus: 0.049787
+
+Test Dataset: PRJEB27928
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Peptostreptococcaceae;g__Peptostreptococcus: 0.311978
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium;s__Fusobacterium_nucleatum: 0.114015
+  k__Bacteria;p__Fusobacteria: 0.107449
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridia_unclassified;f__Clostridia_unclassified;g__Clostridia_unclassified;s__Clostridia_unclassified_SGB4367: 0.076643
+  k__Bacteria;p__Firmicutes;c__Bacilli;o__Lactobacillales;f__Streptococcaceae;g__Streptococcus;s__Streptococcus_salivarius: 0.065807
+  k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Porphyromonadaceae;g__Porphyromonas: 0.047118
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Clostridiaceae;g__Clostridium;s__Clostridium_sp_AM33_3: 0.044792
+  k__Bacteria;p__Proteobacteria;c__Betaproteobacteria;o__Burkholderiales;f__Sutterellaceae;g__Parasutterella: 0.039640
+  k__Archaea;p__Euryarchaeota;c__Methanobacteria: 0.038385
+  k__Bacteria;p__Firmicutes;c__Tissierellia: 0.034616
+
+Test Dataset: PRJEB6070
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Peptostreptococcaceae;g__Peptostreptococcus: 0.543962
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium;s__Fusobacterium_nucleatum: 0.242877
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium: 0.238500
+  k__Bacteria;p__Firmicutes;c__Tissierellia;o__Tissierellales: 0.215658
+  k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Bacteroidaceae;g__Bacteroides;s__Bacteroides_ovatus: 0.158824
+  k__Bacteria;p__Firmicutes;c__Tissierellia;o__Tissierellales;f__Peptoniphilaceae;g__Parvimonas: 0.155409
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Lachnospiraceae;g__Mediterraneibacter;s__Ruminococcus_torques: 0.139850
+  k__Bacteria;p__Firmicutes;c__Bacilli;o__Bacillales;f__Bacillales_unclassified;g__Gemella;s__Gemella_morbillorum: 0.120490
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Ruminococcaceae;g__Gemmiger;s__Gemmiger_SGB15299: 0.119518
+  k__Bacteria;p__Firmicutes;c__Tissierellia: 0.114251
+
+Test Dataset: PRJEB7774
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Peptostreptococcaceae;g__Peptostreptococcus: 0.718473
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium;s__Fusobacterium_nucleatum: 0.224476
+  k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Bacteroidales_unclassified;g__Phocaeicola;s__Phocaeicola_dorei: 0.112541
+  k__Bacteria;p__Firmicutes;c__Tissierellia;o__Tissierellales;f__Peptoniphilaceae: 0.093769
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium: 0.093296
+  k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Bacteroidaceae;g__Bacteroides;s__Bacteroides_ovatus: 0.088597
+  k__Bacteria;p__Actinobacteria;c__Actinobacteria;o__Bifidobacteriales;f__Bifidobacteriaceae;g__Bifidobacterium;s__Bifidobacterium_catenulatum: 0.067229
+  k__Bacteria;p__Firmicutes;c__Erysipelotrichia;o__Erysipelotrichales;f__Erysipelotrichaceae;g__Faecalibacillus;s__Faecalibacillus_intestinalis: 0.063309
+  k__Bacteria;p__Firmicutes;c__Negativicutes;o__Acidaminococcales: 0.062225
+  k__Bacteria;p__Fusobacteria: 0.061605
+
+Test Dataset: PRJNA447983
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Peptostreptococcaceae;g__Peptostreptococcus: 0.447294
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium;s__Fusobacterium_nucleatum: 0.169260
+  k__Bacteria;p__Fusobacteria: 0.092663
+  k__Bacteria;p__Firmicutes;c__CFGB9612;o__OFGB9612;f__FGB9612;g__GGB45495: 0.074852
+  k__Bacteria;p__Fusobacteria;c__Fusobacteriia;o__Fusobacteriales;f__Fusobacteriaceae;g__Fusobacterium: 0.060515
+  k__Bacteria;p__Firmicutes;c__Tissierellia: 0.059601
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridia_unclassified;f__Clostridia_unclassified;g__Clostridia_unclassified;s__Clostridia_unclassified_SGB4367: 0.057997
+  k__Archaea;p__Euryarchaeota: 0.046120
+  k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Bacteroidales_unclassified;g__Phocaeicola;s__Phocaeicola_dorei: 0.045637
+  k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Ruminococcaceae;g__Ruminococcus;s__Ruminococcus_bicirculans: 0.043452
+

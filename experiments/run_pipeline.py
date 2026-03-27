@@ -21,6 +21,7 @@ from figures.figure5 import plot_figure5
 from experiments.investigate_stability_threshold import (
     run_stability_investigation, run_microbe_characterization,
 )
+from experiments.investigate_distribution_approach import run_distribution_investigation
 from evaluation.data_loading import build_papers_auc_df, load_microbiome_datasets_with_targets
 from evaluation.pairwise_lodo import run_figure4_analysis
 
@@ -35,12 +36,12 @@ CONFIG = {
     # -----------------------
     # Pipeline control
     # -----------------------
-    "run_compute": True,      # run heavy protocol training
-    "run_aggregate": True,    # recompute summary
-    "run_stats": True,
-    "run_figures": ["1e"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-    "run_investigations": [],  # "stability_threshold", "stability_characterization"
-    "investigations_plot_only": True,   # For  "stability_threshold" invastigation # True = reload CSVs, False = recompute
+    "run_compute": False,      # run heavy protocol training
+    "run_aggregate": False,    # recompute summary
+    "run_stats": False,
+    "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
+    "run_investigations": ["distribution_approach"],  # "stability_threshold", "stability_characterization", "distribution_approach"
+    "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach"invastigations # True = reload CSVs, False = recompute
     "characterization_threshold_metagenomics": 0.25,
     "characterization_threshold_amplicon":     0.40,
 
@@ -296,6 +297,17 @@ def main():
             threshold_metagenomics=CONFIG["characterization_threshold_metagenomics"],
             threshold_amplicon=CONFIG["characterization_threshold_amplicon"],
             plot_only=CONFIG.get("investigations_plot_only", False),
+        )
+
+    if "distribution_approach" in CONFIG["run_investigations"]:
+        dist_dir = PROJECT_ROOT / "investigations" / "distribution_approach"
+        run_distribution_investigation(
+            phenotypes=phenotypes,
+            output_dir=dist_dir,
+            plot_only=CONFIG.get("investigations_plot_only", False),
+            stability_percentile_metagenomics=CONFIG.get("stability_percentile_global_metagenomics", 0.25),
+            stability_percentile_amplicon=CONFIG.get("stability_percentile_global_amplicon", 0.40),
+            min_size=CONFIG.get("min_samples_per_dataset", 550),
         )
 
     if "5" in CONFIG["run_figures"]:
