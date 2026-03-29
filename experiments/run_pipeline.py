@@ -41,7 +41,7 @@ CONFIG = {
     "run_stats": False,
     "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
     "run_investigations": ["distribution_approach"],  # "stability_threshold", "stability_characterization", "distribution_approach"
-    "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach"invastigations # True = reload CSVs, False = recompute
+    "investigations_plot_only": True,   # For  "stability_threshold" and "distribution_approach"invastigations # True = reload CSVs, False = recompute
     "characterization_threshold_metagenomics": 0.25,
     "characterization_threshold_amplicon":     0.40,
 

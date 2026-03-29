@@ -365,6 +365,24 @@ def _run_approach_for_dtype(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Dataset exclusion helper
+# ═══════════════════════════════════════════════════════════════════════════════
+
+EXCLUDE_DATASET_PATTERN = "justControl"   # datasets whose name contains this are dropped
+
+
+def _drop_excluded_datasets(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove rows where the dataset name contains EXCLUDE_DATASET_PATTERN."""
+    if df.empty or "dataset" not in df.columns:
+        return df
+    mask = df["dataset"].str.contains(EXCLUDE_DATASET_PATTERN, case=False, na=False)
+    dropped = df[mask]["dataset"].unique()
+    if len(dropped):
+        print(f"  [EXCL] dropping datasets: {list(dropped)}")
+    return df[~mask].reset_index(drop=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Aggregation helper
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -749,6 +767,8 @@ def run_distribution_investigation(
 
             print(f"\n=== {dtype}  |  {APPROACH_LABELS[approach]} ===")
 
+            clean_path = output_dir / f"results_{tag}_clean.csv"
+
             if csv_path.exists():
                 # Always reuse existing results (avoids recomputing finished approaches)
                 print(f"  [LOAD] {csv_path.name}")
@@ -769,10 +789,16 @@ def run_distribution_investigation(
                 )
                 results_df.to_csv(csv_path, index=False)
 
-                agg_df = _aggregate_auc(results_df)
-                agg_df.to_csv(agg_path, index=False)
+            # Filtered copy — drop excluded datasets (e.g. justControl)
+            results_clean = _drop_excluded_datasets(results_df)
+            results_clean.to_csv(clean_path, index=False)
 
-            all_results[(dtype, approach)] = results_df
+            # Aggregation on clean data
+            agg_df = _aggregate_auc(results_clean)
+            agg_df.to_csv(agg_path, index=False)
+
+            # All downstream analysis (stats, plot) uses clean data
+            all_results[(dtype, approach)] = results_clean
 
     # ── Statistical tests ─────────────────────────────────────────────────────
     print("\nRunning statistical tests (ANOVA + pairwise paired t-test / Bonferroni) ...")
