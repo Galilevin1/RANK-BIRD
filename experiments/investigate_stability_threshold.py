@@ -123,14 +123,16 @@ def count_kept_microbes_sweep(
 
 # ── AUC sweep ─────────────────────────────────────────────────────────────────
 
-def run_stability_sweep(
+def run_stability_sweep(  # noqa: E302
     phenotypes: list,
     dtype: str,
     level=None,
+    filter_only: bool = False,
 ) -> pd.DataFrame:
     """
     Sweep stability percentiles, running all protocols at each step.
-    Returns: [percentile, protocol, mean_auc, std_auc, n_phenotypes]
+    filter_only=True applies only stability filtering (no distribution normalization).
+    Returns: [percentile, protocol, mean_auc, median_auc, std_auc, n_phenotypes]
     """
     pheno_subset = [(p, t) for p, t in phenotypes if t == dtype]
     if not pheno_subset:
@@ -138,12 +140,13 @@ def run_stability_sweep(
 
     rows = []
     for pct in PERCENTILES:
-        print(f"  [{dtype}] pct={pct:.1f}  level={level} ...")
+        print(f"  [{dtype}] pct={pct:.2f}  level={level}  filter_only={filter_only} ...")
 
         if level is None:
             results_df = _run_global_for_dtype(
                 pheno_subset,
-                apply_normalization=True,
+                apply_normalization=not filter_only,
+                filter_only=filter_only,
                 stability_percentile_global=pct,
             )
         else:
@@ -163,6 +166,7 @@ def run_stability_sweep(
                 "percentile":   pct,
                 "protocol":     protocol,
                 "mean_auc":     sub.mean(),
+                "median_auc":   sub.median(),
                 "std_auc":      sub.std(ddof=1),
                 "n_phenotypes": results_df[
                     results_df["protocol"] == protocol
@@ -266,6 +270,7 @@ def _plot_sweep_panel(
     count_df: pd.DataFrame,
     title: str,
     original_auc: dict = None,
+    median_only: bool = False,
 ):
     """AUC lines (left axis) + kept-microbe count & % annotations (right axis).
     original_auc: {protocol: mean_auc} drawn as horizontal dashed reference lines.
@@ -276,15 +281,24 @@ def _plot_sweep_panel(
         if sub.empty:
             continue
         color = PROTOCOL_COLORS[protocol]
-        ax.plot(sub["percentile"], sub["mean_auc"],
-                marker="o", linewidth=2, markersize=5,
-                color=color, label=protocol)
-        ax.fill_between(
-            sub["percentile"],
-            sub["mean_auc"] - sub["std_auc"],
-            sub["mean_auc"] + sub["std_auc"],
-            alpha=0.10, color=color,
-        )
+        if not median_only:
+            ax.plot(sub["percentile"], sub["mean_auc"],
+                    marker="o", linewidth=2, markersize=5,
+                    color=color, label=f"{protocol} (mean)")
+            ax.fill_between(
+                sub["percentile"],
+                sub["mean_auc"] - sub["std_auc"],
+                sub["mean_auc"] + sub["std_auc"],
+                alpha=0.10, color=color,
+            )
+        if "median_auc" in sub.columns:
+            label = protocol if median_only else f"{protocol} (median)"
+            ax.plot(sub["percentile"], sub["median_auc"],
+                    marker="^", linewidth=1.5 if median_only else 1.5,
+                    markersize=5 if median_only else 4,
+                    linestyle="-" if median_only else "--",
+                    color=color, alpha=1.0 if median_only else 0.75,
+                    label=label)
         # Original (no normalization) reference line
         if original_auc and protocol in original_auc:
             ax.axhline(
@@ -330,68 +344,96 @@ def run_stability_investigation(
     phenotypes: list,
     output_dir: Path,
     plot_only: bool = False,
+    dtype_filter: list = None,
+    median_only: bool = False,
+    normalization_modes: list = None,
 ):
     """
-    Runs the full (dtype × level) sweep and saves CSVs + one combined figure.
+    Runs the full (dtype × level) sweep and saves CSVs + one combined figure per mode.
 
     Parameters
     ----------
-    phenotypes  : list of (phenotype, dtype) tuples
-    output_dir  : directory for CSVs and figure
-    plot_only   : if True, skip all computation and load existing CSVs instead
+    phenotypes         : list of (phenotype, dtype) tuples
+    output_dir         : directory for CSVs and figures
+    plot_only          : if True, skip computation and load existing CSVs
+    dtype_filter       : limit to these dtypes, e.g. ["Metagenomics"]. None = all.
+    median_only        : if True, plot only median AUC line (no mean / std band)
+    normalization_modes: list of modes to run, e.g. ["full"], ["filter_only"],
+                         or ["full", "filter_only"]. Default: ["full"]
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dtypes = ["Metagenomics", "Amplicon"]
-    fig, axes = plt.subplots(
-        len(LEVELS), len(dtypes),
-        figsize=(7 * len(dtypes), 5 * len(LEVELS)),
-    )
+    if normalization_modes is None:
+        normalization_modes = ["full"]
 
-    for row_idx, (level, level_label) in enumerate(LEVELS):
-        for col_idx, dtype in enumerate(dtypes):
-            ax  = axes[row_idx][col_idx]
-            tag = f"{dtype.lower()}_{level or 'all'}"
-            print(f"\n=== {level_label}  |  {dtype} ===")
+    all_dtypes = ["Metagenomics", "Amplicon"]
+    dtypes = [d for d in all_dtypes if dtype_filter is None or d in dtype_filter]
 
-            if plot_only:
-                # Load pre-existing CSVs
-                count_path = output_dir / f"microbe_counts_{tag}.csv"
-                sweep_path = output_dir / f"auc_sweep_{tag}.csv"
-                orig_path  = output_dir / f"original_auc_{tag}.csv"
-                if not sweep_path.exists() or not count_path.exists():
-                    print(f"  [SKIP] Missing CSVs for {tag}, run without plot_only first.")
-                    continue
-                count_df = pd.read_csv(count_path)
-                sweep_df = pd.read_csv(sweep_path)
-                orig_auc = pd.read_csv(orig_path).iloc[0].to_dict() if orig_path.exists() else {}
-            else:
-                count_df = count_kept_microbes_sweep(phenotypes, dtype, level=level)
-                count_df.to_csv(output_dir / f"microbe_counts_{tag}.csv", index=False)
+    for norm_mode in normalization_modes:
+        filter_only = (norm_mode == "filter_only")
+        mode_suffix = f"_{norm_mode}" if norm_mode != "full" else ""
+        mode_label  = "Filter-only" if filter_only else "Full normalization"
 
-                sweep_df = run_stability_sweep(phenotypes, dtype, level=level)
-                sweep_df.to_csv(output_dir / f"auc_sweep_{tag}.csv", index=False)
+        fig, axes = plt.subplots(
+            len(LEVELS), len(dtypes),
+            figsize=(7 * len(dtypes), 5 * len(LEVELS)),
+            squeeze=False,
+        )
 
-                print(f"  Computing original (no normalization) baseline ...")
-                orig_auc = get_original_mean_auc(phenotypes, dtype, level=level)
-                pd.DataFrame([orig_auc]).to_csv(
-                    output_dir / f"original_auc_{tag}.csv", index=False
-                )
+        for row_idx, (level, level_label) in enumerate(LEVELS):
+            for col_idx, dtype in enumerate(dtypes):
+                ax  = axes[row_idx][col_idx]
+                tag = f"{dtype.lower()}_{level or 'all'}{mode_suffix}"
+                print(f"\n=== {mode_label}  |  {level_label}  |  {dtype} ===")
 
-            _plot_sweep_panel(ax, sweep_df, count_df,
-                              title=f"{dtype} — {level_label}",
-                              original_auc=orig_auc)
+                if plot_only:
+                    count_path = output_dir / f"microbe_counts_{dtype.lower()}_{level or 'all'}.csv"
+                    sweep_path = output_dir / f"auc_sweep_{tag}.csv"
+                    orig_path  = output_dir / f"original_auc_{dtype.lower()}_{level or 'all'}.csv"
+                    if not sweep_path.exists() or not count_path.exists():
+                        print(f"  [SKIP] Missing CSVs for {tag}, run without plot_only first.")
+                        continue
+                    count_df = pd.read_csv(count_path)
+                    sweep_df = pd.read_csv(sweep_path)
+                    orig_auc = pd.read_csv(orig_path).iloc[0].to_dict() if orig_path.exists() else {}
+                else:
+                    # Microbe counts are mode-independent — reuse if already saved
+                    count_path = output_dir / f"microbe_counts_{dtype.lower()}_{level or 'all'}.csv"
+                    if count_path.exists():
+                        count_df = pd.read_csv(count_path)
+                    else:
+                        count_df = count_kept_microbes_sweep(phenotypes, dtype, level=level)
+                        count_df.to_csv(count_path, index=False)
 
-    fig.suptitle(
-        "Stability Filter Percentile: Mean AUC & Kept Microbes",
-        fontsize=14, fontweight="bold", y=1.01,
-    )
-    plt.tight_layout()
-    out_path = output_dir / "stability_threshold_investigation.png"
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"\nSaved: {out_path}")
+                    sweep_df = run_stability_sweep(
+                        phenotypes, dtype, level=level, filter_only=filter_only,
+                    )
+                    sweep_df.to_csv(output_dir / f"auc_sweep_{tag}.csv", index=False)
+
+                    orig_path = output_dir / f"original_auc_{dtype.lower()}_{level or 'all'}.csv"
+                    if orig_path.exists():
+                        orig_auc = pd.read_csv(orig_path).iloc[0].to_dict()
+                    else:
+                        print(f"  Computing original (no normalization) baseline ...")
+                        orig_auc = get_original_mean_auc(phenotypes, dtype, level=level)
+                        pd.DataFrame([orig_auc]).to_csv(orig_path, index=False)
+
+                _plot_sweep_panel(ax, sweep_df, count_df,
+                                  title=f"{dtype} — {level_label}",
+                                  original_auc=orig_auc,
+                                  median_only=median_only)
+
+        auc_label = "Median AUC" if median_only else "Mean & Median AUC"
+        fig.suptitle(
+            f"Stability Filter Percentile: {auc_label} & Kept Microbes  [{mode_label}]",
+            fontsize=14, fontweight="bold", y=1.01,
+        )
+        plt.tight_layout()
+        out_path = output_dir / f"stability_threshold_investigation{mode_suffix}.png"
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"\nSaved: {out_path}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

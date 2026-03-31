@@ -40,9 +40,16 @@ CONFIG = {
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
     "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-    "run_investigations": ["distribution_approach"],  # "stability_threshold", "stability_characterization", "distribution_approach"
-    "investigations_plot_only": True,   # For  "stability_threshold" and "distribution_approach"invastigations # True = reload CSVs, False = recompute
-    "characterization_threshold_metagenomics": 0.25,
+
+    # -----------------------
+    # Investigations control
+    # -----------------------
+    "run_investigations": ["stability_threshold"],  # "stability_threshold", "stability_characterization", "distribution_approach"
+    "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach"invastigations # True = reload CSVs, False = recompute
+    "stability_dtype_filter":        ["Metagenomics"],  # None = both dtypes; ["Metagenomics"] = shotgun only
+    "stability_median_only":         True,              # True = plot only median line (faster to read)
+    "stability_normalization_modes": ["full", "filter_only"],  # "full", "filter_only", or both
+    "characterization_threshold_metagenomics": 0.35,
     "characterization_threshold_amplicon":     0.40,
 
     # -----------------------
@@ -287,6 +294,9 @@ def main():
             phenotypes=phenotypes,
             output_dir=inv_dir,
             plot_only=CONFIG.get("investigations_plot_only", False),
+            dtype_filter=CONFIG.get("stability_dtype_filter", None),
+            median_only=CONFIG.get("stability_median_only", False),
+            normalization_modes=CONFIG.get("stability_normalization_modes", ["full"]),
         )
 
     if "stability_characterization" in CONFIG["run_investigations"]:

@@ -7,6 +7,9 @@ import seaborn as sns
 from scipy.stats import sem, mannwhitneyu
 from collections import defaultdict
 from src.rankbird.normalization.pipeline import apply_normalization_pipeline #### Change after package
+from src.rankbird.normalization.stability import (
+    union_microbes, nonzero_percent_by_dataset, auto_stability_filter,
+)
 from src.rankbird.representation.multi_datasets_SPDR import apply_bias_SPDR   ### Change after package
 from evaluation.data_loading import load_microbiome_datasets_with_targets
 from evaluation.learning_protocols import lodo_protocol, internal_validation_protocol, within_dataset_protocol
@@ -34,8 +37,9 @@ def _run_protocols_on_group(microbiome_dfs, target_dfs, dataset_names, phenotype
 
 def _run_global_for_dtype(phenotypes,
                           apply_normalization=False,
+                          filter_only=False,
                           apply_decompose=False,
-                          min_samples_per_dataset=550, 
+                          min_samples_per_dataset=550,
                           stability_percentile_local=0.3,
                           stability_percentile_global=0.5,
                           z_thresh=3.0,
@@ -71,7 +75,14 @@ def _run_global_for_dtype(phenotypes,
     # 2. GLOBAL preprocessing (once)
     # ----------------------------------
 
-    if apply_normalization:
+    if filter_only:
+        # Stability filter only — no oversampling, no distribution, no quantile mapping
+        all_microbes = union_microbes(all_microbiome)
+        nz_df = nonzero_percent_by_dataset(all_microbiome, all_dataset_names, all_microbes)
+        kept = auto_stability_filter(nz_df, percentile=stability_percentile_global)
+        all_microbiome = [df.reindex(columns=kept, fill_value=0.0) for df in all_microbiome]
+
+    elif apply_normalization:
         all_microbiome, all_dataset_names = apply_normalization_pipeline(
             all_microbiome,
             all_dataset_names,
