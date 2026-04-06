@@ -39,7 +39,14 @@ def load_microbiome_datasets_with_targets(
                         .str.replace('|', ';', regex=False)
                         .str.replace('[{}"\\[\\],:]', '_', regex=True)
                         .str.replace(r'\s+', '_', regex=True)
+                        .str.replace(r'\.\d+$', '', regex=True)  # strip pandas dedup suffixes (.1, .2, ...)
                     )
+
+                # Drop Unassigned columns (catch-all bin, not a real taxon)
+                unassigned_cols = [c for c in microbiome_df.columns
+                                   if c.lower().startswith("unassigned")]
+                if unassigned_cols:
+                    microbiome_df = microbiome_df.drop(columns=unassigned_cols)
 
                 # Taxonomy merge
                 processed_df = merge_by_taxonomy_level(

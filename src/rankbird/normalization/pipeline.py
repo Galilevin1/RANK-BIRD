@@ -4,6 +4,7 @@ from .stability import union_microbes, nonzero_percent_by_dataset, auto_stabilit
 from .combine import build_combined_matrix
 from .global_distributions import compute_per_microbe_global_distributions
 from .rank_map import rank_map_normalize_dataset
+from .taxonomy_filter import filter_to_level
 
 
 
@@ -19,8 +20,14 @@ def apply_normalization_pipeline(
     stability_percentile_local=0.3,
     stability_percentile_global=0.5,
     z_thresh=3.0,
-    random_state=42
+    random_state=42,
+    taxonomy_level=None,   # None = all, "g" = genus only, "s" = genus+species
 ):
+    # ----------------------------
+    # STEP 0 — taxonomy level filter
+    # ----------------------------
+    microbiome_dfs = filter_to_level(microbiome_dfs, taxonomy_level)
+
     # ----------------------------
     # STEP 1 — stability filtering
     # ----------------------------

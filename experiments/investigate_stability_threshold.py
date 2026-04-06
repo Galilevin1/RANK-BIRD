@@ -2,11 +2,17 @@
 Investigation: effect of stability-filter percentile on mean AUC.
 
 For each percentile in [0.1, 0.2, ..., 0.9] and each taxonomic level:
-  all            — all microbes
-  genus          — g__<name> present  AND  s__<name> NOT present
-  species+genus  — g__<name> present  (genus-only AND genus+species features)
+  all                    — all microbes
+  genus (g)              — g__<name> present, s__<name> absent
+  genus+species (gs)     — g__<name> present (genus-only AND genus+species features)
+  family+genus (fg)      — f__<name> AND g__<name> present, s__<name> absent
+  family+genus+species (fgs) — f__<name> AND g__<name> present
+  order+family+genus     — o__<name> AND f__<name> AND g__<name> present, s__<name> absent
+  class+order+family+genus          — c__ AND o__ AND f__ AND g__ present, s__ absent
+  phylum+class+order+family+genus   — p__ AND c__ AND o__ AND f__ AND g__ present, s__ absent
+  kingdom+phylum+class+order+family+genus — k__ AND p__ AND c__ AND o__ AND f__ AND g__ present, s__ absent
 
-Produces a 3×2 figure (rows = levels, cols = Metagenomics / Amplicon).
+Produces a figure (rows = levels, cols = Metagenomics / Amplicon).
 Each subplot: AUC lines (left y-axis) + kept-microbe count & % (right y-axis).
 """
 
@@ -21,6 +27,7 @@ import matplotlib.pyplot as plt
 from src.rankbird.normalization.stability import (
     union_microbes, nonzero_percent_by_dataset, auto_stability_filter,
 )
+from src.rankbird.normalization.taxonomy_filter import filter_to_level, has_named as _has_named
 from evaluation.data_loading import load_microbiome_datasets_with_targets
 from experiments.run_protocols_global_processing import (
     _run_protocols_on_group,
@@ -41,40 +48,20 @@ PROTOCOL_COLORS = {
 
 # (filter_key, display_label)
 LEVELS = [
-    (None, "All microbes"),
-    ("g",  "Genus level"),
-    ("s",  "Species + Genus level"),
+    (None,     "All microbes"),
+    ("g",      "Genus level"),
+    ("gs",     "Genus + Species level"),
+    ("fg",     "Family + Genus level"),
+    ("fgs",    "Family + Genus + Species level"),
+    ("ofg",    "Order + Family + Genus level"),
+    ("cofg",   "Class + Order + Family + Genus level"),
+    ("pcofg",  "Phylum + Class + Order + Family + Genus level"),
+    ("kpcofg", "Kingdom + Phylum + Class + Order + Family + Genus level"),
 ]
 
 
-# ── Taxonomy helpers ──────────────────────────────────────────────────────────
-
-def _has_named(feature: str, prefix: str) -> bool:
-    """True if 'prefix' is followed by at least one word character."""
-    return bool(re.search(re.escape(prefix) + r'\w', feature))
-
-
-def _keep_at_level(feature: str, level) -> bool:
-    if level is None:
-        return True
-    if level == "g":
-        # Genus: named genus present, named species absent
-        # (bare 's__' without a name is allowed)
-        return _has_named(feature, "g__") and not _has_named(feature, "s__")
-    if level == "s":
-        # Species+Genus: has a named genus (includes genus-only and genus+species)
-        return _has_named(feature, "g__")
-    return True
-
-
-def _filter_to_level(microbiome_dfs: list, level) -> list:
-    if level is None:
-        return microbiome_dfs
-    filtered = []
-    for df in microbiome_dfs:
-        cols = [c for c in df.columns if _keep_at_level(c, level)]
-        filtered.append(df[cols] if cols else df[[]])
-    return filtered
+# ── Taxonomy helpers — delegated to shared module ─────────────────────────────
+_filter_to_level = filter_to_level
 
 
 # ── Dataset loader ────────────────────────────────────────────────────────────
@@ -128,6 +115,7 @@ def run_stability_sweep(  # noqa: E302
     dtype: str,
     level=None,
     filter_only: bool = False,
+    normalization_approach: str = "rankbird_wasserstein",
 ) -> pd.DataFrame:
     """
     Sweep stability percentiles, running all protocols at each step.
@@ -142,11 +130,11 @@ def run_stability_sweep(  # noqa: E302
     for pct in PERCENTILES:
         print(f"  [{dtype}] pct={pct:.2f}  level={level}  filter_only={filter_only} ...")
 
+        norm_approach = "filter_only" if filter_only else normalization_approach
         if level is None:
             results_df = _run_global_for_dtype(
                 pheno_subset,
-                apply_normalization=not filter_only,
-                filter_only=filter_only,
+                normalization_approach=norm_approach,
                 stability_percentile_global=pct,
             )
         else:
@@ -200,6 +188,15 @@ def _run_global_for_dtype_filtered(
     # Taxonomic level filter
     all_microbiome = _filter_to_level(all_microbiome, level)
 
+    # Reindex all datasets to the union of columns (mirrors what the stability
+    # filter does), so datasets with no locally-present microbes at this level
+    # get 0-filled columns instead of 0-column DataFrames.
+    union_cols = union_microbes(all_microbiome)
+    if not union_cols:
+        print(f"  [SKIP] Level '{level}' removed all features for this dtype — no microbes with all required taxonomy levels named.")
+        return pd.DataFrame()
+    all_microbiome = [df.reindex(columns=union_cols, fill_value=0.0) for df in all_microbiome]
+
     # name→target map (before normalisation which may drop datasets)
     name_to_target = dict(zip(all_names, all_targets))
 
@@ -248,7 +245,7 @@ def get_original_mean_auc(
 
     if level is None:
         results_df = _run_global_for_dtype(
-            pheno_subset, apply_normalization=False
+            pheno_subset, normalization_approach=None
         )
     else:
         results_df = _run_global_for_dtype_filtered(
@@ -270,34 +267,39 @@ def _plot_sweep_panel(
     count_df: pd.DataFrame,
     title: str,
     original_auc: dict = None,
-    median_only: bool = False,
+    plot_mode: str = "combined",   # "mean", "median", or "combined"
 ):
     """AUC lines (left axis) + kept-microbe count & % annotations (right axis).
     original_auc: {protocol: mean_auc} drawn as horizontal dashed reference lines.
+    plot_mode: "mean" = mean only; "median" = median only; "combined" = both.
     """
+    show_mean   = plot_mode in ("mean",   "combined")
+    show_median = plot_mode in ("median", "combined")
+
     # Left: AUC sweep lines
     for protocol in PROTOCOLS:
         sub = sweep_df[sweep_df["protocol"] == protocol].sort_values("percentile")
         if sub.empty:
             continue
         color = PROTOCOL_COLORS[protocol]
-        if not median_only:
+        if show_mean:
+            label = protocol if not show_median else f"{protocol} (mean)"
             ax.plot(sub["percentile"], sub["mean_auc"],
                     marker="o", linewidth=2, markersize=5,
-                    color=color, label=f"{protocol} (mean)")
+                    color=color, label=label)
             ax.fill_between(
                 sub["percentile"],
                 sub["mean_auc"] - sub["std_auc"],
                 sub["mean_auc"] + sub["std_auc"],
                 alpha=0.10, color=color,
             )
-        if "median_auc" in sub.columns:
-            label = protocol if median_only else f"{protocol} (median)"
+        if show_median and "median_auc" in sub.columns:
+            label = protocol if not show_mean else f"{protocol} (median)"
             ax.plot(sub["percentile"], sub["median_auc"],
-                    marker="^", linewidth=1.5 if median_only else 1.5,
-                    markersize=5 if median_only else 4,
-                    linestyle="-" if median_only else "--",
-                    color=color, alpha=1.0 if median_only else 0.75,
+                    marker="^", linewidth=2 if not show_mean else 1.5,
+                    markersize=5 if not show_mean else 4,
+                    linestyle="-" if not show_mean else "--",
+                    color=color, alpha=1.0 if not show_mean else 0.75,
                     label=label)
         # Original (no normalization) reference line
         if original_auc and protocol in original_auc:
@@ -309,7 +311,8 @@ def _plot_sweep_panel(
 
     ax.axhline(0.5, color="gray", linestyle=":", linewidth=1.2, alpha=0.5,
                label="Random (0.5)")
-    ax.set_ylabel("Mean AUC", fontsize=10)
+    _ylabel = {"mean": "Mean AUC", "median": "Median AUC", "combined": "Mean / Median AUC"}
+    ax.set_ylabel(_ylabel.get(plot_mode, "AUC"), fontsize=10)
     ax.set_xlabel("Stability Percentile", fontsize=10)
     ax.set_xticks(PERCENTILES[::2])   # every other tick to avoid crowding
     ax.tick_params(axis="x", rotation=45)
@@ -345,11 +348,13 @@ def run_stability_investigation(
     output_dir: Path,
     plot_only: bool = False,
     dtype_filter: list = None,
-    median_only: bool = False,
     normalization_modes: list = None,
+    plot_mode = "combined",
+    plot_levels: list = None,
+    normalization_approach: str = "rankbird_wasserstein",
 ):
     """
-    Runs the full (dtype × level) sweep and saves CSVs + one combined figure per mode.
+    Runs the full (dtype × level) sweep and saves CSVs + figure(s) per mode.
 
     Parameters
     ----------
@@ -357,9 +362,11 @@ def run_stability_investigation(
     output_dir         : directory for CSVs and figures
     plot_only          : if True, skip computation and load existing CSVs
     dtype_filter       : limit to these dtypes, e.g. ["Metagenomics"]. None = all.
-    median_only        : if True, plot only median AUC line (no mean / std band)
-    normalization_modes: list of modes to run, e.g. ["full"], ["filter_only"],
-                         or ["full", "filter_only"]. Default: ["full"]
+    normalization_modes: list of norm modes, e.g. ["full"], ["filter_only"], or both.
+    plot_mode          : "mean", "median", "combined", or a list of these to get
+                         one figure per mode. Default: "combined".
+    plot_levels        : subset of level keys to include in the figure, e.g. ["g", "fg", "ofg"].
+                         None = plot all levels in LEVELS. Computation always runs for all LEVELS.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -375,43 +382,43 @@ def run_stability_investigation(
         mode_suffix = f"_{norm_mode}" if norm_mode != "full" else ""
         mode_label  = "Filter-only" if filter_only else "Full normalization"
 
-        fig, axes = plt.subplots(
-            len(LEVELS), len(dtypes),
-            figsize=(7 * len(dtypes), 5 * len(LEVELS)),
-            squeeze=False,
-        )
+        # ── Step 1: compute (or load) all sweep data ──────────────────────────
+        panel_data = {}   # (level, dtype) → (sweep_df, count_df, orig_auc)
 
-        for row_idx, (level, level_label) in enumerate(LEVELS):
-            for col_idx, dtype in enumerate(dtypes):
-                ax  = axes[row_idx][col_idx]
+        for level, level_label in LEVELS:
+            for dtype in dtypes:
                 tag = f"{dtype.lower()}_{level or 'all'}{mode_suffix}"
                 print(f"\n=== {mode_label}  |  {level_label}  |  {dtype} ===")
 
+                count_path = output_dir / f"microbe_counts_{dtype.lower()}_{level or 'all'}.csv"
+                sweep_path = output_dir / f"auc_sweep_{tag}.csv"
+                orig_path  = output_dir / f"original_auc_{dtype.lower()}_{level or 'all'}.csv"
+
                 if plot_only:
-                    count_path = output_dir / f"microbe_counts_{dtype.lower()}_{level or 'all'}.csv"
-                    sweep_path = output_dir / f"auc_sweep_{tag}.csv"
-                    orig_path  = output_dir / f"original_auc_{dtype.lower()}_{level or 'all'}.csv"
                     if not sweep_path.exists() or not count_path.exists():
                         print(f"  [SKIP] Missing CSVs for {tag}, run without plot_only first.")
+                        panel_data[(level, dtype)] = None
                         continue
                     count_df = pd.read_csv(count_path)
                     sweep_df = pd.read_csv(sweep_path)
                     orig_auc = pd.read_csv(orig_path).iloc[0].to_dict() if orig_path.exists() else {}
                 else:
-                    # Microbe counts are mode-independent — reuse if already saved
-                    count_path = output_dir / f"microbe_counts_{dtype.lower()}_{level or 'all'}.csv"
                     if count_path.exists():
                         count_df = pd.read_csv(count_path)
                     else:
                         count_df = count_kept_microbes_sweep(phenotypes, dtype, level=level)
                         count_df.to_csv(count_path, index=False)
 
-                    sweep_df = run_stability_sweep(
-                        phenotypes, dtype, level=level, filter_only=filter_only,
-                    )
-                    sweep_df.to_csv(output_dir / f"auc_sweep_{tag}.csv", index=False)
+                    if sweep_path.exists():
+                        print(f"  [LOAD] {sweep_path.name} already exists, skipping sweep.")
+                        sweep_df = pd.read_csv(sweep_path)
+                    else:
+                        sweep_df = run_stability_sweep(
+                            phenotypes, dtype, level=level, filter_only=filter_only,
+                            normalization_approach=normalization_approach,
+                        )
+                        sweep_df.to_csv(sweep_path, index=False)
 
-                    orig_path = output_dir / f"original_auc_{dtype.lower()}_{level or 'all'}.csv"
                     if orig_path.exists():
                         orig_auc = pd.read_csv(orig_path).iloc[0].to_dict()
                     else:
@@ -419,21 +426,50 @@ def run_stability_investigation(
                         orig_auc = get_original_mean_auc(phenotypes, dtype, level=level)
                         pd.DataFrame([orig_auc]).to_csv(orig_path, index=False)
 
-                _plot_sweep_panel(ax, sweep_df, count_df,
-                                  title=f"{dtype} — {level_label}",
-                                  original_auc=orig_auc,
-                                  median_only=median_only)
+                panel_data[(level, dtype)] = (sweep_df, count_df, orig_auc)
 
-        auc_label = "Median AUC" if median_only else "Mean & Median AUC"
-        fig.suptitle(
-            f"Stability Filter Percentile: {auc_label} & Kept Microbes  [{mode_label}]",
-            fontsize=14, fontweight="bold", y=1.01,
-        )
-        plt.tight_layout()
-        out_path = output_dir / f"stability_threshold_investigation{mode_suffix}.png"
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"\nSaved: {out_path}")
+        # ── Step 2: draw figure(s) from the same data ─────────────────────────
+        _mode_meta = {
+            "mean":     ("Mean AUC",          "_mean"),
+            "median":   ("Median AUC",        "_median"),
+            "combined": ("Mean / Median AUC", "_combined"),
+        }
+        plot_modes = plot_mode if isinstance(plot_mode, list) else [plot_mode]
+
+        levels_to_plot = [(l, lbl) for l, lbl in LEVELS
+                          if plot_levels is None or l in plot_levels]
+
+        for pm in plot_modes:
+            stat_title, stat_suffix = _mode_meta.get(pm, (pm, f"_{pm}"))
+
+            fig, axes = plt.subplots(
+                len(levels_to_plot), len(dtypes),
+                figsize=(7 * len(dtypes), 5 * len(levels_to_plot)),
+                squeeze=False,
+            )
+
+            for row_idx, (level, level_label) in enumerate(levels_to_plot):
+                for col_idx, dtype in enumerate(dtypes):
+                    ax   = axes[row_idx][col_idx]
+                    data = panel_data.get((level, dtype))
+                    if data is None:
+                        ax.set_visible(False)
+                        continue
+                    sweep_df, count_df, orig_auc = data
+                    _plot_sweep_panel(ax, sweep_df, count_df,
+                                      title=f"{dtype} — {level_label}",
+                                      original_auc=orig_auc,
+                                      plot_mode=pm)
+
+            fig.suptitle(
+                f"Stability Filter Percentile: {stat_title} & Kept Microbes  [{mode_label}]",
+                fontsize=14, fontweight="bold", y=1.01,
+            )
+            plt.tight_layout()
+            out_path = output_dir / f"stability_threshold_investigation{mode_suffix}{stat_suffix}.png"
+            fig.savefig(out_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            print(f"Saved: {out_path}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -468,6 +504,29 @@ def _extract_level_name(feature: str, level: str) -> str:
         return feature
     m = re.search(re.escape(prefix) + r'(\w+)', feature)
     return m.group(1) if m else feature
+
+
+def _extract_readable_taxa_names(microbes: list) -> list:
+    """
+    Convert a list of full taxonomy strings to readable genus / genus+species names.
+    - Has named genus AND named species → species field content (e.g. 'Lactobacillus acidophilus')
+    - Has named genus only             → genus field content  (e.g. 'Prevotella')
+    - Neither                          → skip
+    Underscores replaced with spaces; result is sorted and deduplicated.
+    """
+    names = set()
+    for feature in microbes:
+        has_genus   = _has_named(feature, "g__")
+        has_species = _has_named(feature, "s__")
+        if not has_genus:
+            continue
+        prefix = "s__" if has_species else "g__"
+        m = re.search(re.escape(prefix) + r"([^;]+)", feature)
+        if m:
+            readable = re.sub(r"_+", " ", m.group(1)).strip()
+            if readable:
+                names.add(readable)
+    return sorted(names)
 
 
 def _build_taxa_counts(stats_df: pd.DataFrame, levels: list) -> pd.DataFrame:
@@ -944,6 +1003,8 @@ def run_microbe_characterization(
     threshold_metagenomics: float = None,
     threshold_amplicon: float = None,
     plot_only: bool = False,
+    taxonomy_level_metagenomics=None,
+    taxonomy_level_amplicon=None,
 ):
     """
     Step 2: characterize kept vs dropped microbes at the best stability threshold.
@@ -962,6 +1023,10 @@ def run_microbe_characterization(
     thresholds = {
         "Metagenomics": threshold_metagenomics or _BEST_THRESHOLDS["Metagenomics"],
         "Amplicon":     threshold_amplicon     or _BEST_THRESHOLDS["Amplicon"],
+    }
+    taxonomy_levels = {
+        "Metagenomics": taxonomy_level_metagenomics,
+        "Amplicon":     taxonomy_level_amplicon,
     }
 
     for dtype, threshold in thresholds.items():
@@ -993,6 +1058,9 @@ def run_microbe_characterization(
                 _, tgts, names = load_microbiome_datasets_with_targets(folder)
                 all_targets.extend(tgts)
 
+            # Taxonomy level filter (applied before stability filter)
+            all_microbiome = filter_to_level(all_microbiome, taxonomy_levels[dtype])
+
             # Compute stability filter
             all_microbes = union_microbes(all_microbiome)
             nz_df        = nonzero_percent_by_dataset(all_microbiome, all_names, all_microbes)
@@ -1013,6 +1081,15 @@ def run_microbe_characterization(
                 all_microbiome, all_targets, all_names, all_microbes, kept_set
             )
             stats_df.to_csv(stats_path, index=False)
+
+        # Text files: readable genus / genus+species names (runs in both modes)
+        kept_for_txt    = [m for m in all_microbes if m in kept_set]
+        dropped_for_txt = [m for m in all_microbes if m not in kept_set]
+        for label, microbe_list in [("kept", kept_for_txt), ("dropped", dropped_for_txt)]:
+            names = _extract_readable_taxa_names(microbe_list)
+            txt_path = output_dir / f"{label}_taxa_names_{dtype.lower()}.txt"
+            txt_path.write_text("\n".join(names), encoding="utf-8")
+            print(f"  Saved {len(names)} readable names -> {txt_path.name}")
 
         # Characterization plots
         _plot_characterization(stats_df, dtype, output_dir)

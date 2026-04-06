@@ -40,17 +40,16 @@ CONFIG = {
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
     "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-
-    # -----------------------
-    # Investigations control
-    # -----------------------
     "run_investigations": ["stability_threshold"],  # "stability_threshold", "stability_characterization", "distribution_approach"
     "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach"invastigations # True = reload CSVs, False = recompute
-    "stability_dtype_filter":        ["Metagenomics"],  # None = both dtypes; ["Metagenomics"] = shotgun only
-    "stability_median_only":         True,              # True = plot only median line (faster to read)
-    "stability_normalization_modes": ["full", "filter_only"],  # "full", "filter_only", or both
-    "characterization_threshold_metagenomics": 0.35,
-    "characterization_threshold_amplicon":     0.40,
+
+    # -----------------------
+    # Stability threshold Investigations control
+    # -----------------------
+    "stability_dtype_filter":        None,  # None = both dtypes; ["Metagenomics"] = shotgun only; ["Amplicon"] = 16S only
+    "stability_normalization_modes": ["full"],  # "full", "filter_only", or both
+    "stability_plot_mode":           ["mean", "median"],        # "mean", "median", "combined", or list e.g. ["mean", "median"]
+    "stability_plot_levels":         [None, "g", "gs"],  # None = all levels; e.g. ["g", "fg", "ofg"] for a subset
 
     # -----------------------
     # Papers CSV (for figure 1c)
@@ -61,38 +60,33 @@ CONFIG = {
     # Experiment config
     # -----------------------
     "preprocessing_scope": "global",   # "local" or "global"
-    "normalization": True,
+    "normalization_approach": "rankbird_wasserstein",  # "rankbird_wasserstein", "rankbird_ranking", "rankbird_sigmoid", "rankbird_relu", "filter_only", None
     "decomposition": False,
+    "min_samples_per_dataset": 550,
+    "z_thresh": 3.0,
+    "stability_percentile_local": 0.3,
+    "stability_percentile_global_metagenomics": 0.3,
+    "stability_percentile_global_amplicon":     0.6,
+    "taxonomy_level_metagenomics": "g",    # None = all, "g" = genus only, "s" = genus+species
+    "taxonomy_level_amplicon":     "g",
     "decompose_method": "PCA",
     "decompose_rank": 300,      
-    "min_samples_per_dataset": 550, 
-    "stability_percentile_local": 0.3,
-    "stability_percentile_global_metagenomics": 0.25,
-    "stability_percentile_global_amplicon":     0.40,
-    "z_thresh": 3.0,
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _get_mode(config: dict) -> str:
+    approach = config.get("normalization_approach") or "original"
+    mode = approach.replace("rankbird_wasserstein", "normalized")  # backwards-compatible name
+    if config.get("decomposition"):
+        mode += "_dim"
+    return mode
+
+
 def build_results_dir(project_root: Path, config: dict) -> Path:
     scope = config["preprocessing_scope"]
-
-    if not config["normalization"]:
-        mode = "original"
-    elif config["normalization"] and not config["decomposition"]:
-        mode = "normalized"
-    else:
-        mode = "dim"
-
+    mode  = _get_mode(config)
     return project_root / "experiments" / f"results_{scope}_{mode}"
-
-
-def _get_mode(config: dict) -> str:
-    if not config["normalization"]:
-        return "original"
-    elif not config["decomposition"]:
-        return "normalized"
-    return "dim"
 
 
 def build_figures_dir(base: Path, config: dict, figure: str) -> Path:
@@ -154,7 +148,7 @@ def main():
             print("Running protocol benchmark...")
             results_df = runner(
                 phenotypes=phenotypes,
-                apply_normalization=CONFIG["normalization"],
+                normalization_approach=CONFIG.get("normalization_approach"),
                 apply_decompose=CONFIG["decomposition"],
                 decompose_method=CONFIG.get("decompose_method"),
                 decompose_rank=CONFIG.get("decompose_rank"),
@@ -163,6 +157,8 @@ def main():
                 stability_percentile_global_amplicon=CONFIG.get("stability_percentile_global_amplicon"),
                 stability_percentile_global_metagenomics=CONFIG.get("stability_percentile_global_metagenomics"),
                 z_thresh=CONFIG.get("z_thresh"),
+                taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
+                taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
             )
             results_df.to_csv(results_path, index=False)
 
@@ -290,13 +286,17 @@ def main():
 
     if "stability_threshold" in CONFIG["run_investigations"]:
         inv_dir = PROJECT_ROOT / "investigations" / "stability_threshold"
+        _dtype_filter = CONFIG.get("stability_dtype_filter", None)
+        if isinstance(_dtype_filter, list) and all(d is None or str(d) == "None" for d in _dtype_filter):
+            _dtype_filter = None
         run_stability_investigation(
             phenotypes=phenotypes,
             output_dir=inv_dir,
             plot_only=CONFIG.get("investigations_plot_only", False),
-            dtype_filter=CONFIG.get("stability_dtype_filter", None),
-            median_only=CONFIG.get("stability_median_only", False),
+            dtype_filter=_dtype_filter,
             normalization_modes=CONFIG.get("stability_normalization_modes", ["full"]),
+            plot_mode=CONFIG.get("stability_plot_mode", "combined"),
+            plot_levels=CONFIG.get("stability_plot_levels", None),
         )
 
     if "stability_characterization" in CONFIG["run_investigations"]:
@@ -304,9 +304,11 @@ def main():
         run_microbe_characterization(
             phenotypes=phenotypes,
             output_dir=char_dir,
-            threshold_metagenomics=CONFIG["characterization_threshold_metagenomics"],
-            threshold_amplicon=CONFIG["characterization_threshold_amplicon"],
+            threshold_metagenomics=CONFIG.get("stability_percentile_global_metagenomics"),
+            threshold_amplicon=CONFIG.get("stability_percentile_global_amplicon"),
             plot_only=CONFIG.get("investigations_plot_only", False),
+            taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
+            taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
         )
 
     if "distribution_approach" in CONFIG["run_investigations"]:
@@ -318,6 +320,8 @@ def main():
             stability_percentile_metagenomics=CONFIG.get("stability_percentile_global_metagenomics", 0.25),
             stability_percentile_amplicon=CONFIG.get("stability_percentile_global_amplicon", 0.40),
             min_size=CONFIG.get("min_samples_per_dataset", 550),
+            taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
+            taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
         )
 
     if "5" in CONFIG["run_figures"]:

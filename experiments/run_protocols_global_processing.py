@@ -1,16 +1,17 @@
-import os
 import pandas as pd
-import numpy as np
 from pathlib import Path
-import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy.stats import sem, mannwhitneyu
 from collections import defaultdict
-from src.rankbird.normalization.pipeline import apply_normalization_pipeline #### Change after package
+from src.rankbird.normalization.pipeline import apply_normalization_pipeline
 from src.rankbird.normalization.stability import (
     union_microbes, nonzero_percent_by_dataset, auto_stability_filter,
 )
-from src.rankbird.representation.multi_datasets_SPDR import apply_bias_SPDR   ### Change after package
+from src.rankbird.normalization.taxonomy_filter import filter_to_level
+from src.rankbird.normalization.ranking import (
+    rank_normalize, sigmoid_normalize, relu_normalize,
+    apply_ranking_pipeline,
+    SIGMOID_K, SIGMOID_CENTER, RELU_THRESHOLD,
+)
+from src.rankbird.representation.multi_datasets_SPDR import apply_bias_SPDR
 from evaluation.data_loading import load_microbiome_datasets_with_targets
 from evaluation.learning_protocols import lodo_protocol, internal_validation_protocol, within_dataset_protocol
 
@@ -35,18 +36,35 @@ def _run_protocols_on_group(microbiome_dfs, target_dfs, dataset_names, phenotype
     return pd.DataFrame(records)
 
 
-def _run_global_for_dtype(phenotypes,
-                          apply_normalization=False,
-                          filter_only=False,
-                          apply_decompose=False,
-                          min_samples_per_dataset=550,
-                          stability_percentile_local=0.3,
-                          stability_percentile_global=0.5,
-                          z_thresh=3.0,
-                          decompose_method='PCA',
-                          decompose_rank=30
-                          ):
+_RANKING_NORM_FNS = {
+    "rankbird_ranking":  rank_normalize,
+    "rankbird_sigmoid":  sigmoid_normalize,
+    "rankbird_relu":     relu_normalize,
+}
 
+
+def _run_global_for_dtype(
+    phenotypes,
+    normalization_approach=None,
+    apply_decompose=False,
+    min_samples_per_dataset=550,
+    stability_percentile_local=0.3,
+    stability_percentile_global=0.5,
+    z_thresh=3.0,
+    decompose_method='PCA',
+    decompose_rank=30,
+    taxonomy_level=None,
+):
+    """
+    normalization_approach options
+    --------------------------------
+    None                  — no normalization, taxonomy filter only
+    "filter_only"         — stability filter only, no distribution normalization
+    "rankbird_wasserstein"— full RANK-BIRD pipeline (Wasserstein + quantile mapping)
+    "rankbird_ranking"    — RANK-BIRD with pure rank normalization
+    "rankbird_sigmoid"    — RANK-BIRD with sigmoid normalization
+    "rankbird_relu"       — RANK-BIRD with relu normalization
+    """
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
     DATA_ROOT = PROJECT_ROOT / "Data"
 
@@ -75,14 +93,15 @@ def _run_global_for_dtype(phenotypes,
     # 2. GLOBAL preprocessing (once)
     # ----------------------------------
 
-    if filter_only:
-        # Stability filter only — no oversampling, no distribution, no quantile mapping
+    if normalization_approach == "filter_only":
+        # Taxonomy filter → stability filter only (no distribution normalization)
+        all_microbiome = filter_to_level(all_microbiome, taxonomy_level)
         all_microbes = union_microbes(all_microbiome)
         nz_df = nonzero_percent_by_dataset(all_microbiome, all_dataset_names, all_microbes)
         kept = auto_stability_filter(nz_df, percentile=stability_percentile_global)
         all_microbiome = [df.reindex(columns=kept, fill_value=0.0) for df in all_microbiome]
 
-    elif apply_normalization:
+    elif normalization_approach == "rankbird_wasserstein":
         all_microbiome, all_dataset_names = apply_normalization_pipeline(
             all_microbiome,
             all_dataset_names,
@@ -90,11 +109,27 @@ def _run_global_for_dtype(phenotypes,
             min_samples_per_dataset=min_samples_per_dataset,
             stability_percentile_local=stability_percentile_local,
             stability_percentile_global=stability_percentile_global,
-            z_thresh=z_thresh
+            z_thresh=z_thresh,
+            taxonomy_level=taxonomy_level,
         )
 
+    elif normalization_approach in _RANKING_NORM_FNS:
+        norm_fn = _RANKING_NORM_FNS[normalization_approach]
+        all_microbiome, all_dataset_names = apply_ranking_pipeline(
+            all_microbiome,
+            all_dataset_names,
+            stability_percentile=stability_percentile_global,
+            norm_fn=norm_fn,
+            min_size=min_samples_per_dataset,
+            taxonomy_level=taxonomy_level,
+        )
+
+    else:
+        # None — no normalization, apply taxonomy filter only
+        all_microbiome = filter_to_level(all_microbiome, taxonomy_level)
+
     if apply_decompose:
-        all_microbiome, eta, beta = apply_bias_SPDR(all_microbiome, 'PCA', rank=decompose_rank)
+        all_microbiome, _, _ = apply_bias_SPDR(all_microbiome, decompose_method, rank=decompose_rank)
 
     # ----------------------------------
     # 3. Split BACK by phenotype
@@ -120,13 +155,12 @@ def _run_global_for_dtype(phenotypes,
 
         records.append(df_grp)
 
-
     return pd.concat(records, ignore_index=True)
 
 
 def run_protocol_benchmark_global_preprocessing(
     phenotypes: list,
-    apply_normalization: bool = False,
+    normalization_approach=None,
     apply_decompose: bool = False,
     min_samples_per_dataset=550,
     stability_percentile_local=0.3,
@@ -134,10 +168,10 @@ def run_protocol_benchmark_global_preprocessing(
     stability_percentile_global_metagenomics=0.25,
     z_thresh=3.0,
     decompose_method='PCA',
-    decompose_rank=30
+    decompose_rank=30,
+    taxonomy_level_metagenomics=None,
+    taxonomy_level_amplicon=None,
 ):
-
-
     phenotypes_by_dtype = defaultdict(list)
     for phenotype, dtype in phenotypes:
         phenotypes_by_dtype[dtype].append((phenotype, dtype))
@@ -148,20 +182,25 @@ def run_protocol_benchmark_global_preprocessing(
         "Amplicon":     stability_percentile_global_amplicon,
         "Metagenomics": stability_percentile_global_metagenomics,
     }
+    taxonomy_level_by_dtype = {
+        "Amplicon":     taxonomy_level_amplicon,
+        "Metagenomics": taxonomy_level_metagenomics,
+    }
 
     for dtype, phenotype_list in phenotypes_by_dtype.items():
-        print(f"\n[Global preprocessing] dtype = {dtype}")
+        print(f"\n[Global preprocessing] dtype={dtype}  approach={normalization_approach}")
 
         records_dtype = _run_global_for_dtype(
             phenotype_list,
-            apply_normalization=apply_normalization,
+            normalization_approach=normalization_approach,
             apply_decompose=apply_decompose,
             min_samples_per_dataset=min_samples_per_dataset,
             stability_percentile_local=stability_percentile_local,
             stability_percentile_global=stability_percentile_by_dtype.get(dtype, stability_percentile_global_amplicon),
             z_thresh=z_thresh,
             decompose_method=decompose_method,
-            decompose_rank=decompose_rank
+            decompose_rank=decompose_rank,
+            taxonomy_level=taxonomy_level_by_dtype.get(dtype),
         )
 
         all_records.append(records_dtype)

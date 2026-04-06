@@ -25,14 +25,18 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
-from scipy.special import expit          # numerically stable sigmoid
 from scipy.stats import ttest_rel, f_oneway
 
 from src.rankbird.normalization.stability import (
     union_microbes, nonzero_percent_by_dataset, auto_stability_filter,
 )
-from src.rankbird.normalization.combine import oversample_to_min_size
 from src.rankbird.normalization.pipeline import apply_normalization_pipeline
+from src.rankbird.normalization.taxonomy_filter import filter_to_level
+from src.rankbird.normalization.ranking import (
+    rank_normalize, sigmoid_normalize, relu_normalize,
+    apply_ranking_pipeline,
+    SIGMOID_K, SIGMOID_CENTER, RELU_THRESHOLD,
+)
 from evaluation.data_loading import load_microbiome_datasets_with_targets
 from experiments.run_protocols_global_processing import (
     _run_protocols_on_group, _run_global_for_dtype,
@@ -67,13 +71,7 @@ APPROACH_COLORS = {
 PROTOCOLS = ["LODO", "Internal Validation", "Within Learning"]
 
 # ── Default hyper-parameters ──────────────────────────────────────────────────
-
-# Sigmoid: σ(k · (r − center))  where r ∈ [0,1] is normalised rank
-SIGMOID_K      = 20.0   # steepness; higher → sharper present/absent boundary
-SIGMOID_CENTER = 0.5    # rank fraction at which σ = 0.5
-
-# Relu: top fraction (by rank) keeps original value; rest → 0
-RELU_THRESHOLD = 0.5    # fraction to keep  (0.5 → top 50 % kept)
+# (imported from src.rankbird.normalization.ranking)
 
 # Oversampling target (same default as main pipeline)
 MIN_SAMPLES_PER_DATASET = 550
@@ -89,166 +87,6 @@ STABILITY_PERCENTILE = {
 # Step A — Oversample + combine
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _build_oversampled_combined(
-    microbiome_dfs: list,
-    dataset_names: list,
-    kept_microbes: list,
-    min_size: int = MIN_SAMPLES_PER_DATASET,
-    random_state: int = 42,
-) -> tuple:
-    """
-    Filter to kept_microbes, oversample each dataset to min_size (if needed),
-    and concatenate into one matrix.
-
-    Returns
-    -------
-    X_combined        : pd.DataFrame  shape (sum_oversampled × n_microbes)
-    n_orig_per_ds     : list[int]     original sample count per dataset
-    n_os_per_ds       : list[int]     oversampled sample count per dataset
-    """
-    frames, n_orig_per_ds, n_os_per_ds = [], [], []
-
-    for df in microbiome_dfs:
-        Xi = df.reindex(columns=kept_microbes, fill_value=0.0).copy()
-        n_orig_per_ds.append(len(Xi))
-
-        Xi_os = oversample_to_min_size(Xi, min_size=min_size, random_state=random_state)
-        n_os_per_ds.append(len(Xi_os))
-        frames.append(Xi_os)
-
-    X_combined = pd.concat(frames, axis=0, ignore_index=True)
-    return X_combined, n_orig_per_ds, n_os_per_ds
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Step B — Column-wise normalizations (operate on the combined matrix)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _rank_normalize(X: pd.DataFrame) -> pd.DataFrame:
-    """
-    For each microbe column, rank all rows descending and map to [0, 1]:
-        highest value → 1.0,  lowest value → 0.0.
-    """
-    result = X.copy().astype(float)
-    N = len(X)
-    if N <= 1:
-        return result
-    for col in X.columns:
-        x = X[col].values
-        sorted_idx = np.argsort(-x)              # position 0 = highest value
-        ranks = np.empty(N, dtype=float)
-        ranks[sorted_idx] = np.arange(N, dtype=float)
-        result[col] = 1.0 - ranks / (N - 1)     # invert: 1 = top rank
-    return result
-
-
-def _sigmoid_normalize(
-    X: pd.DataFrame,
-    k: float = SIGMOID_K,
-    center: float = SIGMOID_CENTER,
-) -> pd.DataFrame:
-    """
-    Column ranking (→ [0,1]) followed by sigmoid:
-        value = σ(k · (r − center))
-    Produces soft present/absent-like values.
-    """
-    ranked = _rank_normalize(X)
-    result = ranked.copy()
-    for col in ranked.columns:
-        r = ranked[col].values
-        result[col] = expit(k * (r - center))
-    return result
-
-
-def _relu_normalize(
-    X: pd.DataFrame,
-    threshold: float = RELU_THRESHOLD,
-) -> pd.DataFrame:
-    """
-    Rank-based hard threshold on the combined matrix:
-      - top `threshold` fraction by rank → keep original abundance value
-      - bottom (1 − threshold) fraction  → set to 0
-    """
-    result = X.copy().astype(float)
-    N = len(X)
-    n_keep = max(1, int(np.ceil(N * threshold)))
-    for col in X.columns:
-        x = X[col].values
-        sorted_idx = np.argsort(-x)              # descending
-        keep_mask = np.zeros(N, dtype=bool)
-        keep_mask[sorted_idx[:n_keep]] = True    # top n_keep samples
-        result[col] = np.where(keep_mask, x, 0.0)
-    return result
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Step C — Extract original samples back
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _extract_original_samples(
-    X_norm: pd.DataFrame,
-    original_dfs: list,
-    n_os_per_ds: list,
-) -> list:
-    """
-    X_norm is the normalized combined matrix (all oversampled rows concatenated).
-    For each dataset extract only its first n_orig rows (= original samples,
-    which were placed at the top of their block before oversampling appended extras).
-    Restores original DataFrame index.
-    """
-    normalized_dfs = []
-    offset = 0
-    for df_orig, n_os in zip(original_dfs, n_os_per_ds):
-        n_orig = len(df_orig)
-        df_norm = X_norm.iloc[offset : offset + n_orig].copy()
-        df_norm.index = df_orig.index          # restore original sample index
-        normalized_dfs.append(df_norm)
-        offset += n_os
-    return normalized_dfs
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Full ranking pipeline (stability filter → oversample+combine → norm → extract)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _apply_ranking_pipeline(
-    microbiome_dfs: list,
-    dataset_names: list,
-    stability_percentile: float,
-    norm_fn,
-    min_size: int = MIN_SAMPLES_PER_DATASET,
-    random_state: int = 42,
-) -> tuple:
-    """
-    Shared pipeline for the 3 ranking-based approaches.
-
-    Parameters
-    ----------
-    norm_fn : callable  (pd.DataFrame) → pd.DataFrame
-        One of _rank_normalize / _sigmoid_normalize / _relu_normalize
-
-    Returns
-    -------
-    (normalized_dfs, dataset_names)
-    """
-    # Step 1 — stability filter
-    all_microbes  = union_microbes(microbiome_dfs)
-    nz_df         = nonzero_percent_by_dataset(microbiome_dfs, dataset_names, all_microbes)
-    kept_microbes = auto_stability_filter(nz_df, percentile=stability_percentile)
-
-    # Step 2 — oversample each dataset + combine
-    X_combined, _n_orig, n_os_per_ds = _build_oversampled_combined(
-        microbiome_dfs, dataset_names, kept_microbes,
-        min_size=min_size, random_state=random_state,
-    )
-
-    # Step 3 — column-wise normalization on the combined matrix
-    X_norm = norm_fn(X_combined)
-
-    # Step 4 — extract original samples only (no duplicates)
-    normalized_dfs = _extract_original_samples(X_norm, microbiome_dfs, n_os_per_ds)
-
-    return normalized_dfs, dataset_names
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -265,6 +103,7 @@ def _run_approach_for_dtype(
     sigmoid_center: float = SIGMOID_CENTER,
     relu_threshold: float = RELU_THRESHOLD,
     random_state: int = 42,
+    taxonomy_level=None,
 ) -> pd.DataFrame:
     """
     Load all datasets for `dtype`, apply `approach`, run all protocols.
@@ -291,11 +130,11 @@ def _run_approach_for_dtype(
 
     # ── Apply normalization approach ──────────────────────────────────────────
     if approach == "original":
-        # Raw data — no normalization, no stability filter (true baseline)
-        return _run_global_for_dtype(phenotypes, apply_normalization=False)
+        return _run_global_for_dtype(phenotypes, apply_normalization=False,
+                                     taxonomy_level=taxonomy_level)
 
     elif approach == "original_filtered":
-        # Stability filter only — no distribution adjustment
+        all_microbiome = filter_to_level(all_microbiome, taxonomy_level)
         all_microbes  = union_microbes(all_microbiome)
         nz_df         = nonzero_percent_by_dataset(all_microbiome, all_names, all_microbes)
         kept_microbes = auto_stability_filter(nz_df, percentile=stability_percentile)
@@ -309,35 +148,39 @@ def _run_approach_for_dtype(
             global_analysis=True,
             min_samples_per_dataset=min_size,
             stability_percentile_global=stability_percentile,
+            taxonomy_level=taxonomy_level,
         )
 
     elif approach == "ranking":
-        all_microbiome, all_names = _apply_ranking_pipeline(
+        all_microbiome, all_names = apply_ranking_pipeline(
             all_microbiome, all_names,
             stability_percentile=stability_percentile,
-            norm_fn=_rank_normalize,
+            norm_fn=rank_normalize,
             min_size=min_size,
             random_state=random_state,
+            taxonomy_level=taxonomy_level,
         )
 
     elif approach == "ranking_sig":
-        norm_fn = lambda X: _sigmoid_normalize(X, k=sigmoid_k, center=sigmoid_center)
-        all_microbiome, all_names = _apply_ranking_pipeline(
+        norm_fn = lambda X: sigmoid_normalize(X, k=sigmoid_k, center=sigmoid_center)
+        all_microbiome, all_names = apply_ranking_pipeline(
             all_microbiome, all_names,
             stability_percentile=stability_percentile,
             norm_fn=norm_fn,
             min_size=min_size,
             random_state=random_state,
+            taxonomy_level=taxonomy_level,
         )
 
     elif approach == "ranking_relu":
-        norm_fn = lambda X: _relu_normalize(X, threshold=relu_threshold)
-        all_microbiome, all_names = _apply_ranking_pipeline(
+        norm_fn = lambda X: relu_normalize(X, threshold=relu_threshold)
+        all_microbiome, all_names = apply_ranking_pipeline(
             all_microbiome, all_names,
             stability_percentile=stability_percentile,
             norm_fn=norm_fn,
             min_size=min_size,
             random_state=random_state,
+            taxonomy_level=taxonomy_level,
         )
 
     else:
@@ -368,18 +211,38 @@ def _run_approach_for_dtype(
 # Dataset exclusion helper
 # ═══════════════════════════════════════════════════════════════════════════════
 
-EXCLUDE_DATASET_PATTERN = "justControl"   # datasets whose name contains this are dropped
+def _get_single_class_datasets(phenotypes: list) -> set:
+    """
+    Return names of datasets whose target has only one unique class.
+    These cannot be used for binary classification and are excluded from results.
+    """
+    single_class = set()
+    for phenotype, dtype in phenotypes:
+        folder = DATA_ROOT / f"{phenotype} {dtype}"
+        if not folder.exists():
+            continue
+        for subdir in folder.iterdir():
+            if not subdir.is_dir():
+                continue
+            target_file = subdir / "target.csv"
+            if not target_file.exists():
+                continue
+            try:
+                target_df = pd.read_csv(target_file, index_col=0)
+                if target_df["Tag"].nunique() <= 1:
+                    single_class.add(subdir.name)
+            except Exception:
+                pass
+    if single_class:
+        print(f"  [EXCL] single-class datasets (excluded): {sorted(single_class)}")
+    return single_class
 
 
-def _drop_excluded_datasets(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove rows where the dataset name contains EXCLUDE_DATASET_PATTERN."""
-    if df.empty or "dataset" not in df.columns:
+def _drop_single_class(df: pd.DataFrame, single_class_names: set) -> pd.DataFrame:
+    """Remove rows belonging to single-class datasets."""
+    if df.empty or "dataset" not in df.columns or not single_class_names:
         return df
-    mask = df["dataset"].str.contains(EXCLUDE_DATASET_PATTERN, case=False, na=False)
-    dropped = df[mask]["dataset"].unique()
-    if len(dropped):
-        print(f"  [EXCL] dropping datasets: {list(dropped)}")
-    return df[~mask].reset_index(drop=True)
+    return df[~df["dataset"].isin(single_class_names)].reset_index(drop=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -734,6 +597,8 @@ def run_distribution_investigation(
     sigmoid_k: float = SIGMOID_K,
     sigmoid_center: float = SIGMOID_CENTER,
     relu_threshold: float = RELU_THRESHOLD,
+    taxonomy_level_metagenomics=None,
+    taxonomy_level_amplicon=None,
 ):
     """
     Compare distribution-adjustment approaches on all phenotypes/dtypes.
@@ -752,6 +617,13 @@ def run_distribution_investigation(
         "Metagenomics": stability_percentile_metagenomics,
         "Amplicon":     stability_percentile_amplicon,
     }
+    taxonomy_level_by_dtype = {
+        "Metagenomics": taxonomy_level_metagenomics,
+        "Amplicon":     taxonomy_level_amplicon,
+    }
+
+    # Identify single-class datasets once — excluded from all results
+    single_class_names = _get_single_class_datasets(phenotypes)
 
     all_results: dict = {}    # {(dtype, approach): full results_df}
 
@@ -767,10 +639,7 @@ def run_distribution_investigation(
 
             print(f"\n=== {dtype}  |  {APPROACH_LABELS[approach]} ===")
 
-            clean_path = output_dir / f"results_{tag}_clean.csv"
-
             if csv_path.exists():
-                # Always reuse existing results (avoids recomputing finished approaches)
                 print(f"  [LOAD] {csv_path.name}")
                 results_df = pd.read_csv(csv_path)
             elif plot_only:
@@ -786,19 +655,17 @@ def run_distribution_investigation(
                     sigmoid_k=sigmoid_k,
                     sigmoid_center=sigmoid_center,
                     relu_threshold=relu_threshold,
+                    taxonomy_level=taxonomy_level_by_dtype[dtype],
                 )
+                # Filter single-class datasets before saving
+                results_df = _drop_single_class(results_df, single_class_names)
                 results_df.to_csv(csv_path, index=False)
 
-            # Filtered copy — drop excluded datasets (e.g. justControl)
-            results_clean = _drop_excluded_datasets(results_df)
-            results_clean.to_csv(clean_path, index=False)
-
-            # Aggregation on clean data
-            agg_df = _aggregate_auc(results_clean)
+            # Aggregation
+            agg_df = _aggregate_auc(results_df)
             agg_df.to_csv(agg_path, index=False)
 
-            # All downstream analysis (stats, plot) uses clean data
-            all_results[(dtype, approach)] = results_clean
+            all_results[(dtype, approach)] = results_df
 
     # ── Statistical tests ─────────────────────────────────────────────────────
     print("\nRunning statistical tests (ANOVA + pairwise paired t-test / Bonferroni) ...")
