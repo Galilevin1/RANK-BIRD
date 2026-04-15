@@ -130,7 +130,7 @@ def _run_approach_for_dtype(
 
     # ── Apply normalization approach ──────────────────────────────────────────
     if approach == "original":
-        return _run_global_for_dtype(phenotypes, apply_normalization=False,
+        return _run_global_for_dtype(phenotypes, normalization_approach=None,
                                      taxonomy_level=taxonomy_level)
 
     elif approach == "original_filtered":

@@ -1,17 +1,23 @@
 """
 Taxonomy-level column filtering for microbiome DataFrames.
 
+Note: kingdom/domain prefix (k__, d__) is stripped at load time in data_loading.py,
+so all columns start from phylum level (p__).
+
 Levels
 ------
 None     — keep all columns (no filtering)
+"p"      — phylum only: p__ present, c__ absent
+"pc"     — phylum + class: p__ present, c__ present, o__ absent
+"pco"    — phylum + class + order: p__ present, c__ present, o__ present, f__ absent
+"pcof"   — phylum + class + order + family: p__ present, c__ present, o__ present, f__ present, g__ absent
+"pcofg"  — phylum + class + order + family + genus: p__ present, c__ present, o__ present, f__ present, g__ present, s__ absent
 "g"      — genus only: g__ present, s__ absent
 "gs"     — genus + species: g__ present (includes genus-only and genus+species)
 "fg"     — family + genus: f__ present, g__ present, s__ absent
 "fgs"    — family + genus + species: f__ present, g__ present
 "ofg"    — order + family + genus: o__ present, f__ present, g__ present, s__ absent
 "cofg"   — class + order + family + genus: c__ present, o__ present, f__ present, g__ present, s__ absent
-"pcofg"  — phylum + class + order + family + genus: p__ present, c__ present, o__ present, f__ present, g__ present, s__ absent
-"kpcofg" — kingdom/domain + phylum + class + order + family + genus: (k__ OR d__) present, p__ present, c__ present, o__ present, f__ present, g__ present, s__ absent
 """
 import re
 
@@ -24,6 +30,18 @@ def has_named(feature: str, prefix: str) -> bool:
 def keep_at_level(feature: str, level) -> bool:
     if level is None:
         return True
+    # ── Top-down levels (phylum → genus) ──────────────────────────────────────
+    if level == "p":
+        return has_named(feature, "p__") and not has_named(feature, "c__")
+    if level == "pc":
+        return has_named(feature, "p__") and has_named(feature, "c__") and not has_named(feature, "o__")
+    if level == "pco":
+        return has_named(feature, "p__") and has_named(feature, "c__") and has_named(feature, "o__") and not has_named(feature, "f__")
+    if level == "pcof":
+        return has_named(feature, "p__") and has_named(feature, "c__") and has_named(feature, "o__") and has_named(feature, "f__") and not has_named(feature, "g__")
+    if level == "pcofg":
+        return has_named(feature, "p__") and has_named(feature, "c__") and has_named(feature, "o__") and has_named(feature, "f__") and has_named(feature, "g__") and not has_named(feature, "s__")
+    # ── Bottom-up levels (genus → family) ─────────────────────────────────────
     if level == "g":
         return has_named(feature, "g__") and not has_named(feature, "s__")
     if level == "gs":
@@ -36,11 +54,6 @@ def keep_at_level(feature: str, level) -> bool:
         return has_named(feature, "o__") and has_named(feature, "f__") and has_named(feature, "g__") and not has_named(feature, "s__")
     if level == "cofg":
         return has_named(feature, "c__") and has_named(feature, "o__") and has_named(feature, "f__") and has_named(feature, "g__") and not has_named(feature, "s__")
-    if level == "pcofg":
-        return has_named(feature, "p__") and has_named(feature, "c__") and has_named(feature, "o__") and has_named(feature, "f__") and has_named(feature, "g__") and not has_named(feature, "s__")
-    if level == "kpcofg":
-        has_kingdom = has_named(feature, "k__") or has_named(feature, "d__")
-        return has_kingdom and has_named(feature, "p__") and has_named(feature, "c__") and has_named(feature, "o__") and has_named(feature, "f__") and has_named(feature, "g__") and not has_named(feature, "s__")
     return True
 
 

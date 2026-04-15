@@ -32,8 +32,10 @@ from evaluation.data_loading import load_microbiome_datasets_with_targets
 from experiments.run_protocols_global_processing import (
     _run_protocols_on_group,
     _run_global_for_dtype,
+    _RANKING_NORM_FNS,
 )
 from src.rankbird.normalization.pipeline import apply_normalization_pipeline
+from src.rankbird.normalization.ranking import apply_ranking_pipeline
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT    = PROJECT_ROOT / "Data"
@@ -48,15 +50,20 @@ PROTOCOL_COLORS = {
 
 # (filter_key, display_label)
 LEVELS = [
-    (None,     "All microbes"),
-    ("g",      "Genus level"),
-    ("gs",     "Genus + Species level"),
-    ("fg",     "Family + Genus level"),
-    ("fgs",    "Family + Genus + Species level"),
-    ("ofg",    "Order + Family + Genus level"),
-    ("cofg",   "Class + Order + Family + Genus level"),
-    ("pcofg",  "Phylum + Class + Order + Family + Genus level"),
-    ("kpcofg", "Kingdom + Phylum + Class + Order + Family + Genus level"),
+    (None,    "All microbes"),
+    # Top-down (phylum → genus)
+    ("p",     "Phylum level"),
+    ("pc",    "Phylum + Class level"),
+    ("pco",   "Phylum + Class + Order level"),
+    ("pcof",  "Phylum + Class + Order + Family level"),
+    ("pcofg", "Phylum + Class + Order + Family + Genus level"),
+    # Bottom-up (genus → family)
+    ("g",     "Genus level"),
+    ("gs",    "Genus + Species level"),
+    ("fg",    "Family + Genus level"),
+    ("fgs",   "Family + Genus + Species level"),
+    ("ofg",   "Order + Family + Genus level"),
+    ("cofg",  "Class + Order + Family + Genus level"),
 ]
 
 
@@ -142,6 +149,7 @@ def run_stability_sweep(  # noqa: E302
                 pheno_subset,
                 level=level,
                 stability_percentile_global=pct,
+                normalization_approach=norm_approach,
             )
 
         results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
@@ -169,7 +177,7 @@ def _run_global_for_dtype_filtered(
     level,
     stability_percentile_global: float = 0.5,
     min_samples_per_dataset: int = 550,
-    apply_normalization: bool = True,
+    normalization_approach: str = "rankbird_wasserstein",
 ) -> pd.DataFrame:
     """_run_global_for_dtype with column-level taxonomic filtering applied first."""
     all_microbiome, all_targets, all_names = [], [], []
@@ -200,7 +208,13 @@ def _run_global_for_dtype_filtered(
     # name→target map (before normalisation which may drop datasets)
     name_to_target = dict(zip(all_names, all_targets))
 
-    if apply_normalization:
+    if normalization_approach == "filter_only":
+        all_microbes = union_microbes(all_microbiome)
+        nz_df = nonzero_percent_by_dataset(all_microbiome, all_names, all_microbes)
+        kept = auto_stability_filter(nz_df, percentile=stability_percentile_global)
+        all_microbiome = [df.reindex(columns=kept, fill_value=0.0) for df in all_microbiome]
+
+    elif normalization_approach == "rankbird_wasserstein":
         all_microbiome, all_names = apply_normalization_pipeline(
             all_microbiome,
             all_names,
@@ -208,6 +222,18 @@ def _run_global_for_dtype_filtered(
             min_samples_per_dataset=min_samples_per_dataset,
             stability_percentile_global=stability_percentile_global,
         )
+
+    elif normalization_approach in _RANKING_NORM_FNS:
+        norm_fn = _RANKING_NORM_FNS[normalization_approach]
+        all_microbiome, all_names = apply_ranking_pipeline(
+            all_microbiome,
+            all_names,
+            stability_percentile=stability_percentile_global,
+            norm_fn=norm_fn,
+            min_size=min_samples_per_dataset,
+        )
+
+    # None → no normalization, data passes through as-is
 
     aligned_targets = [name_to_target[n] for n in all_names if n in name_to_target]
 
@@ -249,7 +275,7 @@ def get_original_mean_auc(
         )
     else:
         results_df = _run_global_for_dtype_filtered(
-            pheno_subset, level=level, apply_normalization=False
+            pheno_subset, level=level, normalization_approach=None
         )
 
     results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
@@ -351,6 +377,7 @@ def run_stability_investigation(
     normalization_modes: list = None,
     plot_mode = "combined",
     plot_levels: list = None,
+    compute_levels: list = None,
     normalization_approach: str = "rankbird_wasserstein",
 ):
     """
@@ -366,7 +393,10 @@ def run_stability_investigation(
     plot_mode          : "mean", "median", "combined", or a list of these to get
                          one figure per mode. Default: "combined".
     plot_levels        : subset of level keys to include in the figure, e.g. ["g", "fg", "ofg"].
-                         None = plot all levels in LEVELS. Computation always runs for all LEVELS.
+                         None = plot all levels in LEVELS.
+    compute_levels     : subset of level keys to compute, e.g. [None, "g"].
+                         None = compute all levels in LEVELS. Other levels load from disk if available,
+                         and are skipped (not plotted) if CSVs are missing.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -397,6 +427,15 @@ def run_stability_investigation(
                 if plot_only:
                     if not sweep_path.exists() or not count_path.exists():
                         print(f"  [SKIP] Missing CSVs for {tag}, run without plot_only first.")
+                        panel_data[(level, dtype)] = None
+                        continue
+                    count_df = pd.read_csv(count_path)
+                    sweep_df = pd.read_csv(sweep_path)
+                    orig_auc = pd.read_csv(orig_path).iloc[0].to_dict() if orig_path.exists() else {}
+                elif compute_levels is not None and level not in compute_levels:
+                    # Level not selected for computation — load from disk if available
+                    if not sweep_path.exists() or not count_path.exists():
+                        print(f"  [SKIP] Level '{level or 'all'}' not in compute_levels and CSVs missing — skipping.")
                         panel_data[(level, dtype)] = None
                         continue
                     count_df = pd.read_csv(count_path)

@@ -36,11 +36,11 @@ CONFIG = {
     # -----------------------
     # Pipeline control
     # -----------------------
-    "run_compute": False,      # run heavy protocol training
-    "run_aggregate": False,    # recompute summary
-    "run_stats": False,
-    "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-    "run_investigations": ["stability_threshold"],  # "stability_threshold", "stability_characterization", "distribution_approach"
+    "run_compute": True,      # run heavy protocol training
+    "run_aggregate": True,    # recompute summary
+    "run_stats": True,
+    "run_figures": ["1d","1e"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
+    "run_investigations": [],  # "stability_threshold", "stability_characterization", "distribution_approach"
     "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach"invastigations # True = reload CSVs, False = recompute
 
     # -----------------------
@@ -49,7 +49,8 @@ CONFIG = {
     "stability_dtype_filter":        None,  # None = both dtypes; ["Metagenomics"] = shotgun only; ["Amplicon"] = 16S only
     "stability_normalization_modes": ["full"],  # "full", "filter_only", or both
     "stability_plot_mode":           ["mean", "median"],        # "mean", "median", "combined", or list e.g. ["mean", "median"]
-    "stability_plot_levels":         [None, "g", "gs"],  # None = all levels; e.g. ["g", "fg", "ofg"] for a subset
+    "stability_compute_levels":      [None, "g", "gs"],               # None = compute all levels; e.g. [None, "g"] to compute only those
+    "stability_plot_levels":         [None, "g", "gs"], # None = plot all levels; e.g. ["g", "fg", "ofg"] for a subset
 
     # -----------------------
     # Papers CSV (for figure 1c)
@@ -65,10 +66,10 @@ CONFIG = {
     "min_samples_per_dataset": 550,
     "z_thresh": 3.0,
     "stability_percentile_local": 0.3,
-    "stability_percentile_global_metagenomics": 0.3,
-    "stability_percentile_global_amplicon":     0.6,
-    "taxonomy_level_metagenomics": "g",    # None = all, "g" = genus only, "s" = genus+species
-    "taxonomy_level_amplicon":     "g",
+    "stability_percentile_global_metagenomics": 0.2,
+    "stability_percentile_global_amplicon":     0.5,
+    "taxonomy_level_metagenomics": "None",    # None = all, "g" = genus only, "gs" = genus+species
+    "taxonomy_level_amplicon":     "None",
     "decompose_method": "PCA",
     "decompose_rank": 300,      
 }
@@ -237,7 +238,7 @@ def main():
             phenotypes=phenotypes,
             data_root=str(PROJECT_ROOT / "Data"),
             figures_dir=str(FIG2_DIR),
-            apply_normalization=CONFIG["normalization"],
+            normalization_approach=CONFIG.get("normalization_approach"),
         )
 
     if "3" in CONFIG["run_figures"]:
@@ -245,7 +246,7 @@ def main():
             phenotypes=phenotypes,
             data_root=str(PROJECT_ROOT / "Data"),
             figures_dir=str(FIG3_DIR),
-            apply_normalization=CONFIG["normalization"],
+            normalization_approach=CONFIG.get("normalization_approach"),
         )
 
     if "4" in CONFIG["run_figures"]:
@@ -285,7 +286,8 @@ def main():
             plot_figure4e(results_4e, output_dir=str(FIG4_DIR))
 
     if "stability_threshold" in CONFIG["run_investigations"]:
-        inv_dir = PROJECT_ROOT / "investigations" / "stability_threshold"
+        _approach = CONFIG.get("normalization_approach") or "original"
+        inv_dir = PROJECT_ROOT / "investigations" / f"stability_threshold_{_approach}"
         _dtype_filter = CONFIG.get("stability_dtype_filter", None)
         if isinstance(_dtype_filter, list) and all(d is None or str(d) == "None" for d in _dtype_filter):
             _dtype_filter = None
@@ -297,6 +299,7 @@ def main():
             normalization_modes=CONFIG.get("stability_normalization_modes", ["full"]),
             plot_mode=CONFIG.get("stability_plot_mode", "combined"),
             plot_levels=CONFIG.get("stability_plot_levels", None),
+            compute_levels=CONFIG.get("stability_compute_levels", None),
         )
 
     if "stability_characterization" in CONFIG["run_investigations"]:

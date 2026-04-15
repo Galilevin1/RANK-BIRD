@@ -39,3 +39,5 @@ investigations/
 # Helper functions
 #------------------
 trails_Figures.py
+Data_Temp/
+figures_out_copy/

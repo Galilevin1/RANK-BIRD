@@ -22,8 +22,8 @@ Figure 2C — Zero-percentage baseline ROC + LODO AUC + Zero-count distributions
     Usage:
         from figures.figure2 import plot_figure2c, run_figure2c
         fig = plot_figure2c(microbiome_dfs, target_dfs, dataset_names,
-                            phenotype_name, apply_normalization=False)
-        run_figure2c(phenotypes, data_root, figures_dir, apply_normalization=False)
+                            phenotype_name, normalization_approach=None)
+        run_figure2c(phenotypes, data_root, figures_dir, normalization_approach=None)
 """
 
 import numpy as np
@@ -286,15 +286,15 @@ def plot_figure2c(
     target_dfs: List[pd.DataFrame],
     dataset_names: List[str],
     phenotype_name: str,
-    apply_normalization: bool = False,
+    normalization_approach=None,
 ) -> plt.Figure:
     """
     Generate one Figure 2C for a phenotype.
 
-    If apply_normalization=True the normalization pipeline is applied first
-    and target_dfs is re-aligned to match any datasets that survive filtering.
+    If normalization_approach is not None, the normalization pipeline is applied
+    first and target_dfs is re-aligned to match any datasets that survive filtering.
     """
-    if apply_normalization:
+    if normalization_approach is not None:
         from src.rankbird.normalization.pipeline import apply_normalization_pipeline
         print(f"  Applying normalization pipeline for {phenotype_name}")
         orig_names  = list(dataset_names)
@@ -303,7 +303,7 @@ def plot_figure2c(
             list(microbiome_dfs), list(dataset_names)
         )
         target_dfs = [name_to_tgt[n] for n in dataset_names if n in name_to_tgt]
-        label_suffix = " (normalized)"
+        label_suffix = f" ({normalization_approach})"
     else:
         label_suffix = " (raw)"
 
@@ -316,7 +316,7 @@ def run_figure2c(
     phenotypes: List[Tuple[str, str]],
     data_root: str,
     figures_dir: str,
-    apply_normalization: bool = False,
+    normalization_approach=None,
 ):
     """
     Run Figure 2C for all phenotypes and save PNGs to figures_dir.
@@ -350,10 +350,10 @@ def run_figure2c(
             fig = plot_figure2c(
                 microbiome_dfs, target_dfs, dataset_names,
                 pheno_str,
-                apply_normalization=apply_normalization,
+                normalization_approach=normalization_approach,
             )
             safe = pheno_str.replace(" ", "_")
-            mode = "normalized" if apply_normalization else "raw"
+            mode = normalization_approach or "raw"
             fig.savefig(out / f"figure2c_{safe}_{mode}.png",
                         dpi=300, bbox_inches='tight')
             plt.close(fig)

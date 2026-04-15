@@ -36,17 +36,21 @@ def load_microbiome_datasets_with_targets(
                 microbiome_df = microbiome_df[(microbiome_df != 0).any(axis=1)]
                 microbiome_df.columns = (
                         microbiome_df.columns
-                        .str.replace('|', ';', regex=False)
-                        .str.replace('[{}"\\[\\],:]', '_', regex=True)
-                        .str.replace(r'\s+', '_', regex=True)
-                        .str.replace(r'\.\d+$', '', regex=True)  # strip pandas dedup suffixes (.1, .2, ...)
+                        .str.replace('|', ';', regex=False)              # unify | delimiter
+                        .str.replace(',', ';', regex=False)              # unify , delimiter
+                        .str.replace(r'\s*;\s*', ';', regex=True)        # normalize spaces around semicolons ("; p__" → ";p__")
+                        .str.replace('[{}":]', '', regex=True)           # remove formatting artifacts (quotes, braces, colons)
+                        .str.replace('[\\[\\]]', '_', regex=True)        # replace brackets with _ ([Ruminococcus] → _Ruminococcus_)
+                        .str.replace(r'\s+', '_', regex=True)            # spaces within names → underscore
+                        .str.replace(r'\.\d+$', '', regex=True)          # strip pandas dedup suffixes (.1, .2, ...)
+                        .str.replace(r'^[kd]__[^;]+;?', '', regex=True)  # strip kingdom/domain prefix → start from phylum
                     )
 
-                # Drop Unassigned columns (catch-all bin, not a real taxon)
-                unassigned_cols = [c for c in microbiome_df.columns
-                                   if c.lower().startswith("unassigned")]
-                if unassigned_cols:
-                    microbiome_df = microbiome_df.drop(columns=unassigned_cols)
+                # Drop Unassigned and kingdom-only columns (empty string after prefix strip)
+                drop_cols = [c for c in microbiome_df.columns
+                             if c.lower().startswith("unassigned") or c == ""]
+                if drop_cols:
+                    microbiome_df = microbiome_df.drop(columns=drop_cols)
 
                 # Taxonomy merge
                 processed_df = merge_by_taxonomy_level(
@@ -84,7 +88,7 @@ def process_target_labels(target_df: pd.DataFrame) -> pd.DataFrame:
     unique_tags = target_df['Tag'].unique()
     print(f"  Found unique tags: {unique_tags}")
 
-    label_mapping = {"Study Control": 0, "Control": 0, "CTR": 0, "Case": 1, "HC": 0, "PD": 1}
+    label_mapping = {"Study Control": 0, "Control": 0, "CTR": 0, "Case": 1, "HC": 0, "PD": 1, "parkinson": 1}
 
     if any(isinstance(tag, str) for tag in unique_tags):
         print(f"  Converting string labels using mapping: {label_mapping}")

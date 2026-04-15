@@ -10,15 +10,14 @@ Usage
     from figures.figure3 import plot_figure3, run_figure3
 
     # generate for one phenotype
-    fig_raw, fig_norm = plot_figure3(
+    fig = plot_figure3(
         microbiome_dfs, dataset_names, phenotype_name,
-        apply_normalization=True   # also produce normalized version
+        normalization_approach="rankbird_wasserstein"
     )
-    fig_raw.savefig(...)
-    fig_norm.savefig(...)
+    fig.savefig(...)
 
     # or use the pipeline runner (calls plot_figure3 for every phenotype)
-    run_figure3(phenotypes, data_root, figures_dir, apply_normalization=True)
+    run_figure3(phenotypes, data_root, figures_dir, normalization_approach="rankbird_wasserstein")
 """
 
 import numpy as np
@@ -186,22 +185,22 @@ def plot_figure3(
     microbiome_dfs: List[pd.DataFrame],
     dataset_names: List[str],
     phenotype_name: str,
-    apply_normalization: bool = False,
+    normalization_approach=None,
     max_features: int = 50,
 ) -> plt.Figure:
     """
     Generate one figure 3 heatmap for a phenotype.
 
-    If apply_normalization=True, the normalization pipeline is applied first
-    and the figure is labelled "(normalized)". Otherwise raw data is used.
+    If normalization_approach is not None, the normalization pipeline is applied
+    first and the figure is labelled accordingly. Otherwise raw data is used.
     """
-    if apply_normalization:
+    if normalization_approach is not None:
         from src.rankbird.normalization.pipeline import apply_normalization_pipeline
         print(f"  Applying normalization pipeline for {phenotype_name}")
         microbiome_dfs, dataset_names = apply_normalization_pipeline(
             list(microbiome_dfs), list(dataset_names)
         )
-        label_suffix = " (normalized)"
+        label_suffix = f" ({normalization_approach})"
     else:
         label_suffix = " (raw)"
 
@@ -214,7 +213,7 @@ def run_figure3(
     phenotypes: List[Tuple[str, str]],
     data_root: str,
     figures_dir: str,
-    apply_normalization: bool = True,
+    normalization_approach=None,
     max_features: int = 50,
 ):
     """
@@ -227,8 +226,8 @@ def run_figure3(
         Root folder containing phenotype subfolders.
     figures_dir : str
         Where to save the PNG files.
-    apply_normalization : bool
-        If True, also produce normalized versions.
+    normalization_approach : str or None
+        Normalization approach to apply, or None for raw data.
     max_features : int
         Maximum number of features shown per heatmap.
     """
@@ -259,11 +258,11 @@ def run_figure3(
         try:
             fig = plot_figure3(
                 microbiome_dfs, dataset_names, pheno_str,
-                apply_normalization=apply_normalization,
+                normalization_approach=normalization_approach,
                 max_features=max_features,
             )
             safe   = pheno_str.replace(" ", "_")
-            mode   = "normalized" if apply_normalization else "raw"
+            mode   = normalization_approach or "raw"
             fig.savefig(out / f"figure3_{safe}_{mode}.png",
                         dpi=300, bbox_inches='tight')
             plt.close(fig)

@@ -12,12 +12,13 @@ from evaluation.learning_protocols import lodo_protocol, internal_validation_pro
 
 def run_protocol_benchmark(phenotypes: list,
                             data_root: str = "Data",
-                            apply_normalization: bool = False,
+                            normalization_approach=None,
                             apply_decompose: bool = False,
                             stability_threshold: float = 1.0,
                             min_samples_per_dataset: int = 30,
                             outlier_z_thresh: float = 3.0,
-                            random_state: int = 42):
+                            random_state: int = 42,
+                            **kwargs):
     """
     Run LODO, Internal Validation, Within-dataset protocols
     for multiple phenotypes, and returns a tidy DataFrame with per-dataset AUCs.
@@ -28,10 +29,9 @@ def run_protocol_benchmark(phenotypes: list,
         List of phenotype names (e.g. [("CRC", "Metagenomics"), ("PD", "Amplicon")])
     data_root : str
         Root folder containing "{Phenotype} Metagenomic" and "{Phenotype} Amplicon" subfolders.
-    apply_normalization : bool
-        If True, apply stability filtering and normalization to microbiome data.
-    stability_threshold : float
-        Threshold for stability filter (std/mean ratio).
+    normalization_approach : str or None
+        Normalization approach: "rankbird_wasserstein", "rankbird_ranking",
+        "rankbird_sigmoid", "rankbird_relu", "filter_only", or None (no normalization).
     min_samples_per_dataset : int
         Minimum samples per dataset for oversampling.
     outlier_z_thresh : float
@@ -55,7 +55,7 @@ def run_protocol_benchmark(phenotypes: list,
         microbiome_dfs, target_dfs, dataset_names = load_microbiome_datasets_with_targets(folder)
 
         # Apply normalization if requested
-        if apply_normalization:
+        if normalization_approach == "rankbird_wasserstein":
             microbiome_dfs, dataset_names = apply_normalization_pipeline(
                 microbiome_dfs, dataset_names)
             save_folder = f"normalized_datasets/"
