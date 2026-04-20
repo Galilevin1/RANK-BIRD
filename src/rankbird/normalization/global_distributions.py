@@ -21,22 +21,23 @@ def compute_per_microbe_global_distributions(
     global_sorted_dict = {}
     microbe_kept_datasets = {}
 
-    M = None  # samples per dataset after oversampling
+    M = 550  # common grid resolution — all curves resampled to this length before averaging
 
     for microbe in kept_safe:
 
         # --------------------------------------------------
-        # Collect curves per dataset
+        # Collect curves per dataset, resampled to length M
         # --------------------------------------------------
         curves = {}
+        x_grid = np.linspace(0, 1, M)
         for d in dataset_names:
             Xi = X_all.loc[ds_all == d, microbe].values
             max_val = np.max(Xi)
             if max_val > 0:
                 Xi = Xi / max_val
-            if M is None:
-                M = len(Xi)
-            curves[d] = np.sort(Xi)[::-1]
+            sorted_curve = np.sort(Xi)[::-1]
+            xp = np.linspace(0, 1, len(sorted_curve))
+            curves[d] = np.interp(x_grid, xp, sorted_curve)
 
 
         # --------------------------------------------------

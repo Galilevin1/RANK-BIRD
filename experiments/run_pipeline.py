@@ -31,17 +31,49 @@ from pathlib import Path
 # ================================
 # CONFIGURATION
 # ================================
+
+# Datasets downloaded as-is from published papers — used for fair comparison figures (1a, 1c, 1d, 1e)
+phenotypes_papers = [
+("AD", "Amplicon"),
+("ASD", "Metagenomics"),
+("ASD", "Amplicon"),
+("CD", "Metagenomics"),
+("CRC", "Metagenomics"),
+("Delivery_mode_6month", "Amplicon"),
+("Delivery_mode_month", "Amplicon"),
+("Delivery_mode_year", "Amplicon"),
+("PD", "Amplicon"),
+("T2D", "Amplicon"),
+("UC", "Metagenomics"),
+]
+
+# All datasets from consistent downloading pipeline — used for main pipeline and AUC improvement
+phenotypes_pipeline = [
+("AD", "Amplicon"),
+("ASD", "Metagenomics"),
+("ASD", "Amplicon"),
+("CD", "Metagenomics"),
+("CRC", "Metagenomics"),
+("PD", "Metagenomics"),
+("PD", "Amplicon"),
+("T2D", "Amplicon"),
+("UC", "Metagenomics"),
+]
+
+
+
 CONFIG = {
 
     # -----------------------
     # Pipeline control
     # -----------------------
-    "run_compute": True,      # run heavy protocol training
-    "run_aggregate": True,    # recompute summary
-    "run_stats": True,
-    "run_figures": ["1d","1e"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
+    "run_compute": False,      # run heavy protocol training
+    "run_aggregate": False,    # recompute summary
+    "run_stats": False,
+    "run_figures": ["5"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
     "run_investigations": [],  # "stability_threshold", "stability_characterization", "distribution_approach"
     "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach"invastigations # True = reload CSVs, False = recompute
+    "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
 
     # -----------------------
     # Stability threshold Investigations control
@@ -61,7 +93,7 @@ CONFIG = {
     # Experiment config
     # -----------------------
     "preprocessing_scope": "global",   # "local" or "global"
-    "normalization_approach": "rankbird_wasserstein",  # "rankbird_wasserstein", "rankbird_ranking", "rankbird_sigmoid", "rankbird_relu", "filter_only", None
+    "normalization_approach": "None",  # "rankbird_wasserstein", "rankbird_ranking", "rankbird_sigmoid", "rankbird_relu", "filter_only", None
     "decomposition": False,
     "min_samples_per_dataset": 550,
     "z_thresh": 3.0,
@@ -73,11 +105,14 @@ CONFIG = {
     "decompose_method": "PCA",
     "decompose_rank": 300,      
 }
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _get_mode(config: dict) -> str:
-    approach = config.get("normalization_approach") or "original"
+    approach = config.get("normalization_approach")
+    if not approach or str(approach) == "None":
+        approach = "original"
     mode = approach.replace("rankbird_wasserstein", "normalized")  # backwards-compatible name
     if config.get("decomposition"):
         mode += "_dim"
@@ -113,19 +148,8 @@ def main():
     FIG3_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_3")
     FIG4_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_4")
 
-    phenotypes = [
-        ("AD", "Amplicon"),
-        ("ASD", "Metagenomics"),
-        ("ASD", "Amplicon"),
-        ("CD", "Metagenomics"),
-        ("CRC", "Metagenomics"),
-        ("Delivery_mode_6month", "Amplicon"),
-        ("Delivery_mode_month", "Amplicon"),
-        ("Delivery_mode_year", "Amplicon"),
-        ("PD", "Amplicon"),
-        ("T2D", "Amplicon"),
-        ("UC", "Metagenomics"),
-    ]
+
+    phenotypes = CONFIG["phenotypes"]
 
 
 

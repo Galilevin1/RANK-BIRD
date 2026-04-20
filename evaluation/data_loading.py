@@ -88,7 +88,7 @@ def process_target_labels(target_df: pd.DataFrame) -> pd.DataFrame:
     unique_tags = target_df['Tag'].unique()
     print(f"  Found unique tags: {unique_tags}")
 
-    label_mapping = {"Study Control": 0, "Control": 0, "CTR": 0, "Case": 1, "HC": 0, "PD": 1, "parkinson": 1}
+    label_mapping = {"Study Control": 0, "Control": 0, "CTR": 0, "Case": 1, "HC": 0, "PD": 1, "parkinson": 1, "CRC": 1}
 
     if any(isinstance(tag, str) for tag in unique_tags):
         print(f"  Converting string labels using mapping: {label_mapping}")
