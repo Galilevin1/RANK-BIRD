@@ -24,6 +24,7 @@ from experiments.investigate_stability_threshold import (
 from experiments.investigate_distribution_approach import run_distribution_investigation
 from evaluation.data_loading import build_papers_auc_df, load_microbiome_datasets_with_targets
 from evaluation.pairwise_lodo import run_figure4_analysis
+from evaluation.dataset_quality import run_quality_report
 
 from pathlib import Path
 
@@ -70,16 +71,17 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["5"], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-    "run_investigations": [],  # "stability_threshold", "stability_characterization", "distribution_approach"
-    "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach"invastigations # True = reload CSVs, False = recompute
+    "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
+    "run_investigations": ["stability_threshold"],  # "stability_threshold", "stability_characterization", "distribution_approach"
+    "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
+    "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
     "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
 
     # -----------------------
     # Stability threshold Investigations control
     # -----------------------
     "stability_dtype_filter":        None,  # None = both dtypes; ["Metagenomics"] = shotgun only; ["Amplicon"] = 16S only
-    "stability_normalization_modes": ["full"],  # "full", "filter_only", or both
+    "stability_normalization_modes": ["full+filter_only"],  # "full", "filter_only", "full+filter_only" (both on same plot), or e.g. ["full", "filter_only"] for separate figures
     "stability_plot_mode":           ["mean", "median"],        # "mean", "median", "combined", or list e.g. ["mean", "median"]
     "stability_compute_levels":      [None, "g", "gs"],               # None = compute all levels; e.g. [None, "g"] to compute only those
     "stability_plot_levels":         [None, "g", "gs"], # None = plot all levels; e.g. ["g", "fg", "ofg"] for a subset
@@ -93,7 +95,7 @@ CONFIG = {
     # Experiment config
     # -----------------------
     "preprocessing_scope": "global",   # "local" or "global"
-    "normalization_approach": "None",  # "rankbird_wasserstein", "rankbird_ranking", "rankbird_sigmoid", "rankbird_relu", "filter_only", None
+    "normalization_approach": "rankbird_wasserstein",  # "rankbird_wasserstein", "rankbird_ranking", "rankbird_sigmoid", "rankbird_relu", "filter_only", None
     "decomposition": False,
     "min_samples_per_dataset": 550,
     "z_thresh": 3.0,
@@ -152,6 +154,17 @@ def main():
     phenotypes = CONFIG["phenotypes"]
 
 
+
+    # ================================
+    # STEP 0: Dataset quality report
+    # ================================
+    if CONFIG.get("run_quality_report"):
+        run_quality_report(
+            phenotypes=phenotypes,
+            data_root=PROJECT_ROOT / "Data",
+            load_fn=load_microbiome_datasets_with_targets,
+            output_path=RESULTS_DIR / "dataset_quality.csv",
+        )
 
     # # ================================
     # # STEP 1: Compute or load results

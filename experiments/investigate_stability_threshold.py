@@ -287,66 +287,82 @@ def get_original_mean_auc(
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
 
+def _plot_sweep_lines(ax, sweep_df, protocol, color, plot_mode, suffix="", linewidth=2, alpha=1.0):
+    """Plot mean/median sweep lines for one protocol onto ax."""
+    show_mean   = plot_mode in ("mean",   "combined")
+    show_median = plot_mode in ("median", "combined")
+    sub = sweep_df[sweep_df["protocol"] == protocol].sort_values("percentile")
+    if sub.empty:
+        return
+    if show_mean:
+        label = f"{protocol}{suffix}" if not show_median else f"{protocol} mean{suffix}"
+        ax.plot(sub["percentile"], sub["mean_auc"],
+                marker="o", linewidth=linewidth, markersize=5,
+                color=color, alpha=alpha, label=label)
+        ax.fill_between(
+            sub["percentile"],
+            sub["mean_auc"] - sub["std_auc"],
+            sub["mean_auc"] + sub["std_auc"],
+            alpha=0.08 * alpha, color=color,
+        )
+    if show_median and "median_auc" in sub.columns:
+        label = f"{protocol}{suffix}" if not show_mean else f"{protocol} median{suffix}"
+        ax.plot(sub["percentile"], sub["median_auc"],
+                marker="^", linewidth=linewidth * 0.75 if show_mean else linewidth,
+                markersize=4, linestyle="-" if not show_mean else "--",
+                color=color, alpha=alpha * (0.75 if show_mean else 1.0),
+                label=label)
+
+
 def _plot_sweep_panel(
     ax: plt.Axes,
     sweep_df: pd.DataFrame,
     count_df: pd.DataFrame,
     title: str,
     original_auc: dict = None,
-    plot_mode: str = "combined",   # "mean", "median", or "combined"
+    filter_only_df: pd.DataFrame = None,
+    plot_mode: str = "combined",
 ):
     """AUC lines (left axis) + kept-microbe count & % annotations (right axis).
-    original_auc: {protocol: mean_auc} drawn as horizontal dashed reference lines.
-    plot_mode: "mean" = mean only; "median" = median only; "combined" = both.
-    """
-    show_mean   = plot_mode in ("mean",   "combined")
-    show_median = plot_mode in ("median", "combined")
 
-    # Left: AUC sweep lines
+    Three layers per protocol (same color, different line style/weight):
+      - original (no filter, no norm): horizontal dotted line
+      - filter-only sweep:             thin solid line  (if filter_only_df provided)
+      - full normalization sweep:      thick solid line
+    """
     for protocol in PROTOCOLS:
-        sub = sweep_df[sweep_df["protocol"] == protocol].sort_values("percentile")
-        if sub.empty:
-            continue
         color = PROTOCOL_COLORS[protocol]
-        if show_mean:
-            label = protocol if not show_median else f"{protocol} (mean)"
-            ax.plot(sub["percentile"], sub["mean_auc"],
-                    marker="o", linewidth=2, markersize=5,
-                    color=color, label=label)
-            ax.fill_between(
-                sub["percentile"],
-                sub["mean_auc"] - sub["std_auc"],
-                sub["mean_auc"] + sub["std_auc"],
-                alpha=0.10, color=color,
-            )
-        if show_median and "median_auc" in sub.columns:
-            label = protocol if not show_mean else f"{protocol} (median)"
-            ax.plot(sub["percentile"], sub["median_auc"],
-                    marker="^", linewidth=2 if not show_mean else 1.5,
-                    markersize=5 if not show_mean else 4,
-                    linestyle="-" if not show_mean else "--",
-                    color=color, alpha=1.0 if not show_mean else 0.75,
-                    label=label)
-        # Original (no normalization) reference line
+
+        # 1. Original baseline — horizontal dotted line
         if original_auc and protocol in original_auc:
             ax.axhline(
                 original_auc[protocol],
-                color=color, linestyle="--", linewidth=1.5, alpha=0.7,
+                color=color, linestyle=":", linewidth=1.5, alpha=0.6,
                 label=f"{protocol} (original)",
             )
+
+        # 2. Filter-only sweep — thin line (only in combined mode)
+        if filter_only_df is not None:
+            _plot_sweep_lines(ax, filter_only_df, protocol, color, plot_mode,
+                              suffix=" (filter only)", linewidth=1.5, alpha=0.65)
+
+        # 3. Main sweep — thick line; label with "(full)" only when both are shown
+        main_suffix = " (full)" if filter_only_df is not None else ""
+        _plot_sweep_lines(ax, sweep_df, protocol, color, plot_mode,
+                          suffix=main_suffix, linewidth=2.5, alpha=1.0)
 
     ax.axhline(0.5, color="gray", linestyle=":", linewidth=1.2, alpha=0.5,
                label="Random (0.5)")
     _ylabel = {"mean": "Mean AUC", "median": "Median AUC", "combined": "Mean / Median AUC"}
     ax.set_ylabel(_ylabel.get(plot_mode, "AUC"), fontsize=10)
     ax.set_xlabel("Stability Percentile", fontsize=10)
-    ax.set_xticks(PERCENTILES[::2])   # every other tick to avoid crowding
+    ax.set_xticks(PERCENTILES[::2])
     ax.tick_params(axis="x", rotation=45)
     ax.set_xlim(PERCENTILES[0] - 0.02, PERCENTILES[-1] + 0.02)
     ax.grid(axis="y", linestyle="--", alpha=0.25)
     ax.set_title(title, fontsize=11, fontweight="bold")
 
-    # Right: microbe count + % label
+    # Right: microbe count
     ax2 = ax.twinx()
     ax2.plot(count_df["percentile"], count_df["n_kept"],
              color="black", linestyle="--", linewidth=1.8,
@@ -407,77 +423,126 @@ def run_stability_investigation(
     all_dtypes = ["Metagenomics", "Amplicon"]
     dtypes = [d for d in all_dtypes if dtype_filter is None or d in dtype_filter]
 
-    for norm_mode in normalization_modes:
-        filter_only = (norm_mode == "filter_only")
-        mode_suffix = f"_{norm_mode}" if norm_mode != "full" else ""
-        mode_label  = "Filter-only" if filter_only else "Full normalization"
+    _mode_meta = {
+        "mean":     ("Mean AUC",          "_mean"),
+        "median":   ("Median AUC",        "_median"),
+        "combined": ("Mean / Median AUC", "_combined"),
+    }
+    plot_modes     = plot_mode if isinstance(plot_mode, list) else [plot_mode]
+    levels_to_plot = [(l, lbl) for l, lbl in LEVELS
+                      if plot_levels is None or l in plot_levels]
 
-        # ── Step 1: compute (or load) all sweep data ──────────────────────────
-        panel_data = {}   # (level, dtype) → (sweep_df, count_df, orig_auc)
+    def _load_sweep(path, label):
+        if not path.exists():
+            print(f"  [SKIP] Missing {label}: {path.name}")
+            return None
+        return pd.read_csv(path)
+
+    def _get_or_compute_sweep(path, label, compute_fn):
+        """Load CSV if exists, else compute (if allowed) and save."""
+        if path.exists():
+            print(f"  [LOAD] {path.name}")
+            return pd.read_csv(path)
+        should = compute_levels is None or label in compute_levels
+        if not should:
+            return None
+        df = compute_fn()
+        df.to_csv(path, index=False)
+        return df
+
+    for norm_mode in normalization_modes:
+        combined_mode = (norm_mode == "full+filter_only")
+        filter_only   = (norm_mode == "filter_only")
+        mode_suffix   = f"_{norm_mode.replace('+', '_')}" if norm_mode != "full" else ""
+        mode_label    = {
+            "full":             "Full normalization",
+            "filter_only":      "Filter-only",
+            "full+filter_only": "Full normalization + Filter-only",
+        }.get(norm_mode, norm_mode)
+
+        # ── Step 1: compute / load sweep data ─────────────────────────────────
+        # panel_data: (level, dtype) → (main_sweep_df, count_df, orig_auc, fo_sweep_df_or_None)
+        panel_data = {}
 
         for level, level_label in LEVELS:
             for dtype in dtypes:
-                tag = f"{dtype.lower()}_{level or 'all'}{mode_suffix}"
+                base = f"{dtype.lower()}_{level or 'all'}"
                 print(f"\n=== {mode_label}  |  {level_label}  |  {dtype} ===")
 
-                count_path = output_dir / f"microbe_counts_{dtype.lower()}_{level or 'all'}.csv"
-                sweep_path = output_dir / f"auc_sweep_{tag}.csv"
-                orig_path  = output_dir / f"original_auc_{dtype.lower()}_{level or 'all'}.csv"
+                count_path     = output_dir / f"microbe_counts_{base}.csv"
+                sweep_full_path = output_dir / f"auc_sweep_{base}_full.csv"
+                sweep_fo_path  = output_dir / f"auc_sweep_{base}_filter_only.csv"
+                orig_path      = output_dir / f"original_auc_{base}.csv"
+
+                # decide which sweep path is the "main" one for this mode
+                sweep_path = sweep_fo_path if filter_only else sweep_full_path
 
                 if plot_only:
-                    if not sweep_path.exists() or not count_path.exists():
-                        print(f"  [SKIP] Missing CSVs for {tag}, run without plot_only first.")
+                    count_df  = _load_sweep(count_path,  "count")
+                    sweep_df  = _load_sweep(sweep_path,  "sweep")
+                    fo_df     = _load_sweep(sweep_fo_path, "filter-only sweep") if combined_mode else None
+                    orig_auc  = pd.read_csv(orig_path).iloc[0].to_dict() if orig_path.exists() else {}
+                    if count_df is None or sweep_df is None:
                         panel_data[(level, dtype)] = None
                         continue
-                    count_df = pd.read_csv(count_path)
-                    sweep_df = pd.read_csv(sweep_path)
-                    orig_auc = pd.read_csv(orig_path).iloc[0].to_dict() if orig_path.exists() else {}
-                elif compute_levels is not None and level not in compute_levels:
-                    # Level not selected for computation — load from disk if available
-                    if not sweep_path.exists() or not count_path.exists():
-                        print(f"  [SKIP] Level '{level or 'all'}' not in compute_levels and CSVs missing — skipping.")
-                        panel_data[(level, dtype)] = None
-                        continue
-                    count_df = pd.read_csv(count_path)
-                    sweep_df = pd.read_csv(sweep_path)
-                    orig_auc = pd.read_csv(orig_path).iloc[0].to_dict() if orig_path.exists() else {}
                 else:
+                    should_compute = compute_levels is None or level in compute_levels
+
+                    # microbe counts (shared across modes)
                     if count_path.exists():
                         count_df = pd.read_csv(count_path)
-                    else:
+                    elif should_compute:
                         count_df = count_kept_microbes_sweep(phenotypes, dtype, level=level)
                         count_df.to_csv(count_path, index=False)
-
-                    if sweep_path.exists():
-                        print(f"  [LOAD] {sweep_path.name} already exists, skipping sweep.")
-                        sweep_df = pd.read_csv(sweep_path)
                     else:
+                        panel_data[(level, dtype)] = None
+                        continue
+
+                    # main sweep
+                    if sweep_path.exists():
+                        print(f"  [LOAD] {sweep_path.name}")
+                        sweep_df = pd.read_csv(sweep_path)
+                    elif should_compute:
+                        print(f"  Computing {'filter-only' if filter_only else 'full normalization'} sweep ...")
                         sweep_df = run_stability_sweep(
-                            phenotypes, dtype, level=level, filter_only=filter_only,
+                            phenotypes, dtype, level=level,
+                            filter_only=filter_only,
                             normalization_approach=normalization_approach,
                         )
                         sweep_df.to_csv(sweep_path, index=False)
+                    else:
+                        panel_data[(level, dtype)] = None
+                        continue
 
+                    # filter-only sweep (only needed for combined mode)
+                    if combined_mode:
+                        if sweep_fo_path.exists():
+                            print(f"  [LOAD] {sweep_fo_path.name}")
+                            fo_df = pd.read_csv(sweep_fo_path)
+                        elif should_compute:
+                            print(f"  Computing filter-only sweep ...")
+                            fo_df = run_stability_sweep(
+                                phenotypes, dtype, level=level, filter_only=True,
+                            )
+                            fo_df.to_csv(sweep_fo_path, index=False)
+                        else:
+                            fo_df = None
+                    else:
+                        fo_df = None
+
+                    # original baseline (shared)
                     if orig_path.exists():
                         orig_auc = pd.read_csv(orig_path).iloc[0].to_dict()
-                    else:
-                        print(f"  Computing original (no normalization) baseline ...")
+                    elif should_compute:
+                        print(f"  Computing original baseline ...")
                         orig_auc = get_original_mean_auc(phenotypes, dtype, level=level)
                         pd.DataFrame([orig_auc]).to_csv(orig_path, index=False)
+                    else:
+                        orig_auc = {}
 
-                panel_data[(level, dtype)] = (sweep_df, count_df, orig_auc)
+                panel_data[(level, dtype)] = (sweep_df, count_df, orig_auc, fo_df)
 
-        # ── Step 2: draw figure(s) from the same data ─────────────────────────
-        _mode_meta = {
-            "mean":     ("Mean AUC",          "_mean"),
-            "median":   ("Median AUC",        "_median"),
-            "combined": ("Mean / Median AUC", "_combined"),
-        }
-        plot_modes = plot_mode if isinstance(plot_mode, list) else [plot_mode]
-
-        levels_to_plot = [(l, lbl) for l, lbl in LEVELS
-                          if plot_levels is None or l in plot_levels]
-
+        # ── Step 2: draw figures ───────────────────────────────────────────────
         for pm in plot_modes:
             stat_title, stat_suffix = _mode_meta.get(pm, (pm, f"_{pm}"))
 
@@ -494,10 +559,11 @@ def run_stability_investigation(
                     if data is None:
                         ax.set_visible(False)
                         continue
-                    sweep_df, count_df, orig_auc = data
+                    sweep_df, count_df, orig_auc, fo_df = data
                     _plot_sweep_panel(ax, sweep_df, count_df,
                                       title=f"{dtype} — {level_label}",
                                       original_auc=orig_auc,
+                                      filter_only_df=fo_df,
                                       plot_mode=pm)
 
             fig.suptitle(

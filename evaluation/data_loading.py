@@ -52,6 +52,11 @@ def load_microbiome_datasets_with_targets(
                 if drop_cols:
                     microbiome_df = microbiome_df.drop(columns=drop_cols)
 
+                # Convert to relative abundance if not already (threshold: mean row sum > 1.5)
+                mean_row_sum = microbiome_df.sum(axis=1).mean()
+                if mean_row_sum > 1.5:
+                    microbiome_df = microbiome_df.div(microbiome_df.sum(axis=1), axis=0).fillna(0.0)
+
                 # Taxonomy merge
                 processed_df = merge_by_taxonomy_level(
                     microbiome_df,
