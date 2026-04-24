@@ -40,7 +40,7 @@ from src.rankbird.normalization.ranking import apply_ranking_pipeline
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT    = PROJECT_ROOT / "Data"
 
-PERCENTILES = [round(p, 2) for p in np.arange(0.05, 1.0, 0.05)]
+PERCENTILES = [round(p, 2) for p in np.arange(0.02, 1.0, 0.02)]
 PROTOCOLS   = ["LODO", "Internal Validation", "Within Learning"]
 PROTOCOL_COLORS = {
     "LODO":                "#1f77b4",
@@ -76,7 +76,7 @@ _filter_to_level = filter_to_level
 def _load_microbiome_for_dtype(phenotypes: list, dtype: str):
     all_dfs, all_names = [], []
     for phenotype, t in phenotypes:
-        if t != dtype:
+        if dtype != "Combined" and t != dtype:
             continue
         folder = DATA_ROOT / f"{phenotype} {t}"
         dfs, _, names = load_microbiome_datasets_with_targets(folder)
@@ -129,7 +129,7 @@ def run_stability_sweep(  # noqa: E302
     filter_only=True applies only stability filtering (no distribution normalization).
     Returns: [percentile, protocol, mean_auc, median_auc, std_auc, n_phenotypes]
     """
-    pheno_subset = [(p, t) for p, t in phenotypes if t == dtype]
+    pheno_subset = phenotypes if dtype == "Combined" else [(p, t) for p, t in phenotypes if t == dtype]
     if not pheno_subset:
         raise ValueError(f"No phenotypes for dtype='{dtype}'")
 
@@ -265,7 +265,7 @@ def get_original_mean_auc(
     Run protocols on raw (non-normalized) data, optionally filtered to a
     taxonomic level.  Returns {protocol: mean_auc} for use as reference lines.
     """
-    pheno_subset = [(p, t) for p, t in phenotypes if t == dtype]
+    pheno_subset = phenotypes if dtype == "Combined" else [(p, t) for p, t in phenotypes if t == dtype]
     if not pheno_subset:
         return {}
 
@@ -395,6 +395,9 @@ def run_stability_investigation(
     plot_levels: list = None,
     compute_levels: list = None,
     normalization_approach: str = "rankbird_wasserstein",
+    cross_dtype_normalization: bool = False,
+    stability_percentile_global_combined: float = 0.6,
+    taxonomy_level_combined=None,
 ):
     """
     Runs the full (dtype × level) sweep and saves CSVs + figure(s) per mode.
@@ -405,6 +408,7 @@ def run_stability_investigation(
     output_dir         : directory for CSVs and figures
     plot_only          : if True, skip computation and load existing CSVs
     dtype_filter       : limit to these dtypes, e.g. ["Metagenomics"]. None = all.
+                         Ignored when cross_dtype_normalization=True.
     normalization_modes: list of norm modes, e.g. ["full"], ["filter_only"], or both.
     plot_mode          : "mean", "median", "combined", or a list of these to get
                          one figure per mode. Default: "combined".
@@ -413,6 +417,7 @@ def run_stability_investigation(
     compute_levels     : subset of level keys to compute, e.g. [None, "g"].
                          None = compute all levels in LEVELS. Other levels load from disk if available,
                          and are skipped (not plotted) if CSVs are missing.
+    cross_dtype_normalization : if True, pool 16S + shotgun together for normalization.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -420,8 +425,11 @@ def run_stability_investigation(
     if normalization_modes is None:
         normalization_modes = ["full"]
 
-    all_dtypes = ["Metagenomics", "Amplicon"]
-    dtypes = [d for d in all_dtypes if dtype_filter is None or d in dtype_filter]
+    if cross_dtype_normalization:
+        dtypes = ["Combined"]
+    else:
+        all_dtypes = ["Metagenomics", "Amplicon"]
+        dtypes = [d for d in all_dtypes if dtype_filter is None or d in dtype_filter]
 
     _mode_meta = {
         "mean":     ("Mean AUC",          "_mean"),
@@ -1110,6 +1118,9 @@ def run_microbe_characterization(
     plot_only: bool = False,
     taxonomy_level_metagenomics=None,
     taxonomy_level_amplicon=None,
+    cross_dtype_normalization: bool = False,
+    stability_percentile_global_combined: float = 0.6,
+    taxonomy_level_combined=None,
 ):
     """
     Step 2: characterize kept vs dropped microbes at the best stability threshold.
@@ -1121,18 +1132,24 @@ def run_microbe_characterization(
     threshold_metagenomics : stability percentile for Metagenomics (default 0.25)
     threshold_amplicon     : stability percentile for Amplicon (default 0.40)
     plot_only              : if True, reload existing CSVs and only regenerate figures
+    cross_dtype_normalization : if True, pool 16S + shotgun together for characterization.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    thresholds = {
-        "Metagenomics": threshold_metagenomics or _BEST_THRESHOLDS["Metagenomics"],
-        "Amplicon":     threshold_amplicon     or _BEST_THRESHOLDS["Amplicon"],
-    }
-    taxonomy_levels = {
-        "Metagenomics": taxonomy_level_metagenomics,
-        "Amplicon":     taxonomy_level_amplicon,
-    }
+    if cross_dtype_normalization:
+        tax_level = taxonomy_level_combined if str(taxonomy_level_combined) != "None" else None
+        thresholds = {"Combined": stability_percentile_global_combined}
+        taxonomy_levels = {"Combined": tax_level}
+    else:
+        thresholds = {
+            "Metagenomics": threshold_metagenomics or _BEST_THRESHOLDS["Metagenomics"],
+            "Amplicon":     threshold_amplicon     or _BEST_THRESHOLDS["Amplicon"],
+        }
+        taxonomy_levels = {
+            "Metagenomics": taxonomy_level_metagenomics,
+            "Amplicon":     taxonomy_level_amplicon,
+        }
 
     for dtype, threshold in thresholds.items():
         print(f"\n=== Characterization: {dtype}  (threshold={threshold}) ===")

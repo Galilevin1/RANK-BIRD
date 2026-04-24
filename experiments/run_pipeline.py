@@ -72,7 +72,7 @@ CONFIG = {
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
     "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-    "run_investigations": ["stability_threshold"],  # "stability_threshold", "stability_characterization", "distribution_approach"
+    "run_investigations": ["stability_characterization"],  # "stability_threshold", "stability_characterization", "distribution_approach"
     "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
     "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
@@ -100,12 +100,20 @@ CONFIG = {
     "min_samples_per_dataset": 550,
     "z_thresh": 3.0,
     "stability_percentile_local": 0.3,
-    "stability_percentile_global_metagenomics": 0.2,
-    "stability_percentile_global_amplicon":     0.5,
-    "taxonomy_level_metagenomics": "None",    # None = all, "g" = genus only, "gs" = genus+species
-    "taxonomy_level_amplicon":     "None",
+    "stability_percentile_global_metagenomics": 0.1,
+    "stability_percentile_global_amplicon":     0.3,
+    "taxonomy_level_metagenomics": "gs",    # None = all, "g" = genus only, "gs" = genus+species
+    "taxonomy_level_amplicon":     "g",
     "decompose_method": "PCA",
-    "decompose_rank": 300,      
+    "decompose_rank": 300,
+    # -----------------------
+    # Cross-dtype normalization
+    # When True: pool Amplicon + Metagenomics datasets together for stability
+    # filtering and distribution normalization (learning stays per phenotype).
+    # -----------------------
+    "cross_dtype_normalization":           True,
+    "stability_percentile_global_combined": 0.3,
+    "taxonomy_level_combined":              "gs",
 }
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -116,6 +124,8 @@ def _get_mode(config: dict) -> str:
     if not approach or str(approach) == "None":
         approach = "original"
     mode = approach.replace("rankbird_wasserstein", "normalized")  # backwards-compatible name
+    if config.get("cross_dtype_normalization"):
+        mode += "_combined"
     if config.get("decomposition"):
         mode += "_dim"
     return mode
@@ -197,6 +207,9 @@ def main():
                 z_thresh=CONFIG.get("z_thresh"),
                 taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
                 taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
+                cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
+                stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
+                taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
             )
             results_df.to_csv(results_path, index=False)
 
@@ -324,7 +337,8 @@ def main():
 
     if "stability_threshold" in CONFIG["run_investigations"]:
         _approach = CONFIG.get("normalization_approach") or "original"
-        inv_dir = PROJECT_ROOT / "investigations" / f"stability_threshold_{_approach}"
+        _combined_suffix = "_combined" if CONFIG.get("cross_dtype_normalization") else ""
+        inv_dir = PROJECT_ROOT / "investigations" / f"stability_threshold_{_approach}{_combined_suffix}"
         _dtype_filter = CONFIG.get("stability_dtype_filter", None)
         if isinstance(_dtype_filter, list) and all(d is None or str(d) == "None" for d in _dtype_filter):
             _dtype_filter = None
@@ -337,10 +351,14 @@ def main():
             plot_mode=CONFIG.get("stability_plot_mode", "combined"),
             plot_levels=CONFIG.get("stability_plot_levels", None),
             compute_levels=CONFIG.get("stability_compute_levels", None),
+            cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
+            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
+            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         )
 
     if "stability_characterization" in CONFIG["run_investigations"]:
-        char_dir = PROJECT_ROOT / "investigations" / "stability_characterization"
+        _combined_suffix = "_combined" if CONFIG.get("cross_dtype_normalization") else ""
+        char_dir = PROJECT_ROOT / "investigations" / f"stability_characterization{_combined_suffix}"
         run_microbe_characterization(
             phenotypes=phenotypes,
             output_dir=char_dir,
@@ -349,10 +367,14 @@ def main():
             plot_only=CONFIG.get("investigations_plot_only", False),
             taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
             taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
+            cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
+            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
+            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         )
 
     if "distribution_approach" in CONFIG["run_investigations"]:
-        dist_dir = PROJECT_ROOT / "investigations" / "distribution_approach"
+        _combined_suffix = "_combined" if CONFIG.get("cross_dtype_normalization") else ""
+        dist_dir = PROJECT_ROOT / "investigations" / f"distribution_approach{_combined_suffix}"
         run_distribution_investigation(
             phenotypes=phenotypes,
             output_dir=dist_dir,
@@ -362,6 +384,9 @@ def main():
             min_size=CONFIG.get("min_samples_per_dataset", 550),
             taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
             taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
+            cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
+            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
+            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         )
 
     if "5" in CONFIG["run_figures"]:

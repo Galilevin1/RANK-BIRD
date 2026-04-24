@@ -171,7 +171,28 @@ def run_protocol_benchmark_global_preprocessing(
     decompose_rank=30,
     taxonomy_level_metagenomics=None,
     taxonomy_level_amplicon=None,
+    cross_dtype_normalization: bool = False,
+    stability_percentile_global_combined: float = 0.6,
+    taxonomy_level_combined=None,
 ):
+    if cross_dtype_normalization:
+        # Pool ALL datasets (both dtypes) into one normalization pass
+        print(f"\n[Global preprocessing — combined 16S+shotgun]  approach={normalization_approach}")
+        tax_level = taxonomy_level_combined if str(taxonomy_level_combined) != "None" else None
+        return _run_global_for_dtype(
+            phenotypes,
+            normalization_approach=normalization_approach,
+            apply_decompose=apply_decompose,
+            min_samples_per_dataset=min_samples_per_dataset,
+            stability_percentile_local=stability_percentile_local,
+            stability_percentile_global=stability_percentile_global_combined,
+            z_thresh=z_thresh,
+            decompose_method=decompose_method,
+            decompose_rank=decompose_rank,
+            taxonomy_level=tax_level,
+        )
+
+    # Default: normalize each dtype separately
     phenotypes_by_dtype = defaultdict(list)
     for phenotype, dtype in phenotypes:
         phenotypes_by_dtype[dtype].append((phenotype, dtype))

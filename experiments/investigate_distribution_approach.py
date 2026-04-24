@@ -587,6 +587,16 @@ def _plot_comparison(
 # Main entry point
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_APPROACH_TO_NORM = {
+    "original":          None,
+    "original_filtered": "filter_only",
+    "rankbird":          "rankbird_wasserstein",
+    "ranking":           "rankbird_ranking",
+    "ranking_sig":       "rankbird_sigmoid",
+    "ranking_relu":      "rankbird_relu",
+}
+
+
 def run_distribution_investigation(
     phenotypes: list,
     output_dir: Path,
@@ -599,6 +609,9 @@ def run_distribution_investigation(
     relu_threshold: float = RELU_THRESHOLD,
     taxonomy_level_metagenomics=None,
     taxonomy_level_amplicon=None,
+    cross_dtype_normalization: bool = False,
+    stability_percentile_global_combined: float = 0.6,
+    taxonomy_level_combined=None,
 ):
     """
     Compare distribution-adjustment approaches on all phenotypes/dtypes.
@@ -608,19 +621,26 @@ def run_distribution_investigation(
     phenotypes  : list of (phenotype, dtype) tuples
     output_dir  : directory for CSVs and figure
     plot_only   : if True, skip computation and reload existing CSVs
+    cross_dtype_normalization : if True, pool 16S + shotgun together for normalization.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dtypes = ["Metagenomics", "Amplicon"]
-    stability_percentile_by_dtype = {
-        "Metagenomics": stability_percentile_metagenomics,
-        "Amplicon":     stability_percentile_amplicon,
-    }
-    taxonomy_level_by_dtype = {
-        "Metagenomics": taxonomy_level_metagenomics,
-        "Amplicon":     taxonomy_level_amplicon,
-    }
+    if cross_dtype_normalization:
+        dtypes = ["Combined"]
+        stability_percentile_by_dtype = {"Combined": stability_percentile_global_combined}
+        tax_level = taxonomy_level_combined if str(taxonomy_level_combined) != "None" else None
+        taxonomy_level_by_dtype = {"Combined": tax_level}
+    else:
+        dtypes = ["Metagenomics", "Amplicon"]
+        stability_percentile_by_dtype = {
+            "Metagenomics": stability_percentile_metagenomics,
+            "Amplicon":     stability_percentile_amplicon,
+        }
+        taxonomy_level_by_dtype = {
+            "Metagenomics": taxonomy_level_metagenomics,
+            "Amplicon":     taxonomy_level_amplicon,
+        }
 
     # Identify single-class datasets once — excluded from all results
     single_class_names = _get_single_class_datasets(phenotypes)
@@ -628,7 +648,7 @@ def run_distribution_investigation(
     all_results: dict = {}    # {(dtype, approach): full results_df}
 
     for dtype in dtypes:
-        pheno_subset = [(p, t) for p, t in phenotypes if t == dtype]
+        pheno_subset = phenotypes if dtype == "Combined" else [(p, t) for p, t in phenotypes if t == dtype]
         if not pheno_subset:
             continue
 
@@ -646,17 +666,28 @@ def run_distribution_investigation(
                 print(f"  [SKIP] Missing {csv_path.name} — run without plot_only first.")
                 continue
             else:
-                results_df = _run_approach_for_dtype(
-                    phenotypes=pheno_subset,
-                    dtype=dtype,
-                    approach=approach,
-                    stability_percentile=stability_percentile_by_dtype[dtype],
-                    min_size=min_size,
-                    sigmoid_k=sigmoid_k,
-                    sigmoid_center=sigmoid_center,
-                    relu_threshold=relu_threshold,
-                    taxonomy_level=taxonomy_level_by_dtype[dtype],
-                )
+                if dtype == "Combined":
+                    # Route directly to _run_global_for_dtype which handles the full
+                    # pooled normalization + per-phenotype learning in one shot.
+                    results_df = _run_global_for_dtype(
+                        pheno_subset,
+                        normalization_approach=_APPROACH_TO_NORM[approach],
+                        min_samples_per_dataset=min_size,
+                        stability_percentile_global=stability_percentile_by_dtype[dtype],
+                        taxonomy_level=taxonomy_level_by_dtype[dtype],
+                    )
+                else:
+                    results_df = _run_approach_for_dtype(
+                        phenotypes=pheno_subset,
+                        dtype=dtype,
+                        approach=approach,
+                        stability_percentile=stability_percentile_by_dtype[dtype],
+                        min_size=min_size,
+                        sigmoid_k=sigmoid_k,
+                        sigmoid_center=sigmoid_center,
+                        relu_threshold=relu_threshold,
+                        taxonomy_level=taxonomy_level_by_dtype[dtype],
+                    )
                 # Filter single-class datasets before saving
                 results_df = _drop_single_class(results_df, single_class_names)
                 results_df.to_csv(csv_path, index=False)
