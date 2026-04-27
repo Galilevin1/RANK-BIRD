@@ -123,17 +123,25 @@ def run_stability_sweep(  # noqa: E302
     level=None,
     filter_only: bool = False,
     normalization_approach: str = "rankbird_wasserstein",
-) -> pd.DataFrame:
+) -> tuple:
     """
     Sweep stability percentiles, running all protocols at each step.
     filter_only=True applies only stability filtering (no distribution normalization).
-    Returns: [percentile, protocol, mean_auc, median_auc, std_auc, n_phenotypes]
+
+    Returns
+    -------
+    agg_df : DataFrame [percentile, protocol, mean_auc, median_auc, std_auc, n_phenotypes]
+    raw_df : DataFrame [percentile, phenotype, dataset, protocol, auc]
+             Full per-dataset results at every percentile — use for re-plotting or
+             alternative aggregations without recomputing.
     """
     pheno_subset = phenotypes if dtype == "Combined" else [(p, t) for p, t in phenotypes if t == dtype]
     if not pheno_subset:
         raise ValueError(f"No phenotypes for dtype='{dtype}'")
 
-    rows = []
+    agg_rows = []
+    raw_rows = []
+
     for pct in PERCENTILES:
         print(f"  [{dtype}] pct={pct:.2f}  level={level}  filter_only={filter_only} ...")
 
@@ -154,11 +162,17 @@ def run_stability_sweep(  # noqa: E302
 
         results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
 
+        # Raw: attach percentile and accumulate
+        pct_col = results_df.copy()
+        pct_col.insert(0, "percentile", pct)
+        raw_rows.append(pct_col)
+
+        # Aggregated summary
         for protocol in PROTOCOLS:
             sub = results_df[results_df["protocol"] == protocol]["auc"].dropna()
             if sub.empty:
                 continue
-            rows.append({
+            agg_rows.append({
                 "percentile":   pct,
                 "protocol":     protocol,
                 "mean_auc":     sub.mean(),
@@ -169,7 +183,9 @@ def run_stability_sweep(  # noqa: E302
                 ]["phenotype"].nunique(),
             })
 
-    return pd.DataFrame(rows)
+    agg_df = pd.DataFrame(agg_rows)
+    raw_df = pd.concat(raw_rows, ignore_index=True) if raw_rows else pd.DataFrame()
+    return agg_df, raw_df
 
 
 def _run_global_for_dtype_filtered(
@@ -383,6 +399,61 @@ def _plot_sweep_panel(
               fontsize=8, framealpha=0.85, loc="lower right")
 
 
+# ── Display helpers ──────────────────────────────────────────────────────────
+
+def _aggregate_raw_to_sweep(raw_df: pd.DataFrame, dtype_filter: str = None) -> pd.DataFrame:
+    """
+    Re-aggregate per-dataset raw sweep results into mean/median/std format for plotting.
+    dtype_filter: if "Amplicon" or "Metagenomics", keeps only phenotypes whose name
+    contains that word (e.g. "AD Amplicon", "ASD Metagenomics").
+    """
+    df = raw_df.copy()
+    df["auc"] = pd.to_numeric(df["auc"], errors="coerce")
+    if dtype_filter:
+        df = df[df["phenotype"].str.contains(dtype_filter, na=False)]
+    if df.empty:
+        return pd.DataFrame()
+    rows = []
+    for pct in sorted(df["percentile"].unique()):
+        pct_df = df[df["percentile"] == pct]
+        for protocol in PROTOCOLS:
+            sub = pct_df[pct_df["protocol"] == protocol]["auc"].dropna()
+            if sub.empty:
+                continue
+            rows.append({
+                "percentile":   pct,
+                "protocol":     protocol,
+                "mean_auc":     float(sub.mean()),
+                "median_auc":   float(sub.median()),
+                "std_auc":      float(sub.std(ddof=1)) if len(sub) > 1 else 0.0,
+                "n_phenotypes": int(pct_df[pct_df["protocol"] == protocol]["phenotype"].nunique()),
+            })
+    return pd.DataFrame(rows)
+
+
+def _sum_count_dfs(count_dfs: list) -> pd.DataFrame:
+    """Combine per-dtype count DataFrames by summing n_kept and n_total per percentile."""
+    merged = pd.concat(count_dfs, ignore_index=True)
+    result = (
+        merged.groupby("percentile", as_index=False)
+        .agg(n_kept=("n_kept", "sum"), n_total=("n_total", "sum"))
+    )
+    result["pct_kept"] = 100.0 * result["n_kept"] / result["n_total"].replace(0, np.nan)
+    return result.reset_index(drop=True)
+
+
+def _merge_orig_aucs(orig_dicts: list) -> dict:
+    """Average per-protocol original AUC values across multiple dtype dicts."""
+    from collections import defaultdict
+    sums, counts = defaultdict(float), defaultdict(int)
+    for d in orig_dicts:
+        for protocol, val in d.items():
+            if pd.notna(val):
+                sums[protocol] += float(val)
+                counts[protocol] += 1
+    return {p: sums[p] / counts[p] for p in sums if counts[p] > 0}
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def run_stability_investigation(
@@ -425,11 +496,15 @@ def run_stability_investigation(
     if normalization_modes is None:
         normalization_modes = ["full"]
 
+    # Computation dtypes (determines which sweep CSVs are produced)
     if cross_dtype_normalization:
         dtypes = ["Combined"]
     else:
         all_dtypes = ["Metagenomics", "Amplicon"]
         dtypes = [d for d in all_dtypes if dtype_filter is None or d in dtype_filter]
+
+    # Figure always shows these 3 columns regardless of computation mode
+    DISPLAY_DTYPES = ["Metagenomics", "Amplicon", "All datasets"]
 
     _mode_meta = {
         "mean":     ("Mean AUC",          "_mean"),
@@ -439,24 +514,6 @@ def run_stability_investigation(
     plot_modes     = plot_mode if isinstance(plot_mode, list) else [plot_mode]
     levels_to_plot = [(l, lbl) for l, lbl in LEVELS
                       if plot_levels is None or l in plot_levels]
-
-    def _load_sweep(path, label):
-        if not path.exists():
-            print(f"  [SKIP] Missing {label}: {path.name}")
-            return None
-        return pd.read_csv(path)
-
-    def _get_or_compute_sweep(path, label, compute_fn):
-        """Load CSV if exists, else compute (if allowed) and save."""
-        if path.exists():
-            print(f"  [LOAD] {path.name}")
-            return pd.read_csv(path)
-        should = compute_levels is None or label in compute_levels
-        if not should:
-            return None
-        df = compute_fn()
-        df.to_csv(path, index=False)
-        return df
 
     for norm_mode in normalization_modes:
         combined_mode = (norm_mode == "full+filter_only")
@@ -468,108 +525,170 @@ def run_stability_investigation(
             "full+filter_only": "Full normalization + Filter-only",
         }.get(norm_mode, norm_mode)
 
-        # ── Step 1: compute / load sweep data ─────────────────────────────────
-        # panel_data: (level, dtype) → (main_sweep_df, count_df, orig_auc, fo_sweep_df_or_None)
-        panel_data = {}
+        # raw_store[(level, dtype)]    → raw per-dataset sweep DataFrame
+        # fo_raw_store[(level, dtype)] → raw filter-only sweep DataFrame
+        # count_store[(level, dd)]     → count sweep DataFrame (always per actual dtype)
+        # orig_store[(level, dd)]      → orig_auc dict (always per actual dtype)
+        raw_store    = {}
+        fo_raw_store = {}
+        count_store  = {}
+        orig_store   = {}
 
         for level, level_label in LEVELS:
+            should_compute = compute_levels is None or level in compute_levels
+
+            # ── Always compute per-actual-dtype count and baseline ─────────────
+            # These are lightweight (count = no training; orig = one pass without filter)
+            # and needed to populate the Amplicon / Metagenomics display panels.
+            for dd in ["Amplicon", "Metagenomics"]:
+                pheno_dd = [(p, t) for p, t in phenotypes if t == dd]
+                if not pheno_dd:
+                    continue
+                base_dd = f"{dd.lower()}_{level or 'all'}"
+
+                count_path_dd = output_dir / f"microbe_counts_{base_dd}.csv"
+                if count_path_dd.exists():
+                    count_store[(level, dd)] = pd.read_csv(count_path_dd)
+                elif should_compute and not plot_only:
+                    cdf = count_kept_microbes_sweep(phenotypes, dd, level=level)
+                    cdf.to_csv(count_path_dd, index=False)
+                    count_store[(level, dd)] = cdf
+
+                orig_path_dd = output_dir / f"original_auc_{base_dd}.csv"
+                if orig_path_dd.exists():
+                    orig_store[(level, dd)] = pd.read_csv(orig_path_dd).iloc[0].to_dict()
+                elif should_compute and not plot_only:
+                    oa = get_original_mean_auc(phenotypes, dd, level=level)
+                    pd.DataFrame([oa]).to_csv(orig_path_dd, index=False)
+                    orig_store[(level, dd)] = oa
+
+            # ── Compute / load sweep for each computation dtype ────────────────
             for dtype in dtypes:
                 base = f"{dtype.lower()}_{level or 'all'}"
                 print(f"\n=== {mode_label}  |  {level_label}  |  {dtype} ===")
 
-                count_path     = output_dir / f"microbe_counts_{base}.csv"
                 sweep_full_path = output_dir / f"auc_sweep_{base}_full.csv"
-                sweep_fo_path  = output_dir / f"auc_sweep_{base}_filter_only.csv"
-                orig_path      = output_dir / f"original_auc_{base}.csv"
-
-                # decide which sweep path is the "main" one for this mode
-                sweep_path = sweep_fo_path if filter_only else sweep_full_path
+                sweep_fo_path   = output_dir / f"auc_sweep_{base}_filter_only.csv"
+                sweep_path      = sweep_fo_path if filter_only else sweep_full_path
+                raw_path        = sweep_path.with_name(sweep_path.stem + "_raw.csv")
 
                 if plot_only:
-                    count_df  = _load_sweep(count_path,  "count")
-                    sweep_df  = _load_sweep(sweep_path,  "sweep")
-                    fo_df     = _load_sweep(sweep_fo_path, "filter-only sweep") if combined_mode else None
-                    orig_auc  = pd.read_csv(orig_path).iloc[0].to_dict() if orig_path.exists() else {}
-                    if count_df is None or sweep_df is None:
-                        panel_data[(level, dtype)] = None
-                        continue
-                else:
-                    should_compute = compute_levels is None or level in compute_levels
-
-                    # microbe counts (shared across modes)
-                    if count_path.exists():
-                        count_df = pd.read_csv(count_path)
-                    elif should_compute:
-                        count_df = count_kept_microbes_sweep(phenotypes, dtype, level=level)
-                        count_df.to_csv(count_path, index=False)
+                    if raw_path.exists():
+                        raw_store[(level, dtype)] = pd.read_csv(raw_path)
                     else:
-                        panel_data[(level, dtype)] = None
-                        continue
-
-                    # main sweep
-                    if sweep_path.exists():
+                        print(f"  [SKIP] Raw CSV missing ({raw_path.name}) — recompute without plot_only.")
+                    if combined_mode:
+                        fo_raw_path = sweep_fo_path.with_name(sweep_fo_path.stem + "_raw.csv")
+                        if fo_raw_path.exists():
+                            fo_raw_store[(level, dtype)] = pd.read_csv(fo_raw_path)
+                else:
+                    if sweep_path.exists() and raw_path.exists():
                         print(f"  [LOAD] {sweep_path.name}")
-                        sweep_df = pd.read_csv(sweep_path)
+                        raw_store[(level, dtype)] = pd.read_csv(raw_path)
                     elif should_compute:
                         print(f"  Computing {'filter-only' if filter_only else 'full normalization'} sweep ...")
-                        sweep_df = run_stability_sweep(
+                        sweep_df, raw_df = run_stability_sweep(
                             phenotypes, dtype, level=level,
                             filter_only=filter_only,
                             normalization_approach=normalization_approach,
                         )
                         sweep_df.to_csv(sweep_path, index=False)
+                        raw_df.to_csv(raw_path, index=False)
+                        raw_store[(level, dtype)] = raw_df
                     else:
-                        panel_data[(level, dtype)] = None
                         continue
 
-                    # filter-only sweep (only needed for combined mode)
                     if combined_mode:
-                        if sweep_fo_path.exists():
+                        fo_raw_path = sweep_fo_path.with_name(sweep_fo_path.stem + "_raw.csv")
+                        if sweep_fo_path.exists() and fo_raw_path.exists():
                             print(f"  [LOAD] {sweep_fo_path.name}")
-                            fo_df = pd.read_csv(sweep_fo_path)
+                            fo_raw_store[(level, dtype)] = pd.read_csv(fo_raw_path)
                         elif should_compute:
                             print(f"  Computing filter-only sweep ...")
-                            fo_df = run_stability_sweep(
+                            fo_df, fo_raw_df = run_stability_sweep(
                                 phenotypes, dtype, level=level, filter_only=True,
                             )
                             fo_df.to_csv(sweep_fo_path, index=False)
-                        else:
-                            fo_df = None
+                            fo_raw_df.to_csv(fo_raw_path, index=False)
+                            fo_raw_store[(level, dtype)] = fo_raw_df
+
+        # ── Build display panel_data (always 3 columns) ───────────────────────
+        panel_data = {}  # (level, display_dtype) → (sweep_df, count_df, orig_auc, fo_df)
+
+        for level, level_label in LEVELS:
+            # Pool all raw data across computation dtypes for this level
+            all_raws    = [df for (l, d), df in raw_store.items()
+                           if l == level and df is not None and not df.empty]
+            all_fo_raws = [df for (l, d), df in fo_raw_store.items()
+                           if l == level and df is not None and not df.empty]
+            all_raw    = pd.concat(all_raws,    ignore_index=True) if all_raws    else pd.DataFrame()
+            all_fo_raw = pd.concat(all_fo_raws, ignore_index=True) if all_fo_raws else pd.DataFrame()
+
+            for display_dtype in DISPLAY_DTYPES:
+                if display_dtype == "All datasets":
+                    if all_raw.empty:
+                        panel_data[(level, display_dtype)] = None
+                        continue
+                    sweep_df  = _aggregate_raw_to_sweep(all_raw)
+                    count_dfs = [df for (l, d), df in count_store.items() if l == level]
+                    count_df  = _sum_count_dfs(count_dfs) if count_dfs else None
+                    orig_dcts = [d for (l, dd), d in orig_store.items() if l == level]
+                    orig_auc  = _merge_orig_aucs(orig_dcts) if orig_dcts else {}
+                    fo_df     = _aggregate_raw_to_sweep(all_fo_raw) if (not all_fo_raw.empty and combined_mode) else None
+
+                else:
+                    # For cross_dtype=True the combined raw contains all phenotypes;
+                    # for cross_dtype=False each dtype has its own raw.
+                    if cross_dtype_normalization:
+                        raw_src    = all_raw
+                        fo_raw_src = all_fo_raw
+                        filt       = display_dtype   # filter combined raw by dtype name
                     else:
-                        fo_df = None
+                        raw_src    = raw_store.get((level, display_dtype), pd.DataFrame())
+                        fo_raw_src = fo_raw_store.get((level, display_dtype), pd.DataFrame())
+                        filt       = None            # already dtype-specific, no filter needed
 
-                    # original baseline (shared)
-                    if orig_path.exists():
-                        orig_auc = pd.read_csv(orig_path).iloc[0].to_dict()
-                    elif should_compute:
-                        print(f"  Computing original baseline ...")
-                        orig_auc = get_original_mean_auc(phenotypes, dtype, level=level)
-                        pd.DataFrame([orig_auc]).to_csv(orig_path, index=False)
-                    else:
-                        orig_auc = {}
+                    if raw_src is None or raw_src.empty:
+                        panel_data[(level, display_dtype)] = None
+                        continue
 
-                panel_data[(level, dtype)] = (sweep_df, count_df, orig_auc, fo_df)
+                    sweep_df = _aggregate_raw_to_sweep(raw_src, dtype_filter=filt)
+                    if sweep_df.empty:
+                        panel_data[(level, display_dtype)] = None
+                        continue
 
-        # ── Step 2: draw figures ───────────────────────────────────────────────
+                    count_df = count_store.get((level, display_dtype))
+                    orig_auc = orig_store.get((level, display_dtype), {})
+                    fo_df    = None
+                    if combined_mode and fo_raw_src is not None and not fo_raw_src.empty:
+                        fo_df = _aggregate_raw_to_sweep(fo_raw_src, dtype_filter=filt)
+
+                    if count_df is None:
+                        panel_data[(level, display_dtype)] = None
+                        continue
+
+                panel_data[(level, display_dtype)] = (sweep_df, count_df, orig_auc, fo_df)
+
+        # ── Draw figures (always 3 columns) ───────────────────────────────────
         for pm in plot_modes:
             stat_title, stat_suffix = _mode_meta.get(pm, (pm, f"_{pm}"))
 
             fig, axes = plt.subplots(
-                len(levels_to_plot), len(dtypes),
-                figsize=(7 * len(dtypes), 5 * len(levels_to_plot)),
+                len(levels_to_plot), len(DISPLAY_DTYPES),
+                figsize=(7 * len(DISPLAY_DTYPES), 5 * len(levels_to_plot)),
                 squeeze=False,
             )
 
             for row_idx, (level, level_label) in enumerate(levels_to_plot):
-                for col_idx, dtype in enumerate(dtypes):
+                for col_idx, display_dtype in enumerate(DISPLAY_DTYPES):
                     ax   = axes[row_idx][col_idx]
-                    data = panel_data.get((level, dtype))
+                    data = panel_data.get((level, display_dtype))
                     if data is None:
                         ax.set_visible(False)
                         continue
                     sweep_df, count_df, orig_auc, fo_df = data
                     _plot_sweep_panel(ax, sweep_df, count_df,
-                                      title=f"{dtype} — {level_label}",
+                                      title=f"{display_dtype} — {level_label}",
                                       original_auc=orig_auc,
                                       filter_only_df=fo_df,
                                       plot_mode=pm)

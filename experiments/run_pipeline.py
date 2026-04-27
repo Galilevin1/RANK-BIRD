@@ -72,7 +72,7 @@ CONFIG = {
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
     "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-    "run_investigations": ["stability_characterization"],  # "stability_threshold", "stability_characterization", "distribution_approach"
+    "run_investigations": ["stability_threshold"],  # "stability_threshold", "stability_characterization", "distribution_approach"
     "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
     "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
@@ -103,7 +103,7 @@ CONFIG = {
     "stability_percentile_global_metagenomics": 0.1,
     "stability_percentile_global_amplicon":     0.3,
     "taxonomy_level_metagenomics": "gs",    # None = all, "g" = genus only, "gs" = genus+species
-    "taxonomy_level_amplicon":     "g",
+    "taxonomy_level_amplicon":     "gs",
     "decompose_method": "PCA",
     "decompose_rank": 300,
     # -----------------------
