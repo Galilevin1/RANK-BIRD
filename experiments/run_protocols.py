@@ -43,7 +43,7 @@ def run_protocol_benchmark(phenotypes: list,
     records = []
 
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
-    DATA_ROOT = PROJECT_ROOT / "Data"
+    DATA_ROOT = PROJECT_ROOT / data_root
 
     for phenotype, dtype in phenotypes:
         phenotype_str = f"{phenotype} {dtype}"
@@ -62,7 +62,7 @@ def run_protocol_benchmark(phenotypes: list,
             os.makedirs(save_folder, exist_ok=True)
 
             for df, name in zip(microbiome_dfs, dataset_names):
-                filename = DATA_ROOT / f"{save_folder}{name}_normalized.csv"
+                filename = PROJECT_ROOT / f"{save_folder}{name}_normalized.csv"
                 df.to_csv(filename)
                 print(f"Saved: {filename}")
 

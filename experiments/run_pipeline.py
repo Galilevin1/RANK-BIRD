@@ -12,7 +12,7 @@ from figures.protocol_comparison_heatmap import plot_protocol_heatmap
 from figures.protocol_comparison_boxplots import plot_protocol_boxplots
 from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
 from figures.phenotype_grid import plot_figure_1a
-from figures.figure1 import plot_figure1
+from figures.figure1 import assemble_figure1
 from figures.figure2 import plot_figure2b, run_figure2c
 from figures.figure3 import run_figure3
 from figures.figure4 import plot_figure4
@@ -71,11 +71,16 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": [], # "1" (combined), "1a","1c","1d","1e" (individual), "2b","2c","3","4","4e","5"
-    "run_investigations": ["stability_threshold"],  # "stability_threshold", "stability_characterization", "distribution_approach"
+    "run_figures": ["1"], # "1" (combined), "1a","1c","1d","1_supp" (individual)
+     #                   "2b","2c","3","4","4e","5"
+    "run_investigations": [],  # "stability_threshold", "stability_characterization", "distribution_approach"
     "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
-    "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
+    "phenotypes": phenotypes_papers,  # phenotypes_pipeline, phenotypes_papers
+    "data_folder": "Data_papers",      # "Data" for pipeline phenotypes, "Data_papers" for papers phenotypes
+     "preprocessing_scope": "global",   # "local" or "global"
+    "normalization_approach": None,  # "rankbird_wasserstein", "rankbird_ranking", "rankbird_sigmoid", "rankbird_relu", "filter_only", None
+    "decomposition": False,
 
     # -----------------------
     # Stability threshold Investigations control
@@ -87,16 +92,13 @@ CONFIG = {
     "stability_plot_levels":         [None, "g", "gs"], # None = plot all levels; e.g. ["g", "fg", "ofg"] for a subset
 
     # -----------------------
-    # Papers CSV (for figure 1c)
+    # Papers CSV (for figure 1_supp)
     # -----------------------
     "papers_csv": "Data/Phenotype_Datasets_for_table.csv",
 
     # -----------------------
     # Experiment config
     # -----------------------
-    "preprocessing_scope": "global",   # "local" or "global"
-    "normalization_approach": "rankbird_wasserstein",  # "rankbird_wasserstein", "rankbird_ranking", "rankbird_sigmoid", "rankbird_relu", "filter_only", None
-    "decomposition": False,
     "min_samples_per_dataset": 550,
     "z_thresh": 3.0,
     "stability_percentile_local": 0.3,
@@ -111,7 +113,7 @@ CONFIG = {
     # When True: pool Amplicon + Metagenomics datasets together for stability
     # filtering and distribution normalization (learning stays per phenotype).
     # -----------------------
-    "cross_dtype_normalization":           True,
+    "cross_dtype_normalization":           False,
     "stability_percentile_global_combined": 0.3,
     "taxonomy_level_combined":              "gs",
 }
@@ -137,11 +139,14 @@ def build_results_dir(project_root: Path, config: dict) -> Path:
     return project_root / "experiments" / f"results_{scope}_{mode}"
 
 
-def build_figures_dir(base: Path, config: dict, figure: str) -> Path:
-    """Return figures_out/<figure>/<scope>_<mode>/ and create it."""
+def build_figures_dir(base: Path, config: dict, figure: str, subfigure: str = None) -> Path:
+    """Return figures_out/<figure>/[<subfigure>/]<scope>_<mode>/ and create it."""
     scope = config["preprocessing_scope"]
     mode  = _get_mode(config)
-    path  = base / figure / f"{scope}_{mode}"
+    if subfigure:
+        path = base / figure / subfigure / f"{scope}_{mode}"
+    else:
+        path = base / figure / f"{scope}_{mode}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -155,7 +160,6 @@ def main():
     RESULTS_DIR = build_results_dir(PROJECT_ROOT, CONFIG)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    FIG1_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1")
     FIG2_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2")
     FIG3_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_3")
     FIG4_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_4")
@@ -210,6 +214,7 @@ def main():
                 cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
                 stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
                 taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
+                data_root=CONFIG.get("data_folder", "Data"),
             )
             results_df.to_csv(results_path, index=False)
 
@@ -238,23 +243,24 @@ def main():
     # STEP 4: Figures
     # ================================
     if "1" in CONFIG["run_figures"]:
-        results_df  = pd.read_csv(results_path)
-        summary_df  = pd.read_csv(summary_path)
-        fig, stats = plot_figure1(
-            results_df=results_df,
-            summary_df=summary_df,
-            papers_csv=str(PROJECT_ROOT / CONFIG["papers_csv"]),
-            phenotypes=phenotypes,
+        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1", "1")
+        _scope_mode = f"{CONFIG['preprocessing_scope']}_{_get_mode(CONFIG)}"
+        fig = assemble_figure1(
+            path_1a=FIGURES_BASE / "figure_1" / "1a" / _scope_mode / "paper_phenotype_grid.png",
+            path_1b=FIGURES_BASE / "figure_1" / "1b" / "schematic.png",
+            path_1c=FIGURES_BASE / "figure_1" / "1c" / _scope_mode / "protocol_boxplots.png",
+            path_1d=FIGURES_BASE / "figure_1" / "1d" / _scope_mode / "protocol_heatmap.png",
         )
-        fig.savefig(FIG1_DIR / "figure1_combined.png", dpi=300, bbox_inches='tight')
+        fig.savefig(_dir / "figure1_combined.pdf", bbox_inches='tight', dpi=300)
         plt.close(fig)
-        stats.to_csv(RESULTS_DIR / "papers_vs_lgbm_stats.csv", index=False)
 
     if "1a" in CONFIG["run_figures"]:
+        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1", "1a")
         fig, ax = plot_figure_1a()
-        fig.savefig(FIG1_DIR / "paper_phenotype_grid.png", dpi=300, bbox_inches='tight')
+        fig.savefig(_dir / "paper_phenotype_grid.png", dpi=300, bbox_inches='tight')
 
-    if "1c" in CONFIG["run_figures"]:
+    if "1_supp" in CONFIG["run_figures"]:
+        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1", "1_supp")
         results_df = pd.read_csv(results_path)
         df_papers = build_papers_auc_df(PROJECT_ROOT / CONFIG["papers_csv"])
         fig, ax, stats = plot_auc_horizontal_bars_mann_whitney(
@@ -265,18 +271,31 @@ def main():
             bar_height=1,
             fdr_alpha=0.05,
         )
-        fig.savefig(FIG1_DIR / "papers_vs_lgbm_lodo.png", dpi=300, bbox_inches='tight')
-        stats.to_csv(RESULTS_DIR / "papers_vs_lgbm_stats.csv", index=False)
+        fig.savefig(_dir / "papers_vs_lgbm_lodo.png", dpi=300, bbox_inches='tight')
+        stats.to_csv(_dir / "papers_vs_lgbm_stats.csv", index=False)
+
+    if "1c" in CONFIG["run_figures"]:
+        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1", "1c")
+        results_df = pd.read_csv(results_path)
+        fig, _, stats_df = plot_protocol_boxplots(results_df)
+        fig.savefig(_dir / "protocol_boxplots.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        stats_df.to_csv(_dir / "protocol_pairwise_mannwhitney.csv", index=False)
 
     if "1d" in CONFIG["run_figures"]:
+        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1", "1d")
         summary_df = pd.read_csv(summary_path)
-        fig, ax = plot_protocol_heatmap(summary_df)
-        fig.savefig(FIG1_DIR / "protocol_heatmap.png", dpi=300)
-
-    if "1e" in CONFIG["run_figures"]:
         results_df = pd.read_csv(results_path)
-        fig, ax = plot_protocol_boxplots(results_df)
-        fig.savefig(FIG1_DIR / "protocol_boxplots.png", dpi=300)
+        df_papers  = build_papers_auc_df(PROJECT_ROOT / CONFIG["papers_csv"])
+        fig, _, heatmap_df, _, pheno_stats_df = plot_protocol_heatmap(
+            summary_df,
+            results_df=results_df,
+            papers_df=df_papers,
+            selected_combinations=phenotypes,
+        )
+        fig.savefig(_dir / "protocol_heatmap.png", dpi=300)
+        heatmap_df.to_csv(_dir / "heatmap_auc.csv", index=False)
+        pheno_stats_df.to_csv(_dir / "heatmap_lgbm_vs_papers.csv", index=False)
 
     if "2b" in CONFIG["run_figures"]:
         fig = plot_figure2b(csv_path=str(PROJECT_ROOT / "Data" / "microbiome_analysis_results.csv"))

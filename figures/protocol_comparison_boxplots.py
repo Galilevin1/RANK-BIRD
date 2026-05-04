@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from itertools import combinations
 
 def create_comprehensive_boxplot_comparison(
         df_papers,
@@ -256,48 +257,80 @@ def create_comprehensive_boxplot_comparison(
 
 
 
-def plot_protocol_boxplots(
-    results_df_left: pd.DataFrame,
-    results_df_right: pd.DataFrame = None,
-    label_left: str = "Original",
-    label_right: str = "Normalized",
-):
+def plot_protocol_boxplots(results_df: pd.DataFrame):
     """
-    Plot protocol boxplots. If results_df_right is provided, draws two
-    side-by-side subplots sharing the same y-axis scale.
+    Boxplot of LightGBM LODO, Internal Validation, Within Learning.
+    One dot per dataset. Returns fig, ax, stats_df (pairwise Mann-Whitney between protocols).
     """
-    has_two = results_df_right is not None
+    from scipy.stats import mannwhitneyu
 
-    fig, axes = plt.subplots(
-        1, 2 if has_two else 1,
-        figsize=(14 if has_two else 7, 6),
-        sharey=True,
+    METHOD_ORDER = ["LODO", "Internal Validation", "Within Learning"]
+    LABELS       = ["LGBM\nLODO", "LGBM\nInternal\nValidation", "LGBM\nWithin\nLearning"]
+    COLORS       = {"LODO": "#D0D0D0", "Internal Validation": "#B8B8B8", "Within Learning": "#A0A0A0"}
+
+    plot_df = results_df[results_df["protocol"].isin(METHOD_ORDER)].copy()
+    plot_df["auc"] = pd.to_numeric(plot_df["auc"], errors="coerce")
+    available = [m for m in METHOD_ORDER if m in plot_df["protocol"].unique()]
+
+    sns.set_style("whitegrid", {"grid.linestyle": "--", "grid.alpha": 0.3})
+    fig, ax = plt.subplots(figsize=(9, 7))
+
+    bp = ax.boxplot(
+        [plot_df[plot_df["protocol"] == m]["auc"].dropna().values for m in available],
+        labels=available,
+        widths=0.55,
+        patch_artist=True,
+        showmeans=True,
+        meanline=False,
+        showfliers=False,
+        medianprops=dict(color="#DC143C", linewidth=3),
+        meanprops=dict(marker="D", markerfacecolor="#1E90FF",
+                       markeredgecolor="black", markersize=8),
+        boxprops=dict(linewidth=2, edgecolor="#2F2F2F"),
+        whiskerprops=dict(linewidth=2, color="#2F2F2F"),
+        capprops=dict(linewidth=2, color="#2F2F2F"),
     )
-    if not has_two:
-        axes = [axes]
+    for patch, method in zip(bp["boxes"], available):
+        patch.set_facecolor(COLORS.get(method, "#CCCCCC"))
+        patch.set_alpha(0.85)
 
-    def _draw(ax, df, title):
-        sns.boxplot(data=df, x="protocol", y="auc", ax=ax,
-                    order=sorted(df["protocol"].unique()))
-        sns.stripplot(data=df, x="protocol", y="auc", color="black",
-                      alpha=0.4, ax=ax,
-                      order=sorted(df["protocol"].unique()))
-        ax.set_title(title, fontsize=13, fontweight="bold")
-        ax.set_xlabel("Method", fontsize=11)
-        ax.set_ylabel("AUC" if ax is axes[0] else "", fontsize=11)
-        ax.tick_params(axis="x", rotation=15)
+    for i, method in enumerate(available, 1):
+        vals = plot_df[plot_df["protocol"] == method]["auc"].dropna().values
+        np.random.seed(42)
+        ax.scatter(np.random.normal(i, 0.05, len(vals)), vals,
+                   alpha=0.6, s=70, color="#404040",
+                   edgecolors="black", linewidths=0.8, zorder=3)
 
-    _draw(axes[0], results_df_left, label_left)
-    if has_two:
-        _draw(axes[1], results_df_right, label_right)
-
-    # Shared y-axis scale: use combined min/max
-    all_auc = results_df_left["auc"].dropna()
-    if has_two:
-        all_auc = pd.concat([all_auc, results_df_right["auc"].dropna()])
-    y_min = max(0.0, all_auc.min() - 0.05)
-    y_max = min(1.0, all_auc.max() + 0.05)
-    axes[0].set_ylim(y_min, y_max)
+    ax.set_xticklabels([LABELS[METHOD_ORDER.index(m)] for m in available], fontsize=20)
+    ax.set_ylabel("AUC", fontsize=24, fontweight="bold")
+    ax.set_xlabel("")
+    ax.tick_params(axis="y", labelsize=20)
+    ax.axhline(0.5, color="#696969", linestyle=":", linewidth=2.5, alpha=0.6)
+    ax.set_ylim(0.4, 1.05)
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#2F2F2F")
+        spine.set_linewidth(1.5)
 
     plt.tight_layout()
-    return fig, axes
+
+    # ── Pairwise Mann-Whitney between protocols ────────────────
+    stat_rows = []
+    for p1, p2 in combinations(available, 2):
+        v1 = plot_df[plot_df["protocol"] == p1]["auc"].dropna().values
+        v2 = plot_df[plot_df["protocol"] == p2]["auc"].dropna().values
+        if len(v1) >= 2 and len(v2) >= 2:
+            U, p = mannwhitneyu(v1, v2, alternative="two-sided")
+            stat_rows.append({
+                "protocol_1":  p1,
+                "protocol_2":  p2,
+                "n_1":         len(v1),
+                "n_2":         len(v2),
+                "mean_1":      float(np.mean(v1)),
+                "mean_2":      float(np.mean(v2)),
+                "mean_diff":   float(np.mean(v1) - np.mean(v2)),
+                "U_statistic": float(U),
+                "p_value":     float(p),
+                "significant": bool(p < 0.05),
+            })
+
+    return fig, ax, pd.DataFrame(stat_rows)

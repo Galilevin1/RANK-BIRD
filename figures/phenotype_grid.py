@@ -175,42 +175,38 @@ def plot_paper_phenotype_grid_circles(data_shotgun, data_16s,
 
     # X-axis: Phenotypes
     ax.set_xticks(range(len(all_phenotypes)))
-    ax.set_xticklabels(all_phenotypes, rotation=45, ha='right', fontsize=16)
+    ax.set_xticklabels(all_phenotypes, rotation=45, ha='right', fontsize=24)
 
     # Y-axis: Papers (Shotgun then 16S)
     yticks = list(range(len(all_papers))) + [offset + i for i in range(len(all_papers))]
-    ylabels = all_papers + all_papers  # Same papers, different sections
+    ylabels = all_papers + all_papers
     ax.set_yticks(yticks)
-    ax.set_yticklabels(ylabels, fontsize=16)
+    ax.set_yticklabels(ylabels, fontsize=24)
 
-    # ---- Section labels (positioned much further left to avoid overlap) ----
+    # ---- Section labels ----
     y_mid_shotgun = len(all_papers) / 2 - 0.5
     y_mid_16s = offset + len(all_papers) / 2 - 0.5
 
-    # Add background boxes for section labels
-    bbox_props_shotgun = dict(boxstyle='round,pad=0.5', facecolor='lightblue',
+    bbox_props_shotgun = dict(boxstyle='round,pad=0.6', facecolor='lightblue',
                               edgecolor='black', linewidth=2, alpha=0.8)
-    bbox_props_16s = dict(boxstyle='round,pad=0.5', facecolor='lightcoral',
+    bbox_props_16s = dict(boxstyle='round,pad=0.6', facecolor='lightcoral',
                           edgecolor='black', linewidth=2, alpha=0.8)
 
-    # Position labels MUCH further left to avoid overlap (changed from -2.5 to -3.5)
-    ax.text(-4.5, y_mid_shotgun, "Shotgun\n(WGS)",
-            fontsize=15, fontweight='bold',
+    ax.text(-3.5, y_mid_shotgun, "Metagenomics\n(Shotgun)",
+            fontsize=23, fontweight='bold',
             rotation=0, va='center', ha='center',
             bbox=bbox_props_shotgun)
 
-    ax.text(-4.5, y_mid_16s, "16S\nrRNA\n(Amplicon)",
-            fontsize=15, fontweight='bold',
+    ax.text(-3.5, y_mid_16s, "Amplicon\n(16S rRNA)",
+            fontsize=23, fontweight='bold',
             rotation=0, va='center', ha='center',
             bbox=bbox_props_16s)
 
-    # ---- Labels and title ----
-    ax.set_xlabel('Phenotype',
-                  fontsize=20, fontweight='bold')
-    ax.set_ylabel('Paper', fontsize=20, fontweight='bold')
-    ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+    # ---- Axis labels (no title) ----
+    ax.set_xlabel('Phenotype', fontsize=28, fontweight='bold')
+    ax.set_ylabel('Paper', fontsize=28, fontweight='bold')
 
-    # ---- Enhanced legend with circle sizes ----
+    # ---- Legend ----
     legend_elements = [
         mpatches.Patch(facecolor=primary_color, edgecolor='black',
                        label='CRC / IBD / CD / UC\n(Primary phenotypes)'),
@@ -220,41 +216,21 @@ def plot_paper_phenotype_grid_circles(data_shotgun, data_16s,
                        label='16S section\n(hatched background)'),
     ]
 
-    # Add circle size examples based on actual data
-    # Create example circles for legend showing different dataset counts
-    unique_counts = sorted(set(phenotype_dataset_count.values()), reverse=True)
-
-    # Show up to 3 example sizes in legend
-    for count in unique_counts[:3]:
-        base_radius = 0.25
-        radius = base_radius * np.sqrt(count)
-        # Scale marker size for legend (markersize is in points, roughly 2× radius in inches × 72)
-        marker_size = radius * 72 * 2 * 1.5  # Scale for visibility in legend
-
-        # legend_elements.append(
-        #     plt.Line2D([0], [0], marker='o', color='w',
-        #                markerfacecolor='gray', markersize=marker_size,
-        #                markeredgecolor='black', markeredgewidth=1,
-        #                label=f'{count} dataset{"s" if count > 1 else ""}')
-        # )
-
     ax.legend(handles=legend_elements, loc='upper left',
-              bbox_to_anchor=(1.02, 1), fontsize=12, frameon=True, shadow=True,
-              title='Legend', title_fontsize=14)
+              bbox_to_anchor=(1.02, 1), fontsize=20, frameon=True, shadow=True,
+              title='Legend', title_fontsize=22)
 
-    # Move yellow explanation box BELOW x-axis title
-    # Use figure coordinates to position below everything
-    fig.text(0.04, 0.02,  # Bottom left in figure coordinates
+    # ---- Circle size annotation box ----
+    fig.text(0.04, 0.06,
              'Circle size: Area proportional to dataset count\n',
-             fontsize=14, style='italic',
+             fontsize=22, style='italic',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
              ha='left', va='bottom')
 
     ax.grid(False)
     ax.set_facecolor('white')
 
-    # Adjust layout with MORE space on bottom for yellow explanation box
-    plt.subplots_adjust(left=0.15, right=0.88, top=0.95, bottom=0.22)
+    plt.subplots_adjust(left=0.15, right=0.88, top=0.97, bottom=0.22)
 
 
     return fig, ax

@@ -54,6 +54,7 @@ def _run_global_for_dtype(
     decompose_method='PCA',
     decompose_rank=30,
     taxonomy_level=None,
+    data_root: str = "Data",
 ):
     """
     normalization_approach options
@@ -66,7 +67,7 @@ def _run_global_for_dtype(
     "rankbird_relu"       — RANK-BIRD with relu normalization
     """
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
-    DATA_ROOT = PROJECT_ROOT / "Data"
+    DATA_ROOT = PROJECT_ROOT / data_root
 
     # ----------------------------------
     # 1. Load ALL data across phenotypes
@@ -174,6 +175,7 @@ def run_protocol_benchmark_global_preprocessing(
     cross_dtype_normalization: bool = False,
     stability_percentile_global_combined: float = 0.6,
     taxonomy_level_combined=None,
+    data_root: str = "Data",
 ):
     if cross_dtype_normalization:
         # Pool ALL datasets (both dtypes) into one normalization pass
@@ -190,6 +192,7 @@ def run_protocol_benchmark_global_preprocessing(
             decompose_method=decompose_method,
             decompose_rank=decompose_rank,
             taxonomy_level=tax_level,
+            data_root=data_root,
         )
 
     # Default: normalize each dtype separately
@@ -222,6 +225,7 @@ def run_protocol_benchmark_global_preprocessing(
             decompose_method=decompose_method,
             decompose_rank=decompose_rank,
             taxonomy_level=taxonomy_level_by_dtype.get(dtype),
+            data_root=data_root,
         )
 
         all_records.append(records_dtype)
