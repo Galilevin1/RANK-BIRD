@@ -93,6 +93,7 @@ def _make_figure2(
     dataset_names: List[str],
     phenotype_name: str,
     label_suffix: str = "",
+    show_title: bool = True,
 ) -> plt.Figure:
     """Build one Figure 2 for an already-preprocessed phenotype."""
     from evaluation.learning_protocols import lodo_protocol
@@ -108,7 +109,7 @@ def _make_figure2(
     fig = plt.figure(figsize=(24, 8 + n_dist_rows * 5.5))
     gs  = gridspec.GridSpec(
         total_rows, 3, figure=fig,
-        hspace=2.25, wspace=0.35,
+        hspace=0.6, wspace=0.35,
         height_ratios=height_ratios,
         top=0.94, bottom=0.06, left=0.05, right=0.98,
     )
@@ -184,7 +185,8 @@ def _make_figure2(
         ax.set_title(name, fontsize=13, fontweight='bold')
         ax.grid(True, alpha=0.3, linestyle='--')
 
-    fig.suptitle(f'{phenotype_name}{label_suffix}', fontsize=18, fontweight='bold')
+    if show_title:
+        fig.suptitle(f'{phenotype_name}{label_suffix}', fontsize=18, fontweight='bold')
     plt.tight_layout(rect=[0, 0, 1, 0.97])
     return fig
 
@@ -195,12 +197,25 @@ def _make_figure2(
 
 _CORR_COLUMNS = [
     'sample_count', 'feature_count',
-    'microbes_unique_test', 'microbes_unique_train',
-    'similarity_score_all',
-    'LODO_auc', 'within_dataset_auc', 'auc_difference',
-    'auc_difference_2', 'auc_zeros',
-    'mean_age', 'male_percentage',
+    'microbes_unique_test',
+    'microbes_unique_train',
+    'jaccard_index',
+    'leave_one_out_auc',
+    'internal_validation_auc',
+    'within_dataset_auc',
+    'age_median',
+    'male_percentage',
 ]
+
+# Backward-compat rename for CSVs generated before column renaming
+_LEGACY_RENAME = {
+    'microbes_in_current_not_in_others_pct': 'microbes_unique_test',
+    'microbes_in_others_not_in_current_pct': 'microbes_unique_train',
+    'similarity_score_all':     'jaccard_index',
+    'similarity_score_control': 'jaccard_index_control',
+    'similarity_score_test':    'jaccard_index_case',
+    'single_dataset_auc':       'within_dataset_auc',
+}
 
 
 def plot_figure2b(
@@ -222,24 +237,30 @@ def plot_figure2b(
     from scipy.stats import spearmanr
 
     df = pd.read_csv(csv_path)
+    df = df.rename(columns=_LEGACY_RENAME)
     for col in df.columns:
         if df[col].dtype == 'object':
             df[col] = df[col].replace('N/A', np.nan)
 
     cols = [c for c in _CORR_COLUMNS if c in df.columns]
-    corr_df = df[cols].dropna(subset=cols).copy()
+    num_df = df[cols].copy()
     for c in cols:
-        corr_df[c] = pd.to_numeric(corr_df[c], errors='coerce')
-    corr_df = corr_df.dropna()
+        num_df[c] = pd.to_numeric(num_df[c], errors='coerce')
 
     n = len(cols)
     corr_mat = np.full((n, n), np.nan)
     p_mat    = np.full((n, n), np.nan)
     for i in range(n):
         for j in range(n):
-            r, p = spearmanr(corr_df[cols[i]], corr_df[cols[j]])
-            corr_mat[i, j] = r
-            p_mat[i, j]    = p
+            if i == j:
+                corr_mat[i, j] = 1.0
+                p_mat[i, j]    = 0.0
+                continue
+            valid = num_df[[cols[i], cols[j]]].dropna()
+            if len(valid) >= 3:
+                r, p = spearmanr(valid[cols[i]], valid[cols[j]])
+                corr_mat[i, j] = r
+                p_mat[i, j]    = p
 
     # Annotations: lower triangle = r, upper = p-value
     annot = np.full((n, n), '', dtype=object)
@@ -271,8 +292,6 @@ def plot_figure2b(
                 ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False,
                                            edgecolor='black', lw=3))
 
-    ax.set_title('Spearman Correlations — Possible Confounders',
-                 fontsize=18, fontweight='bold', pad=14)
     plt.tight_layout()
     return fig
 
@@ -287,6 +306,7 @@ def plot_figure2c(
     dataset_names: List[str],
     phenotype_name: str,
     normalization_approach=None,
+    show_title: bool = True,
 ) -> plt.Figure:
     """
     Generate one Figure 2C for a phenotype.
@@ -309,10 +329,10 @@ def plot_figure2c(
 
     print(f"  Building figure 2C for {phenotype_name}{label_suffix}")
     return _make_figure2(microbiome_dfs, target_dfs, dataset_names,
-                         phenotype_name, label_suffix=label_suffix)
+                         phenotype_name, label_suffix=label_suffix, show_title=show_title)
 
 
-def run_figure2c(
+def run_figure2b(
     phenotypes: List[Tuple[str, str]],
     data_root: str,
     figures_dir: str,
@@ -351,6 +371,7 @@ def run_figure2c(
                 microbiome_dfs, target_dfs, dataset_names,
                 pheno_str,
                 normalization_approach=normalization_approach,
+                show_title=False,
             )
             safe = pheno_str.replace(" ", "_")
             mode = normalization_approach or "raw"
@@ -360,3 +381,189 @@ def run_figure2c(
             print(f"  Saved figure 2C for {pheno_str}")
         except Exception as e:
             print(f"  Error generating figure 2C for {pheno_str}: {e}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Public interface — Figure 2D: Pairwise KS heatmaps per phenotype
+# ─────────────────────────────────────────────────────────────
+
+def _pairwise_ks(
+    mb_dfs: List[pd.DataFrame],
+    dataset_names: List[str],
+    alpha: float = 0.05,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute pairwise KS statistic + p-value between datasets (overlapping microbes only).
+    Applies BH FDR correction across all pairs within the group.
+
+    Returns
+    -------
+    ks_mat      : NxN KS statistics  (diagonal = NaN, symmetric)
+    p_mat       : NxN raw p-values   (diagonal = NaN, symmetric)
+    sig_mat     : NxN bool           (True where FDR-corrected p < alpha)
+    """
+    from statsmodels.stats.multitest import multipletests
+
+    n = len(dataset_names)
+    ks_mat  = np.full((n, n), np.nan)
+    p_mat   = np.full((n, n), np.nan)
+    sig_mat = np.zeros((n, n), dtype=bool)
+
+    # Collect upper-triangle pairs
+    pair_indices, pair_stats, pair_pvals = [], [], []
+    for i in range(n):
+        for j in range(i + 1, n):
+            common = list(set(mb_dfs[i].columns) & set(mb_dfs[j].columns))
+            if not common:
+                continue
+            vals_i = mb_dfs[i][common].values.ravel()
+            vals_j = mb_dfs[j][common].values.ravel()
+            stat, pval = stats.ks_2samp(vals_i, vals_j)
+            pair_indices.append((i, j))
+            pair_stats.append(stat)
+            pair_pvals.append(pval)
+
+    if not pair_pvals:
+        return ks_mat, p_mat, sig_mat
+
+    # BH FDR correction
+    _, corrected, _, _ = multipletests(pair_pvals, method='fdr_bh')
+
+    for (i, j), stat, pval, corr_p in zip(pair_indices, pair_stats, pair_pvals, corrected):
+        ks_mat[i, j] = ks_mat[j, i] = round(stat, 3)
+        p_mat[i, j]  = p_mat[j, i]  = pval
+        sig_mat[i, j] = sig_mat[j, i] = corr_p < alpha
+
+    return ks_mat, p_mat, sig_mat
+
+
+def _draw_ks_heatmap(ax, ks_mat: np.ndarray, p_mat: np.ndarray,
+                     sig_mat: np.ndarray, names: List[str],
+                     show_title: str = None) -> None:
+    """
+    Draw a single KS heatmap panel on ax.
+    Lower triangle: KS statistic. Upper triangle: raw p-value.
+    Black border on cells where FDR-corrected p is significant.
+    """
+    import seaborn as sns
+
+    n = len(names)
+    annot = np.full((n, n), '', dtype=object)
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            if i > j:
+                annot[i, j] = f'{ks_mat[i, j]:.3f}'
+            else:
+                annot[i, j] = f'p={p_mat[i, j]:.3f}'
+
+    sns.heatmap(
+        ks_mat,
+        annot=annot, fmt='',
+        cmap='YlOrRd', vmin=0, vmax=1,
+        linewidths=0.5,
+        xticklabels=names, yticklabels=names,
+        ax=ax,
+        cbar_kws={'shrink': 0.7},
+        annot_kws={'size': 10},
+        mask=np.eye(n, dtype=bool),
+    )
+    ax.set_xticklabels(names, rotation=45, ha='right', fontsize=9)
+    ax.set_yticklabels(names, rotation=0, fontsize=9)
+
+    # Black border on significant cells
+    for i in range(n):
+        for j in range(n):
+            if i != j and sig_mat[i, j]:
+                ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False,
+                                           edgecolor='black', lw=2.5))
+    if show_title:
+        ax.set_title(show_title, fontsize=13, fontweight='bold')
+
+
+def plot_figure2d(
+    microbiome_dfs: List[pd.DataFrame],
+    dataset_names: List[str],
+    dataset_to_phenotype: Dict[str, str],
+) -> plt.Figure:
+    """
+    Combined figure: one KS heatmap per phenotype, 3 per row.
+    Lower triangle = KS, upper triangle = p-value, black border = FDR significant.
+    """
+    # Group by phenotype
+    pheno_groups: Dict[str, List] = {}
+    for mb, name in zip(microbiome_dfs, dataset_names):
+        pheno = dataset_to_phenotype[name]
+        pheno_groups.setdefault(pheno, []).append((name, mb))
+
+    phenotypes = list(pheno_groups.keys())
+    n_phenos   = len(phenotypes)
+    ncols      = 3
+    nrows      = max(1, int(np.ceil(n_phenos / ncols)))
+
+    fig, axes = plt.subplots(nrows, ncols,
+                             figsize=(7 * ncols, 6 * nrows),
+                             squeeze=False)
+
+    for idx, pheno in enumerate(phenotypes):
+        ax    = axes[idx // ncols][idx % ncols]
+        items = pheno_groups[pheno]
+        names = [item[0] for item in items]
+        dfs   = [item[1] for item in items]
+
+        if len(dfs) < 2:
+            ax.text(0.5, 0.5, 'Only 1 dataset', ha='center', va='center',
+                    transform=ax.transAxes, fontsize=12, color='gray')
+            ax.set_title(pheno, fontsize=13, fontweight='bold')
+            ax.set_axis_off()
+            continue
+
+        ks_mat, p_mat, sig_mat = _pairwise_ks(dfs, names)
+        _draw_ks_heatmap(ax, ks_mat, p_mat, sig_mat, names, show_title=pheno)
+
+    for idx in range(n_phenos, nrows * ncols):
+        axes[idx // ncols][idx % ncols].set_axis_off()
+
+    plt.tight_layout()
+    return fig
+
+
+def run_figure2d(
+    microbiome_dfs: List[pd.DataFrame],
+    dataset_names: List[str],
+    dataset_to_phenotype: Dict[str, str],
+    figures_dir: str,
+) -> None:
+    """Compute and save Figure 2D: one combined figure + one per phenotype."""
+    out = Path(figures_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Group by phenotype
+    pheno_groups: Dict[str, List] = {}
+    for mb, name in zip(microbiome_dfs, dataset_names):
+        pheno = dataset_to_phenotype[name]
+        pheno_groups.setdefault(pheno, []).append((name, mb))
+
+    # Per-phenotype figures (no title)
+    for pheno, items in pheno_groups.items():
+        names = [item[0] for item in items]
+        dfs   = [item[1] for item in items]
+        if len(dfs) < 2:
+            print(f"  Skipping {pheno}: need ≥2 datasets")
+            continue
+        ks_mat, p_mat, sig_mat = _pairwise_ks(dfs, names)
+        fig, ax = plt.subplots(figsize=(max(5, len(names) * 1.8), max(4, len(names) * 1.6)))
+        _draw_ks_heatmap(ax, ks_mat, p_mat, sig_mat, names)
+        plt.tight_layout()
+        safe = pheno.replace(" ", "_")
+        fig.savefig(out / f"figure2d_ks_{safe}.png", dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  Saved Figure 2D for {pheno}")
+
+    # Combined figure (all phenotypes)
+    print("\n  Building combined Figure 2D")
+    fig = plot_figure2d(microbiome_dfs, dataset_names, dataset_to_phenotype)
+    fig.savefig(out / "figure2d_ks_all.png", dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  Saved combined Figure 2D")

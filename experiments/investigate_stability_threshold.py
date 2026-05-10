@@ -385,7 +385,9 @@ def _plot_sweep_panel(
              marker="s", markersize=4, label="# kept microbes")
     ax2.set_ylabel("# kept microbes", fontsize=10, color="black")
     ax2.tick_params(axis="y", labelcolor="black")
-    for _, row in count_df.iterrows():
+    for i, (_, row) in enumerate(count_df.iterrows()):
+        if i % 5 != 0:
+            continue
         ax2.annotate(
             f"{int(row['n_kept'])} ({row['pct_kept']:.0f}%)",
             xy=(row["percentile"], row["n_kept"]),
@@ -400,6 +402,27 @@ def _plot_sweep_panel(
 
 
 # ── Display helpers ──────────────────────────────────────────────────────────
+
+def _merge_sweep_dfs(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Combine multiple already-aggregated sweep DataFrames (e.g. Metagenomics + Amplicon)
+    into one by computing n_phenotypes-weighted averages per (percentile, protocol).
+    """
+    rows = []
+    for (pct, prot), grp in df.groupby(['percentile', 'protocol']):
+        total_n = grp['n_phenotypes'].sum()
+        if total_n == 0:
+            continue
+        rows.append({
+            'percentile':   pct,
+            'protocol':     prot,
+            'mean_auc':     float((grp['mean_auc']   * grp['n_phenotypes']).sum() / total_n),
+            'median_auc':   float((grp['median_auc'] * grp['n_phenotypes']).sum() / total_n),
+            'std_auc':      float(grp['std_auc'].mean()),
+            'n_phenotypes': int(total_n),
+        })
+    return pd.DataFrame(rows)
+
 
 def _aggregate_raw_to_sweep(raw_df: pd.DataFrame, dtype_filter: str = None) -> pd.DataFrame:
     """
@@ -573,18 +596,21 @@ def run_stability_investigation(
                 raw_path        = sweep_path.with_name(sweep_path.stem + "_raw.csv")
 
                 if plot_only:
-                    if raw_path.exists():
-                        raw_store[(level, dtype)] = pd.read_csv(raw_path)
+                    load_path = raw_path if raw_path.exists() else sweep_path
+                    if load_path.exists():
+                        raw_store[(level, dtype)] = pd.read_csv(load_path)
                     else:
-                        print(f"  [SKIP] Raw CSV missing ({raw_path.name}) — recompute without plot_only.")
+                        print(f"  [SKIP] CSV missing ({sweep_path.name}) — recompute without plot_only.")
                     if combined_mode:
                         fo_raw_path = sweep_fo_path.with_name(sweep_fo_path.stem + "_raw.csv")
-                        if fo_raw_path.exists():
-                            fo_raw_store[(level, dtype)] = pd.read_csv(fo_raw_path)
+                        fo_load_path = fo_raw_path if fo_raw_path.exists() else sweep_fo_path
+                        if fo_load_path.exists():
+                            fo_raw_store[(level, dtype)] = pd.read_csv(fo_load_path)
                 else:
-                    if sweep_path.exists() and raw_path.exists():
+                    if sweep_path.exists():
                         print(f"  [LOAD] {sweep_path.name}")
-                        raw_store[(level, dtype)] = pd.read_csv(raw_path)
+                        load_path = raw_path if raw_path.exists() else sweep_path
+                        raw_store[(level, dtype)] = pd.read_csv(load_path)
                     elif should_compute:
                         print(f"  Computing {'filter-only' if filter_only else 'full normalization'} sweep ...")
                         sweep_df, raw_df = run_stability_sweep(
@@ -629,12 +655,18 @@ def run_stability_investigation(
                     if all_raw.empty:
                         panel_data[(level, display_dtype)] = None
                         continue
-                    sweep_df  = _aggregate_raw_to_sweep(all_raw)
+                    if 'mean_auc' in all_raw.columns:
+                        sweep_df = _merge_sweep_dfs(all_raw)
+                    else:
+                        sweep_df = _aggregate_raw_to_sweep(all_raw)
                     count_dfs = [df for (l, d), df in count_store.items() if l == level]
                     count_df  = _sum_count_dfs(count_dfs) if count_dfs else None
                     orig_dcts = [d for (l, dd), d in orig_store.items() if l == level]
                     orig_auc  = _merge_orig_aucs(orig_dcts) if orig_dcts else {}
-                    fo_df     = _aggregate_raw_to_sweep(all_fo_raw) if (not all_fo_raw.empty and combined_mode) else None
+                    if not all_fo_raw.empty and combined_mode:
+                        fo_df = _merge_sweep_dfs(all_fo_raw) if 'mean_auc' in all_fo_raw.columns else _aggregate_raw_to_sweep(all_fo_raw)
+                    else:
+                        fo_df = None
 
                 else:
                     # For cross_dtype=True the combined raw contains all phenotypes;
@@ -652,7 +684,10 @@ def run_stability_investigation(
                         panel_data[(level, display_dtype)] = None
                         continue
 
-                    sweep_df = _aggregate_raw_to_sweep(raw_src, dtype_filter=filt)
+                    if 'mean_auc' in raw_src.columns:
+                        sweep_df = raw_src
+                    else:
+                        sweep_df = _aggregate_raw_to_sweep(raw_src, dtype_filter=filt)
                     if sweep_df.empty:
                         panel_data[(level, display_dtype)] = None
                         continue
@@ -661,7 +696,10 @@ def run_stability_investigation(
                     orig_auc = orig_store.get((level, display_dtype), {})
                     fo_df    = None
                     if combined_mode and fo_raw_src is not None and not fo_raw_src.empty:
-                        fo_df = _aggregate_raw_to_sweep(fo_raw_src, dtype_filter=filt)
+                        if 'mean_auc' in fo_raw_src.columns:
+                            fo_df = fo_raw_src
+                        else:
+                            fo_df = _aggregate_raw_to_sweep(fo_raw_src, dtype_filter=filt)
 
                     if count_df is None:
                         panel_data[(level, display_dtype)] = None

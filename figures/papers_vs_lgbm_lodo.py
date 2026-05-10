@@ -7,7 +7,8 @@ from evaluation.statistics import compare_auc_mann_whitney_fdr
 
 def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
                                           selected_combinations=None, figsize=(12, 8),
-                                          group_gap=1.2, bar_height=0.6, fdr_alpha=0.05):
+                                          group_gap=1.2, bar_height=0.6, fdr_alpha=0.05,
+                                          ax=None):
     """
     Horizontal bar visualization with Mann-Whitney U test + FDR correction.
 
@@ -158,7 +159,11 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     color_map = {p: c for p, c in zip(papers[:-1], colors_palette)}
     color_map["LightGBM LODO"] = "#2E2E2E"
 
-    fig, ax = plt.subplots(figsize=figsize)
+    _standalone = ax is None
+    if _standalone:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
     ax.set_facecolor('white')
     ax.grid(axis='x', alpha=0.3, linestyle='--', linewidth=0.5)
     ax.set_axisbelow(True)
@@ -229,17 +234,19 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     # Group labels
     for group, ymid in group_positions:
         ax.text(-0.05, ymid, group, ha="right", va="center",
-                fontsize=18, fontweight="bold",
+                fontsize=42, fontweight="bold",
                 transform=ax.get_yaxis_transform(),
                 bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgray',
                           edgecolor='gray', alpha=0.3))
 
     # Aesthetics
     ax.set_yticks([])
-    ax.set_xlabel("LODO AUC (Mean ± SE)", fontsize=14, fontweight="bold")
+    ax.tick_params(axis="x", labelsize=38)
+    ax.set_xlabel("LODO AUC (Mean ± SE)", fontsize=42, fontweight="bold")
     ax.set_xlim(0, 1.05)
-    ax.set_title("Model Performance: LightGBM vs. Published Results\n(Mann-Whitney U Test + FDR Correction)",
-                 fontsize=16, fontweight="bold", pad=20)
+    if _standalone:
+        ax.set_title("Model Performance: LightGBM vs. Published Results\n(Mann-Whitney U Test + FDR Correction)",
+                     fontsize=16, fontweight="bold", pad=20)
 
     # Legend
     handles, labels = ax.get_legend_handles_labels()
@@ -251,21 +258,24 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     ordered_labels.extend([l for l in sorted(by_label.keys()) if l != "LightGBM LODO"])
     ordered_handles = [by_label[l] for l in ordered_labels]
 
-    legend = ax.legend(ordered_handles, ordered_labels,
-                       title="Models/Papers\n(* = sig. vs LightGBM)",
-                       title_fontsize=10, fontsize=9,
-                       bbox_to_anchor=(1.02, 1), loc="upper left",
-                       frameon=True, fancybox=True, shadow=True)
-    legend.get_frame().set_alpha(0.95)
-
-    # Significance note
-    sig_text = (f"Significance vs. LightGBM:\n"
-                f"* q<0.05, ** q<0.01, *** q<0.001\n"
-                f"(Mann-Whitney U, Benjamini-Hochberg FDR, α={fdr_alpha})")
-    ax.text(0.96, -0.12, sig_text, transform=ax.transAxes,
-            fontsize=8, style='italic', ha='left', va='bottom',
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
-
-    plt.tight_layout()
+    if _standalone:
+        legend = ax.legend(ordered_handles, ordered_labels,
+                           title="Models/Papers\n(* = sig. vs LightGBM)",
+                           title_fontsize=10, fontsize=9,
+                           bbox_to_anchor=(1.02, 1), loc="upper left",
+                           frameon=True, fancybox=True, shadow=True)
+        legend.get_frame().set_alpha(0.95)
+        sig_text = (f"Significance vs. LightGBM:\n"
+                    f"* q<0.05, ** q<0.01, *** q<0.001\n"
+                    f"(Mann-Whitney U, Benjamini-Hochberg FDR, α={fdr_alpha})")
+        ax.text(0.96, -0.12, sig_text, transform=ax.transAxes,
+                fontsize=8, style='italic', ha='left', va='bottom',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+        plt.tight_layout()
+    else:
+        ax.legend(ordered_handles, ordered_labels,
+                  title="* = sig. vs LightGBM",
+                  title_fontsize=8, fontsize=7,
+                  loc="lower right", frameon=True, framealpha=0.9)
 
     return fig, ax, statistical_results

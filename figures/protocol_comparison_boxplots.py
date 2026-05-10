@@ -257,7 +257,7 @@ def create_comprehensive_boxplot_comparison(
 
 
 
-def plot_protocol_boxplots(results_df: pd.DataFrame):
+def plot_protocol_boxplots(results_df: pd.DataFrame, ax=None):
     """
     Boxplot of LightGBM LODO, Internal Validation, Within Learning.
     One dot per dataset. Returns fig, ax, stats_df (pairwise Mann-Whitney between protocols).
@@ -273,7 +273,11 @@ def plot_protocol_boxplots(results_df: pd.DataFrame):
     available = [m for m in METHOD_ORDER if m in plot_df["protocol"].unique()]
 
     sns.set_style("whitegrid", {"grid.linestyle": "--", "grid.alpha": 0.3})
-    fig, ax = plt.subplots(figsize=(9, 7))
+    _standalone = ax is None
+    if _standalone:
+        fig, ax = plt.subplots(figsize=(9, 7))
+    else:
+        fig = ax.figure
 
     bp = ax.boxplot(
         [plot_df[plot_df["protocol"] == m]["auc"].dropna().values for m in available],
@@ -301,17 +305,18 @@ def plot_protocol_boxplots(results_df: pd.DataFrame):
                    alpha=0.6, s=70, color="#404040",
                    edgecolors="black", linewidths=0.8, zorder=3)
 
-    ax.set_xticklabels([LABELS[METHOD_ORDER.index(m)] for m in available], fontsize=20)
-    ax.set_ylabel("AUC", fontsize=24, fontweight="bold")
+    ax.set_xticklabels([LABELS[METHOD_ORDER.index(m)] for m in available], fontsize=32)
+    ax.set_ylabel("AUC", fontsize=34, fontweight="bold")
     ax.set_xlabel("")
-    ax.tick_params(axis="y", labelsize=20)
+    ax.tick_params(axis="y", labelsize=32)
     ax.axhline(0.5, color="#696969", linestyle=":", linewidth=2.5, alpha=0.6)
     ax.set_ylim(0.4, 1.05)
     for spine in ax.spines.values():
         spine.set_edgecolor("#2F2F2F")
         spine.set_linewidth(1.5)
 
-    plt.tight_layout()
+    if _standalone:
+        plt.tight_layout()
 
     # ── Pairwise Mann-Whitney between protocols ────────────────
     stat_rows = []

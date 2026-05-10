@@ -4,13 +4,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from itertools import combinations
 from scipy.stats import mannwhitneyu
+from matplotlib.transforms import blended_transform_factory
 
 
 def _dtype_sort_key(phenotype: str) -> int:
-    """Amplicon (16S) rows first, then Metagenomics (shotgun)."""
+    """Metagenomics (shotgun) rows first, then Amplicon (16S)."""
     if "Amplicon" in phenotype:
-        return 0
-    return 1
+        return 1
+    return 0
 
 
 def _run_protocol_mannwhitney(summary_df: pd.DataFrame) -> pd.DataFrame:
@@ -105,6 +106,7 @@ def plot_protocol_heatmap(
     results_df: pd.DataFrame = None,
     papers_df: pd.DataFrame = None,
     selected_combinations=None,
+    ax=None,
 ):
     # Sort phenotypes: Amplicon first, then Metagenomics, alphabetically within each group
     phenotype_order = sorted(
@@ -150,7 +152,11 @@ def plot_protocol_heatmap(
             if pheno in sig_phenos:
                 annot.loc[pheno, "Papers LODO"] = annot.loc[pheno, "Papers LODO"] + "*"
 
-    fig, ax = plt.subplots(figsize=(18, max(6, len(phenotype_order) * 0.6)))
+    _standalone = ax is None
+    if _standalone:
+        fig, ax = plt.subplots(figsize=(18, max(6, len(phenotype_order) * 0.6)))
+    else:
+        fig = ax.figure
 
     sns.heatmap(
         pivot,
@@ -159,29 +165,55 @@ def plot_protocol_heatmap(
         cmap="YlGnBu",
         vmin=0,
         vmax=1,
-        cbar_kws={"label": "Mean AUC"},
-        annot_kws={"size": 18},
+        cbar=_standalone,
+        cbar_kws={"label": "Mean AUC"} if _standalone else {},
+        annot_kws={"size": 28},
         ax=ax,
     )
 
     ax.set_aspect("auto")
-    ax.set_ylabel("Phenotype", fontsize=20, fontweight="bold")
-    ax.set_xlabel("Protocol", fontsize=18, fontweight="bold")
-    ax.set_xticklabels(ax.get_xticklabels(), fontsize=18, fontweight="bold")
-    ax.set_yticklabels(ax.get_yticklabels(), fontsize=20, fontweight="bold")
-    ax.figure.axes[-1].yaxis.label.set_size(14)
-    ax.figure.axes[-1].tick_params(labelsize=16)
+    ax.set_ylabel("")
+    ax.set_xlabel("Protocol", fontsize=46, fontweight="bold")
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=28, fontweight="bold")
 
-    # Separator between Amplicon and Metagenomics blocks
-    n_amplicon = sum(1 for p in phenotype_order if "Amplicon" in p)
-    if 0 < n_amplicon < len(phenotype_order):
-        ax.axhline(n_amplicon, color="black", linewidth=3)
+    # Strip " Amplicon" / " Metagenomics" suffix from y-tick labels
+    stripped = [
+        t.get_text().replace(" Amplicon", "").replace(" Metagenomics", "")
+        for t in ax.get_yticklabels()
+    ]
+    ax.set_yticklabels(stripped, fontsize=30, fontweight="bold")
+
+    if _standalone:
+        ax.figure.axes[-1].yaxis.label.set_size(14)
+        ax.figure.axes[-1].tick_params(labelsize=16)
+
+    # Separator between Metagenomics (top) and Amplicon (bottom) blocks
+    n_meta  = sum(1 for p in phenotype_order if "Metagenomics" in p)
+    n_total = len(phenotype_order)
+    if 0 < n_meta < n_total:
+        ax.axhline(n_meta, color="black", linewidth=10, zorder=5)
 
     for y in range(1, pivot.shape[0]):
-        if y != n_amplicon:
+        if y != n_meta:
             ax.axhline(y, color="black", linewidth=1.5)
 
-    plt.tight_layout()
+    # Section labels: rotated text outside the figure
+    if 0 < n_meta < n_total:
+        trans = blended_transform_factory(ax.transAxes, ax.transData)
+        y_mid_meta = n_meta / 2
+        y_mid_amp  = n_meta + (n_total - n_meta) / 2
+
+        ax.text(-0.32, y_mid_meta, "Metagenomics\n(Shotgun)",
+                transform=trans, fontsize=32, fontweight="bold",
+                va="center", ha="center", rotation=0, clip_on=False,
+                color="steelblue")
+        ax.text(-0.42, y_mid_amp,  "Amplicon\n(16S rRNA)",
+                transform=trans, fontsize=32, fontweight="bold",
+                va="center", ha="center", rotation=0, clip_on=False,
+                color="crimson")
+
+    if _standalone:
+        plt.tight_layout()
 
     stats_df = _run_protocol_mannwhitney(summary_df)
 

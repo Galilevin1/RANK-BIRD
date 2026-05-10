@@ -1,17 +1,24 @@
 """
 Figure 1: Assembled overview figure.
 
-Loads the already-saved sub-figure PNGs (1a, 1b, 1c, 1d) and combines
-them into a single PDF.
+Creates all sub-figure panels directly as subplots in one combined figure.
 
-Expected inputs
----------------
-  1a  figures_out/figure_1/1a/<scope>_<mode>/paper_phenotype_grid.png
-  1b  figures_out/figure_1/1b/schematic.png          (user-provided, fixed)
-  1c  figures_out/figure_1/1c/<scope>_<mode>/protocol_heatmap.png
-  1d  figures_out/figure_1/1d/<scope>_<mode>/protocol_boxplots.png
+  1a  Paper–Phenotype grid (hardcoded data)
+  1b  Schematic image (user-provided PNG, loaded from path_1b)
+  1c  Papers vs LightGBM LODO horizontal bars  (requires results_df, papers_df)
+  1d  Protocol AUC heatmap   (requires summary_df, results_df, papers_df)
+  1e  Protocol AUC boxplots  (requires results_df)
+  1f  Cross-dtype LODO on overlap microbes  (requires figure1f_df)
 
-If a PNG is missing a grey placeholder panel is shown instead.
+Layout
+------
+  ┌──────────┬─────────────────┐
+  │    1a    │                 │
+  ├──────────┤       1b        │
+  │    1c    │                 │
+  ├──────────┴─────────────────┤
+  │    1d    │    1e    │  1f  │
+  └──────────┴──────────┴──────┘
 """
 
 from pathlib import Path
@@ -19,65 +26,156 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import matplotlib.gridspec as mgridspec
 import numpy as np
-
-
-def _load_or_placeholder(path: Path) -> np.ndarray:
-    if path and Path(path).exists():
-        return mpimg.imread(str(path))
-    h, w = 600, 800
-    arr = np.full((h, w, 3), 0.88)
-    return arr
+import pandas as pd
+from typing import Optional
 
 
 def assemble_figure1(
-    path_1a: Path,
-    path_1b: Path,
-    path_1c: Path,
-    path_1d: Path,
-    figsize: tuple = (34, 22),
-    row1_ratios: tuple = (4, 3),   # A wider than B
-    row2_ratios: tuple = (2, 4),   # D wider than C
-    row2_shift: float = 0.5,       # invisible left spacer to shift C and D right
+    summary_df: pd.DataFrame,
+    results_df: pd.DataFrame,
+    papers_df: pd.DataFrame = None,
+    selected_combinations=None,
+    path_1b: Optional[Path] = None,
+    figure1f_df: Optional[pd.DataFrame] = None,
+    figsize: tuple = (46, 59),
+    left_col_ratio: float = 1.0,
+    right_col_ratio: float = 1.7,
+    top_row_ratio: float = 1.0,
+    mid_row_ratio: float = 1.25,
+    mid_col_ratios: tuple = (0.85, 0.75),
+    section_hspace: float = 0.22,
+    top_hspace: float = 0.48,
+    top_wspace: float = 0.42,
 ) -> plt.Figure:
     """
-    Assemble panels A-D from PNG files into one combined Figure 1.
+    Assemble panels A–F as live subplots in one combined Figure 1.
 
-    Layout (A and D are wider)
+    Layout
     ------
-      ┌──────────────┬───────┐
-      │      A       │   B   │
-      ├───────┬──────────────┤
-      │   C   │      D       │
-      └───────┴──────────────┘
+      ┌──────────┬─────────────────┐
+      │    1a    │                 │
+      ├──────────┤       1b        │
+      │    1c    │                 │
+      ├──────────┴─────────────────┤
+      │         1d      │   1e     │
+      ├──────────────────────────-─┤
+      │              1f            │
+      └────────────────────────────┘
+
+    figure1f_df : pre-computed results from compute_figure1f(); if None panel F
+                  shows a placeholder.
     """
-    imgs = {
-        "A": _load_or_placeholder(path_1a),
-        "B": _load_or_placeholder(path_1b),
-        "C": _load_or_placeholder(path_1c),
-        "D": _load_or_placeholder(path_1d),
-    }
+    from figures.phenotype_grid import plot_figure_1a
+    from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
+    from figures.protocol_comparison_heatmap import plot_protocol_heatmap
+    from figures.protocol_comparison_boxplots import plot_protocol_boxplots
+    from figures.figure1f import plot_figure1f
+
+    top_height = top_row_ratio + mid_row_ratio   # combined inner rows of top section
+    mid_height = top_height * 0.62               # 1d + 1e row
+    bot_height = top_height * 0.52               # 1f row
 
     fig = plt.figure(figsize=figsize)
-    outer = mgridspec.GridSpec(2, 1, figure=fig, hspace=0.12,
-                               left=0.06, right=0.98, top=0.97, bottom=0.02)
+    outer = mgridspec.GridSpec(
+        3, 1, figure=fig,
+        hspace=section_hspace,
+        height_ratios=[top_height, mid_height, bot_height],
+        left=0.05, right=0.98, top=0.97, bottom=0.04,
+    )
 
+    # ── Section 1: 2 rows × 2 cols; 1b spans both inner rows ────────────────
     gs_top = mgridspec.GridSpecFromSubplotSpec(
-        1, 2, subplot_spec=outer[0], width_ratios=list(row1_ratios), wspace=0.04)
+        2, 2, subplot_spec=outer[0],
+        width_ratios=[left_col_ratio, right_col_ratio],
+        height_ratios=[top_row_ratio, mid_row_ratio],
+        hspace=top_hspace, wspace=top_wspace,
+    )
+
+    ax_a = fig.add_subplot(gs_top[0, 0])   # top-left
+    ax_b = fig.add_subplot(gs_top[:, 1])   # right, spans both inner rows
+    ax_c = fig.add_subplot(gs_top[1, 0])   # bottom-left
+
+    # Shift 1b left without resizing
+    _pos_b = ax_b.get_position()
+    ax_b.set_position([_pos_b.x0 - 0.05, _pos_b.y0, _pos_b.width, _pos_b.height])
+
+    # ── Section 2: 1d left, gap, 1e right (small outer margins) ─────────────
+    gs_mid = mgridspec.GridSpecFromSubplotSpec(
+        1, 4, subplot_spec=outer[1],
+        width_ratios=[0.0, mid_col_ratios[0], mid_col_ratios[1], 0.12],
+        wspace=0.30,
+    )
+
+    ax_d = fig.add_subplot(gs_mid[1])
+    ax_e = fig.add_subplot(gs_mid[2])
+
+    # Shift 1d left without resizing
+    _pos_d = ax_d.get_position()
+    ax_d.set_position([_pos_d.x0 - 0.11, _pos_d.y0, _pos_d.width, _pos_d.height])
+
+    # ── Section 3: 1f slightly left of centre ─────────────────────────────────
     gs_bot = mgridspec.GridSpecFromSubplotSpec(
-        1, 3, subplot_spec=outer[1],
-        width_ratios=[row2_shift] + list(row2_ratios), wspace=0.04)
+        1, 3, subplot_spec=outer[2],
+        width_ratios=[0.07, 1.0, 0.17],
+        wspace=0,
+    )
+    ax_f = fig.add_subplot(gs_bot[1])
 
-    panels = [
-        (fig.add_subplot(gs_top[0]), "A", imgs["A"]),
-        (fig.add_subplot(gs_top[1]), "B", imgs["B"]),
-        (fig.add_subplot(gs_bot[1]), "C", imgs["C"]),
-        (fig.add_subplot(gs_bot[2]), "D", imgs["D"]),
-    ]
+    # Shift 1f left without resizing
+    _pos_f = ax_f.get_position()
+    ax_f.set_position([_pos_f.x0 - 0.05, _pos_f.y0, _pos_f.width, _pos_f.height])
 
-    for ax, letter, img in panels:
-        ax.imshow(img, aspect="auto", interpolation="none")
-        ax.set_axis_off()
-        ax.text(0.01, 0.99, letter, transform=ax.transAxes,
-                fontsize=20, fontweight="bold", va="top", zorder=10)
+    # ── Panel A: paper–phenotype grid ────────────────────────────────────────
+    plot_figure_1a(ax=ax_a)
+    ax_a.text(-0.18, 1.0, "A", transform=ax_a.transAxes,
+              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
+
+    # ── Panel B: schematic image ──────────────────────────────────────────────
+    ax_b.set_axis_off()
+    if path_1b and Path(path_1b).exists():
+        img = mpimg.imread(str(path_1b))
+        ax_b.imshow(img, aspect="auto", interpolation="bilinear")
+    else:
+        ax_b.set_facecolor("#E8E8E8")
+        ax_b.text(0.5, 0.5, "Schematic\n(place schematic.png in\nfigures_out/figure_1/1b/)",
+                  ha="center", va="center", fontsize=13, color="#555555",
+                  transform=ax_b.transAxes)
+    ax_b.text(0.01, 1.0, "B", transform=ax_b.transAxes,
+              fontsize=42, fontweight="bold", va="top", ha="left", clip_on=False)
+
+    # ── Panel C: papers vs LightGBM LODO bars ────────────────────────────────
+    if papers_df is not None:
+        plot_auc_horizontal_bars_mann_whitney(
+            df_papers=papers_df,
+            df_lightGBM=results_df,
+            selected_combinations=selected_combinations,
+            ax=ax_c,
+        )
+    else:
+        ax_c.text(0.5, 0.5, "No papers data", ha="center", va="center",
+                  transform=ax_c.transAxes, fontsize=12, color="#888888")
+    ax_c.text(-0.18, 1.08, "C", transform=ax_c.transAxes,
+              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
+
+    # ── Panel D: protocol AUC heatmap ─────────────────────────────────────────
+    plot_protocol_heatmap(
+        summary_df,
+        results_df=results_df,
+        papers_df=papers_df,
+        selected_combinations=selected_combinations,
+        ax=ax_d,
+    )
+    ax_d.text(-0.22, 1.0, "D", transform=ax_d.transAxes,
+              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
+
+    # ── Panel E: protocol AUC boxplots ────────────────────────────────────────
+    plot_protocol_boxplots(results_df, ax=ax_e)
+    ax_e.text(-0.12, 1.0, "E", transform=ax_e.transAxes,
+              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
+
+    # ── Panel F: cross-dtype LODO on overlap microbes ─────────────────────────
+    plot_figure1f(figure1f_df if figure1f_df is not None else pd.DataFrame(), ax=ax_f)
+    ax_f.text(-0.05, 1.0, "F", transform=ax_f.transAxes,
+              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
 
     return fig

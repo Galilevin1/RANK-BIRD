@@ -5,7 +5,8 @@ from typing import List, Tuple, Dict
 
 def load_microbiome_datasets_with_targets(
     data_folder: str,
-    ) -> Tuple[List[pd.DataFrame], List[pd.DataFrame], List[str]]:
+    include_confounders: bool = False,
+    ) -> Tuple:
     
     """
     Load microbiome datasets and targets,
@@ -21,12 +22,13 @@ def load_microbiome_datasets_with_targets(
 
     microbiome_dataframes = []
     target_dataframes = []
+    confounder_dataframes = []
     dataset_names = []
 
     for subdir in data_path.iterdir():
         if subdir.is_dir():
             microbiome_file = subdir / "microbiome.csv"
-            target_file = subdir / "target.csv"
+            target_file     = subdir / "target.csv"
 
             if microbiome_file.exists() and target_file.exists():
                 # try:
@@ -69,13 +71,24 @@ def load_microbiome_datasets_with_targets(
                 target_df = target_df.loc[microbiome_df.index]
                 target_df = process_target_labels(target_df)
 
+                # Load confounders if requested
+                if include_confounders:
+                    conf_file = subdir / "confounders.csv"
+                    if conf_file.exists():
+                        conf_df = pd.read_csv(conf_file)
+                        conf_df = conf_df[conf_df['ID'].isin(processed_df.index)]
+                        conf_df = conf_df.set_index('ID').reindex(processed_df.index).reset_index()
+                    else:
+                        conf_df = None
+                    confounder_dataframes.append(conf_df)
+
                 # Save
-                microbiome_dataframes.append(processed_df )
+                microbiome_dataframes.append(processed_df)
                 target_dataframes.append(target_df)
                 dataset_names.append(subdir.name)
 
                 print(f"Loaded {subdir.name}:")
-                print(f"  Microbiome: {processed_df .shape[0]} samples, {processed_df .shape[1]} microbes")
+                print(f"  Microbiome: {processed_df.shape[0]} samples, {processed_df.shape[1]} microbes")
                 print(f"  Targets: {len(target_df)} samples, {target_df.value_counts().to_dict()}")
 
                 # except Exception as e:
@@ -84,6 +97,8 @@ def load_microbiome_datasets_with_targets(
     if not microbiome_dataframes:
         raise ValueError(f"No valid dataset pairs found in {data_folder}")
 
+    if include_confounders:
+        return microbiome_dataframes, target_dataframes, dataset_names, confounder_dataframes
     return microbiome_dataframes, target_dataframes, dataset_names
 
 
