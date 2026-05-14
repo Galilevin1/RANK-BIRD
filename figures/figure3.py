@@ -1,284 +1,386 @@
 """
-Figure 3: Microbiome abundance heatmap per phenotype.
+Figure 3: Normalization and stability overview.
 
-Shows all samples (rows) × top-varying common features (columns), z-scored
-for visualization, with datasets stacked and separated by horizontal lines.
-Generated for both raw and normalized data.
+  3A — Schematic (user-provided image)
+  3B — Stability threshold investigation (drawn directly from CSVs)
+  3C — Distribution comparison: Original vs RANK-BIRD (Metagenomics | Amplicon | All)
+  3D — UMAP scatter: raw vs RANK-BIRD normalized, per phenotype
+  3E — Manually provided image (e.g. Taxa_Filtering.pdf)
 
-Usage
------
-    from figures.figure3 import plot_figure3, run_figure3
+Main figure
+-----------
+    assemble_figure3(path_3a, investigation_dir_3b, investigation_dir_3c,
+                     data_root_3d, phenotypes_3d, normalization_approach, path_3e)
 
-    # generate for one phenotype
-    fig = plot_figure3(
-        microbiome_dfs, dataset_names, phenotype_name,
-        normalization_approach="rankbird_wasserstein"
-    )
-    fig.savefig(...)
-
-    # or use the pipeline runner (calls plot_figure3 for every phenotype)
-    run_figure3(phenotypes, data_root, figures_dir, normalization_approach="rankbird_wasserstein")
+Supplementary (one file per phenotype for 3D; one combined file for 3C)
+------------------------------------------------------------------------
+    run_figure3c(investigation_dir, figures_dir)
+    run_figure3d(phenotypes, data_root, figures_dir, normalization_approach)
 """
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 import matplotlib.patches as mpatches
-import seaborn as sns
-from itertools import combinations
+import matplotlib.gridspec as mgridspec
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
-from scipy.stats import ks_2samp
-from statsmodels.stats.multitest import multipletests
 
-from utils.microbe_names import rename_microbes
+# ─────────────────────────────────────────────────────────────
+# Generic image loader (PNG/JPG + PDF via PyMuPDF)
+# ─────────────────────────────────────────────────────────────
+
+def _find_any_image(directory: Path) -> Optional[Path]:
+    """Return the first image file (png/jpg/jpeg/pdf) found in directory."""
+    for pattern in ("*.png", "*.jpg", "*.jpeg", "*.PNG", "*.JPG", "*.pdf", "*.PDF"):
+        matches = list(directory.glob(pattern))
+        if matches:
+            return matches[0]
+    return None
+
+
+def _load_any_image(path: Path) -> Optional[np.ndarray]:
+    """Load an image from path. Supports PNG/JPG and PDF (first page)."""
+    path = Path(path)
+    if path.suffix.lower() == ".pdf":
+        # Try PyMuPDF
+        try:
+            import fitz
+            doc  = fitz.open(str(path))
+            page = doc[0]
+            pix  = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+        except ImportError:
+            pass
+        # Try pdf2image
+        try:
+            from pdf2image import convert_from_path
+            pages = convert_from_path(str(path), dpi=150)
+            if pages:
+                return np.array(pages[0])
+        except ImportError:
+            pass
+        # Try PIL directly (works if Ghostscript is installed)
+        try:
+            from PIL import Image
+            img = Image.open(str(path))
+            return np.array(img)
+        except Exception:
+            pass
+        print("  Cannot load PDF — install pymupdf (`pip install pymupdf`) or "
+              "pdf2image (`pip install pdf2image`) to render PDF panels.")
+        return None
+    else:
+        return mpimg.imread(str(path))
 
 
 # ─────────────────────────────────────────────────────────────
-# KS significance helper
+# UMAP scatter (shared by 3D panels)
 # ─────────────────────────────────────────────────────────────
 
-def _compute_ks_significance(
-    microbiome_dfs: List[pd.DataFrame],
-    common_features,
-    dataset_names: List[str],
-    alpha: float = 0.05,
-) -> Tuple[pd.DataFrame, List[str], List[str]]:
-    """
-    For each microbial feature perform pairwise KS tests across all dataset
-    pairs, apply Benjamini–Hochberg FDR correction, and return:
-        ks_df              — full per-feature × per-pair results
-        sig_raw_microbes   — features significant before FDR
-        sig_fdr_microbes   — features significant after FDR
-    """
-    rows = []
-    for feature in common_features:
-        for i, j in combinations(range(len(microbiome_dfs)), 2):
-            stat, p = ks_2samp(
-                microbiome_dfs[i][feature].values,
-                microbiome_dfs[j][feature].values,
+_DTYPE_COLORS  = {"Metagenomics": "#1f77b4", "Amplicon": "#d62728"}   # blue / red
+_CASE_EDGE     = "black"   # border color for case (target=1) samples
+
+
+def _umap_scatter(
+    ax: plt.Axes,
+    X: pd.DataFrame,
+    targets: np.ndarray,
+    dtypes: np.ndarray,
+    title: str,
+) -> None:
+    """Run UMAP on X and draw scatter. color=dtype, black border=case samples."""
+    from sklearn.preprocessing import StandardScaler
+    try:
+        import umap
+        reducer = umap.UMAP(n_components=2, random_state=42)
+        x_label, y_label = "UMAP 1", "UMAP 2"
+    except ImportError:
+        from sklearn.decomposition import PCA
+        reducer = PCA(n_components=2, random_state=42)
+        x_label, y_label = "PC1", "PC2"
+        print("  umap-learn not installed — falling back to PCA. "
+              "Install with: pip install umap-learn")
+
+    Xs     = StandardScaler().fit_transform(X.fillna(0))
+    coords = reducer.fit_transform(Xs)
+
+    for dtype in sorted(set(dtypes)):
+        color = _DTYPE_COLORS.get(dtype, "#888888")
+        mask_d = dtypes == dtype
+        for tgt in sorted(set(targets)):
+            mask = mask_d & (targets == tgt)
+            if mask.sum() == 0:
+                continue
+            edge  = _CASE_EDGE if int(tgt) == 1 else "none"
+            lw    = 0.7 if int(tgt) == 1 else 0
+            ax.scatter(
+                coords[mask, 0], coords[mask, 1],
+                c=color, marker="o",
+                s=18, alpha=0.65,
+                edgecolors=edge, linewidths=lw,
             )
-            rows.append({
-                "microbe":   feature,
-                "dataset1":  dataset_names[i],
-                "dataset2":  dataset_names[j],
-                "ks_stat":   stat,
-                "p_value":   p,
-                "significant_raw": p < alpha,
-            })
 
-    ks_df = pd.DataFrame(rows)
-    reject, p_fdr, _, _ = multipletests(ks_df["p_value"], method='fdr_bh')
-    ks_df["p_fdr"]         = p_fdr
-    ks_df["significant_fdr"] = reject
-
-    sig_raw = (ks_df.groupby("microbe")["significant_raw"]
-               .max().pipe(lambda s: s[s].index.tolist()))
-    sig_fdr = (ks_df.groupby("microbe")["significant_fdr"]
-               .max().pipe(lambda s: s[s].index.tolist()))
-
-    return ks_df, sig_raw, sig_fdr
+    ax.set_xlabel(x_label, fontsize=32, labelpad=4)
+    ax.set_ylabel(y_label, fontsize=32, labelpad=4)
+    ax.set_title(title, fontsize=34, fontweight="bold")
+    ax.tick_params(labelsize=26)
+    ax.margins(0.05)
 
 
 # ─────────────────────────────────────────────────────────────
-# Single heatmap
+# Figure 3B: stability threshold investigation (direct draw)
 # ─────────────────────────────────────────────────────────────
 
-def _make_heatmap(
-    microbiome_dfs: List[pd.DataFrame],
-    dataset_names: List[str],
-    phenotype_name: str,
-    max_features: int = 50,
-    label_suffix: str = "",
+def plot_figure3b(
+    investigation_dir: str,
+    ax=None,
+    plot_mode: str = "combined",
+    plot_levels: list = None,
+    combined_subdir: str = "stability_threshold_rankbird_wasserstein_combined",
+    force_single_row: bool = False,
+    stacked: bool = False,
 ) -> plt.Figure:
     """
-    Build one heatmap figure from a list of (possibly already normalized)
-    microbiome DataFrames.
+    Draw the stability threshold investigation grid directly onto axes.
 
-    Steps
-    -----
-    1. Intersect columns → common features
-    2. KS test → report significance
-    3. Select top-`max_features` by variance
-    4. Z-score the combined matrix (for display only)
-    5. Rename features
-    6. Plot with dataset separator lines
+    Loads pre-computed CSVs from investigation_dir and calls _plot_sweep_panel
+    for each (level × dtype) cell — same pattern as plot_figure3c/plot_figure3d.
+
+    Four columns: Metagenomics | Amplicon | All datasets | Combined (cross-dtype).
+    Combined data is loaded from investigation_dir/combined_subdir/.
+
+    Parameters
+    ----------
+    investigation_dir : path to dir produced by run_stability_investigation
+    ax                : embed into this axes' bounding box when provided
+    plot_mode         : "mean", "median", or "combined"
+    plot_levels       : subset of LEVELS keys to include; None = all
+    combined_subdir   : subdirectory name holding cross-dtype CSV files
     """
-    # 1. Common features
-    common = microbiome_dfs[0].columns
-    for df in microbiome_dfs[1:]:
-        common = common.intersection(df.columns)
-
-    if len(common) == 0:
-        raise ValueError(f"No common features for {phenotype_name}")
-
-    # 2. KS significance
-    _, _, sig_fdr = _compute_ks_significance(microbiome_dfs, common, dataset_names)
-    pct_sig = 100 * len(sig_fdr) / len(common)
-    print(f"  KS (FDR): {len(sig_fdr)}/{len(common)} significant microbes "
-          f"({pct_sig:.1f}%)")
-
-    # 3. Top features by variance
-    if len(common) > max_features:
-        all_data = pd.concat([df[common] for df in microbiome_dfs], axis=0)
-        common = all_data.var().sort_values(ascending=False).head(max_features).index
-
-    # 4. Z-score combined matrix
-    aligned = [df[common] for df in microbiome_dfs]
-    X = pd.concat(aligned, axis=0)
-    X_z = (X - X.mean()) / (X.std() + 1e-10)
-    X_z = X_z.fillna(0)
-
-    # Dataset boundary positions
-    boundaries = [0]
-    for df in aligned:
-        boundaries.append(boundaries[-1] + len(df))
-
-    # 5. Rename features
-    X_z.columns = rename_microbes(X_z.columns.tolist())
-
-    # 6. Plot
-    n_samples  = len(X_z)
-    n_features = len(X_z.columns)
-    fig_w = max(14, n_features * 0.28)
-    fig_h = max(10, n_samples  * 0.025)
-
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-
-    sns.heatmap(
-        X_z,
-        cmap='RdBu_r', center=0, robust=True,
-        vmin=-3, vmax=3,
-        yticklabels=False, xticklabels=False,
-        cbar=False,
-        ax=ax,
+    from experiments.investigate_stability_threshold import (
+        _plot_sweep_panel, LEVELS, _BEST_THRESHOLDS,
+        _aggregate_raw_to_sweep, _merge_sweep_dfs, _sum_count_dfs, _merge_orig_aucs,
     )
 
-    # Separator lines between datasets
-    for b in boundaries[1:-1]:
-        ax.axhline(y=b, color='black', linewidth=3)
+    DISPLAY_DTYPES = ["Metagenomics", "Amplicon", "All datasets", "Combined"]
 
-    # Dataset labels on the left
-    for i, name in enumerate(dataset_names):
-        y_mid = (boundaries[i] + boundaries[i + 1]) / 2
-        ax.text(-0.01, y_mid, name,
-                ha='right', va='center', fontsize=16, fontweight='bold',
-                transform=ax.get_yaxis_transform())
+    inv_dir        = Path(investigation_dir)
+    comb_dir       = inv_dir / combined_subdir
+    levels_to_plot = [(l, lbl) for l, lbl in LEVELS
+                      if plot_levels is None or l in plot_levels]
+    nrows, ncols   = len(levels_to_plot), len(DISPLAY_DTYPES)
 
-    ax.text(0.5, -0.02,
-            f'KS significant microbes (FDR): {len(sig_fdr)}/{len(common)} '
-            f'({pct_sig:.1f}%)',
-            ha='center', va='top', transform=ax.transAxes,
-            fontsize=11, color='dimgrey')
+    # ── Load CSVs — per-dtype (Metagenomics / Amplicon) ──────
+    raw_store, count_store, orig_store = {}, {}, {}
+    for level, _ in LEVELS:
+        for dd in ["Metagenomics", "Amplicon"]:
+            base = f"{dd.lower()}_{level or 'all'}"
+            cp = inv_dir / f"microbe_counts_{base}.csv"
+            if cp.exists():
+                count_store[(level, dd)] = pd.read_csv(cp)
+            op = inv_dir / f"original_auc_{base}.csv"
+            if op.exists():
+                orig_store[(level, dd)] = pd.read_csv(op).iloc[0].to_dict()
+            for suffix in ("_full_raw", "_full", "_filter_only_raw", "_filter_only"):
+                candidate = inv_dir / f"auc_sweep_{base}{suffix}.csv"
+                if candidate.exists():
+                    raw_store[(level, dd)] = pd.read_csv(candidate)
+                    break
 
-    plt.tight_layout()
+    # ── Load CSVs — cross-dtype Combined ─────────────────────
+    if comb_dir.exists():
+        for level, _ in LEVELS:
+            base = f"combined_{level or 'all'}"
+            cp = comb_dir / f"microbe_counts_{base}.csv"
+            if cp.exists():
+                count_store[(level, "Combined")] = pd.read_csv(cp)
+            op = comb_dir / f"original_auc_{base}.csv"
+            if op.exists():
+                orig_store[(level, "Combined")] = pd.read_csv(op).iloc[0].to_dict()
+            for suffix in ("_full_raw", "_full", "_filter_only_raw", "_filter_only"):
+                candidate = comb_dir / f"auc_sweep_{base}{suffix}.csv"
+                if candidate.exists():
+                    raw_store[(level, "Combined")] = pd.read_csv(candidate)
+                    break
+
+    # ── Build panel_data ──────────────────────────────────────
+    panel_data = {}
+    for level, _ in LEVELS:
+        # Pool Metagenomics + Amplicon raws for "All datasets"
+        all_raws = [df for (l, d), df in raw_store.items()
+                    if l == level and d in ("Metagenomics", "Amplicon")
+                    and df is not None and not df.empty]
+        all_raw  = pd.concat(all_raws, ignore_index=True) if all_raws else pd.DataFrame()
+
+        for display_dtype in DISPLAY_DTYPES:
+            if display_dtype == "All datasets":
+                if all_raw.empty:
+                    panel_data[(level, display_dtype)] = None
+                    continue
+                sweep_df  = (_merge_sweep_dfs(all_raw) if "mean_auc" in all_raw.columns
+                             else _aggregate_raw_to_sweep(all_raw))
+                count_dfs = [df for (l, d), df in count_store.items()
+                             if l == level and d in ("Metagenomics", "Amplicon")]
+                count_df  = _sum_count_dfs(count_dfs) if count_dfs else None
+                orig_dcts = [d for (l, dd), d in orig_store.items()
+                             if l == level and dd in ("Metagenomics", "Amplicon")]
+                orig_auc  = _merge_orig_aucs(orig_dcts) if orig_dcts else {}
+            else:
+                raw_src = raw_store.get((level, display_dtype), pd.DataFrame())
+                if raw_src is None or (hasattr(raw_src, "empty") and raw_src.empty):
+                    panel_data[(level, display_dtype)] = None
+                    continue
+                sweep_df = (raw_src if "mean_auc" in raw_src.columns
+                            else _aggregate_raw_to_sweep(raw_src))
+                if sweep_df.empty:
+                    panel_data[(level, display_dtype)] = None
+                    continue
+                count_df = count_store.get((level, display_dtype))
+                orig_auc = orig_store.get((level, display_dtype), {})
+                if count_df is None:
+                    panel_data[(level, display_dtype)] = None
+                    continue
+
+            panel_data[(level, display_dtype)] = (sweep_df, count_df, orig_auc, None)
+
+    # ── Compute display grid ──────────────────────────────────
+    total_panels = nrows * ncols
+    if nrows == 1 and ncols == 4:
+        if force_single_row:
+            grid_nrows, grid_ncols = 1, 4
+        elif stacked:
+            grid_nrows, grid_ncols = 4, 1
+        else:
+            grid_nrows, grid_ncols = 2, 2
+    else:
+        grid_nrows, grid_ncols = nrows, ncols
+
+    # ── Create axes ───────────────────────────────────────────
+    _standalone  = ax is None
+    _LEGEND_FRAC = 0.13
+
+    if _standalone:
+        fig, _arr = plt.subplots(grid_nrows, grid_ncols,
+                                 figsize=(14 * grid_ncols, 7 * grid_nrows), squeeze=False)
+        axes = [list(row) for row in _arr]
+    else:
+        fig = ax.figure
+        ax.set_visible(False)
+        bb  = ax.get_position()
+        if stacked:
+            # Legend goes inside first panel — no right fraction needed
+            gs = mgridspec.GridSpec(
+                grid_nrows, grid_ncols, figure=fig,
+                left=bb.x0, right=bb.x1,
+                bottom=bb.y0, top=bb.y1,
+                hspace=0.55, wspace=0,
+            )
+        else:
+            gs = mgridspec.GridSpec(
+                grid_nrows, grid_ncols, figure=fig,
+                left=bb.x0, right=bb.x1 - bb.width * _LEGEND_FRAC,
+                bottom=bb.y0, top=bb.y1,
+                hspace=0.4, wspace=0.3,
+            )
+        axes = [[fig.add_subplot(gs[r, c]) for c in range(grid_ncols)] for r in range(grid_nrows)]
+
+    _DTYPE_DISPLAY = {
+        "Metagenomics": "Metagenomics",
+        "Amplicon":     "Amplicon",
+        "All datasets": "All dtypes",
+        "Combined":     "Cross dtypes",
+    }
+
+    # ── Draw panels (flat enumeration → 2-D grid position) ───
+    _legend_lines, _legend_labels = [], []
+    panel_seq = [
+        (level, level_label, display_dtype)
+        for level, level_label in levels_to_plot
+        for display_dtype in DISPLAY_DTYPES
+    ]
+    for flat_idx, (level, level_label, display_dtype) in enumerate(panel_seq):
+        grid_r = flat_idx // grid_ncols
+        grid_c = flat_idx % grid_ncols
+        sub_ax = axes[grid_r][grid_c]
+        data   = panel_data.get((level, display_dtype))
+        if data is None:
+            sub_ax.set_visible(False)
+            continue
+        sweep_df, count_df, orig_auc, fo_df = data
+        _title = _DTYPE_DISPLAY.get(display_dtype, display_dtype)
+        result = _plot_sweep_panel(
+            sub_ax, sweep_df, count_df,
+            title=_title,
+            original_auc=orig_auc,
+            filter_only_df=fo_df,
+            plot_mode=plot_mode,
+            threshold_percentile=_BEST_THRESHOLDS.get(display_dtype),
+            show_left_yticks=(grid_c == 0),
+            show_right_yticks=(grid_c == grid_ncols - 1),
+        )
+        if not _legend_lines and result:
+            _legend_lines, _legend_labels = result
+
+    # ── Stacked mode: hide x-ticks/labels on all but the bottom panel ──
+    if stacked:
+        for r in range(grid_nrows - 1):
+            for c in range(grid_ncols):
+                axes[r][c].tick_params(axis="x", which="both",
+                                       bottom=False, labelbottom=False)
+                axes[r][c].set_xlabel("")
+
+    # ── Legend ────────────────────────────────────────────────
+    if _legend_lines:
+        if stacked and _standalone:
+            # Legend outside the figure to the right
+            fig.legend(
+                _legend_lines, _legend_labels,
+                loc="center left", bbox_to_anchor=(1.01, 0.5),
+                fontsize=22, framealpha=0.9,
+                title="Legend", title_fontsize=24,
+                borderpad=1.2, labelspacing=0.8,
+            )
+            plt.tight_layout()
+            fig.subplots_adjust(right=0.78)
+        elif stacked:
+            # Embedded stacked: legend inside the first (top) panel
+            axes[0][0].legend(
+                _legend_lines, _legend_labels,
+                loc="upper right", fontsize=22, framealpha=0.9,
+                title="Legend", title_fontsize=24,
+                borderpad=1.2, labelspacing=0.8,
+            )
+        elif _standalone:
+            plt.tight_layout(rect=[0, 0, 1 - _LEGEND_FRAC, 1])
+            fig.legend(_legend_lines, _legend_labels,
+                       loc="center right", bbox_to_anchor=(0.99, 0.5),
+                       fontsize=22, framealpha=0.9,
+                       title="Legend", title_fontsize=24,
+                       borderpad=1.2, labelspacing=0.8)
+        else:
+            fig.legend(_legend_lines, _legend_labels,
+                       loc="center left",
+                       bbox_to_anchor=(bb.x1 - bb.width * _LEGEND_FRAC + 0.005,
+                                       bb.y0 + bb.height / 2),
+                       fontsize=10, framealpha=0.9,
+                       title="Legend", title_fontsize=11)
     return fig
 
 
 # ─────────────────────────────────────────────────────────────
-# Public interface
+# Figure 3C: distribution comparison
 # ─────────────────────────────────────────────────────────────
 
-def plot_figure3(
-    microbiome_dfs: List[pd.DataFrame],
-    dataset_names: List[str],
-    phenotype_name: str,
-    normalization_approach=None,
-    max_features: int = 50,
-) -> plt.Figure:
+def plot_figure3c(investigation_dir: str, ax=None, stacked: bool = False) -> plt.Figure:
     """
-    Generate one figure 3 heatmap for a phenotype.
+    Three-panel distribution comparison: Original vs RANK-BIRD.
+    Panels: Metagenomics | Amplicon | All datasets.
 
-    If normalization_approach is not None, the normalization pipeline is applied
-    first and the figure is labelled accordingly. Otherwise raw data is used.
-    """
-    if normalization_approach is not None:
-        from src.rankbird.normalization.pipeline import apply_normalization_pipeline
-        print(f"  Applying normalization pipeline for {phenotype_name}")
-        microbiome_dfs, dataset_names = apply_normalization_pipeline(
-            list(microbiome_dfs), list(dataset_names)
-        )
-        label_suffix = f" ({normalization_approach})"
-    else:
-        label_suffix = " (raw)"
-
-    print(f"  Building heatmap for {phenotype_name}{label_suffix}")
-    return _make_heatmap(microbiome_dfs, dataset_names, phenotype_name,
-                         max_features=max_features, label_suffix=label_suffix)
-
-
-def run_figure3(
-    phenotypes: List[Tuple[str, str]],
-    data_root: str,
-    figures_dir: str,
-    normalization_approach=None,
-    max_features: int = 50,
-):
-    """
-    Run figure 3 for all phenotypes and save results to figures_dir.
-
-    Parameters
-    ----------
-    phenotypes : list of (phenotype, dtype) tuples
-    data_root : str
-        Root folder containing phenotype subfolders.
-    figures_dir : str
-        Where to save the PNG files.
-    normalization_approach : str or None
-        Normalization approach to apply, or None for raw data.
-    max_features : int
-        Maximum number of features shown per heatmap.
-    """
-    from evaluation.data_loading import load_microbiome_datasets_with_targets
-
-    out = Path(figures_dir)
-    data = Path(data_root)
-
-    for phenotype, dtype in phenotypes:
-        pheno_str = f"{phenotype} {dtype}"
-        folder = data / pheno_str
-
-        if not folder.exists():
-            print(f"  Skipping {pheno_str}: folder not found")
-            continue
-
-        print(f"\n{'='*50}\nFigure 3: {pheno_str}\n{'='*50}")
-        try:
-            microbiome_dfs, _, dataset_names = load_microbiome_datasets_with_targets(str(folder))
-        except Exception as e:
-            print(f"  Error loading {pheno_str}: {e}")
-            continue
-
-        if len(dataset_names) < 2:
-            print(f"  Skipping {pheno_str}: need ≥2 datasets")
-            continue
-
-        try:
-            fig = plot_figure3(
-                microbiome_dfs, dataset_names, pheno_str,
-                normalization_approach=normalization_approach,
-                max_features=max_features,
-            )
-            safe   = pheno_str.replace(" ", "_")
-            mode   = normalization_approach or "raw"
-            fig.savefig(out / f"figure3_{safe}_{mode}.png",
-                        dpi=300, bbox_inches='tight')
-            plt.close(fig)
-            print(f"  Saved figure 3 for {pheno_str}")
-
-        except Exception as e:
-            print(f"  Error generating figure 3 for {pheno_str}: {e}")
-
-
-# ─────────────────────────────────────────────────────────────
-# Figure 3C: distribution approach — All datasets, original vs RANK-BIRD only
-# ─────────────────────────────────────────────────────────────
-
-def plot_figure3c(investigation_dir: str) -> plt.Figure:
-    """
-    Load existing distribution-investigation CSVs and produce three panels
-    (Metagenomics, Amplicon, All datasets) comparing only Original vs RANK-BIRD.
+    stacked=False (default): panels side by side (standalone figure)
+    stacked=True           : panels stacked vertically (used in assembled figure)
     """
     from experiments.investigate_distribution_approach import (
         _make_combined_df, _draw_panel, APPROACH_LABELS,
@@ -289,13 +391,15 @@ def plot_figure3c(investigation_dir: str) -> plt.Figure:
     keep    = ["original", "rankbird"]
     keep_labels = {APPROACH_LABELS[a] for a in keep} | {"Random (0.5)"}
 
-    def _fix_legend(ax):
-        handles, labels = ax.get_legend_handles_labels()
+    def _fix_legend(sub_ax):
+        handles, labels = sub_ax.get_legend_handles_labels()
         filtered = [(h, l) for h, l in zip(handles, labels) if l in keep_labels]
         if filtered:
             h, l = zip(*filtered)
-            ax.legend(handles=h, labels=l, fontsize=9, framealpha=0.9, loc="lower right")
+            sub_ax.legend(handles=h, labels=l, fontsize=46, framealpha=0.9,
+                          loc="lower right")
 
+    # Load per-dtype results
     all_results: dict = {}
     for dtype in dtypes:
         for approach in keep:
@@ -305,113 +409,147 @@ def plot_figure3c(investigation_dir: str) -> plt.Figure:
             else:
                 print(f"  [SKIP] Missing {csv_path.name}")
 
-    fig, axes = plt.subplots(1, 3, figsize=(24, 6), sharey=True)
+    # Check for cross-dtype Combined results (produced when cross_dtype_normalization=True)
+    has_cross = all(
+        (inv_dir / f"results_combined_{a}.csv").exists() for a in keep
+    )
+    if has_cross:
+        for approach in keep:
+            df = pd.read_csv(inv_dir / f"results_combined_{approach}.csv")
+            all_results[("Combined", approach)] = df
 
-    for ax, dtype in zip(axes[:2], dtypes):
+    # n_panels: Metagenomics | Amplicon | All datasets [| Combined]
+    n_panels = 4 if has_cross else 3
+
+    _standalone = ax is None
+    if _standalone:
+        if stacked:
+            fig, _axes = plt.subplots(n_panels, 1, figsize=(8, 6 * n_panels), sharey=False)
+        else:
+            fig, _axes = plt.subplots(1, n_panels, figsize=(8 * n_panels, 6), sharey=True)
+        axes = list(_axes)
+    else:
+        fig = ax.figure
+        ax.set_visible(False)
+        bb  = ax.get_position()
+        if stacked:
+            gap = 0.012
+            ph  = (bb.height - (n_panels - 1) * gap) / n_panels
+            axes = [
+                fig.add_axes([bb.x0, bb.y1 - (i + 1) * ph - i * gap, bb.width, ph])
+                for i in range(n_panels)
+            ]
+        else:
+            gap = 0.015
+            pw  = (bb.width - (n_panels - 1) * gap) / n_panels
+            axes = [
+                fig.add_axes([bb.x0 + i * (pw + gap), bb.y0, pw, bb.height])
+                for i in range(n_panels)
+            ]
+
+    _panel_kwargs = dict(
+        label_fontsize=72, title_fontsize=66,
+        tick_fontsize=60, legend_fontsize=60,
+        box_width=0.75, dot_size=8,
+    )
+
+    # ── Metagenomics and Amplicon panels ──────────────────────
+    for sub_ax, dtype in zip(axes[:2], dtypes):
         frames = [
             all_results[(dtype, a)].assign(approach=a)
             for a in keep
             if (dtype, a) in all_results and not all_results[(dtype, a)].empty
         ]
         if frames:
-            _draw_panel(ax, pd.concat(frames, ignore_index=True), title=dtype)
-            _fix_legend(ax)
+            _draw_panel(sub_ax, pd.concat(frames, ignore_index=True), title=dtype,
+                        **_panel_kwargs)
+            lgnd = sub_ax.get_legend()
+            if lgnd:
+                lgnd.remove()
         else:
-            ax.set_title(f"{dtype} — no data", fontsize=11)
+            sub_ax.set_title(f"{dtype} — no data", fontsize=11)
 
+    # ── All datasets panel (Metagenomics + Amplicon pooled) ───
     combined_df = _make_combined_df(all_results, dtypes)
     if not combined_df.empty:
         combined_df = combined_df[combined_df["approach"].isin(keep)]
-        _draw_panel(axes[2], combined_df, title="All datasets")
-        _fix_legend(axes[2])
+        _draw_panel(axes[2], combined_df, title="All dtypes", **_panel_kwargs)
+        lgnd = axes[2].get_legend()
+        if lgnd:
+            lgnd.remove()
     else:
-        axes[2].set_title("All datasets — no data", fontsize=11)
+        axes[2].set_title("All dtypes — no data", fontsize=11)
 
-    plt.tight_layout()
+    # ── Combined cross-dtype panel (optional) ─────────────────
+    if has_cross:
+        cross_frames = [
+            all_results[("Combined", a)].assign(approach=a)
+            for a in keep
+            if ("Combined", a) in all_results and not all_results[("Combined", a)].empty
+        ]
+        if cross_frames:
+            _draw_panel(axes[3], pd.concat(cross_frames, ignore_index=True),
+                        title="Cross dtypes", **_panel_kwargs)
+            _fix_legend(axes[3])
+        else:
+            axes[3].set_title("Cross dtypes — no data", fontsize=11)
+    else:
+        # Legend on the last visible panel
+        _fix_legend(axes[2])
+
+    if stacked:
+        # xlabel "Protocol" only on bottom panel; ylabel "AUC" on all
+        for sub_ax in axes[:-1]:
+            sub_ax.set_xlabel("")
+        axes[-1].set_xlabel("Protocol", fontsize=52, fontweight="bold")
+    else:
+        # xlabel only on middle panel; ylabel only on leftmost
+        for sub_ax in axes:
+            sub_ax.set_xlabel("")
+        axes[n_panels // 2].set_xlabel("Protocol", fontsize=52, fontweight="bold")
+        for sub_ax in axes[1:]:
+            sub_ax.set_ylabel("")
+
+    if _standalone:
+        plt.tight_layout()
     return fig
 
 
 def run_figure3c(investigation_dir: str, figures_dir: str) -> None:
-    """Generate and save Figure 3C."""
+    """Generate and save Figure 3C (standalone supplementary)."""
     out = Path(figures_dir)
     out.mkdir(parents=True, exist_ok=True)
-    print("\nBuilding Figure 3C: Original vs RANK-BIRD (All datasets)")
+    out_path = out / "figure3c_original_vs_rankbird.png"
+    if out_path.exists():
+        print("  Skipping Figure 3C: already saved")
+        return
+    print("\nBuilding Figure 3C: Original vs RANK-BIRD")
     fig = plot_figure3c(investigation_dir)
-    fig.savefig(out / "figure3c_original_vs_rankbird.png", dpi=300, bbox_inches="tight")
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    print(f"  Saved Figure 3C")
+    print("  Saved Figure 3C")
 
 
 # ─────────────────────────────────────────────────────────────
-# Figure 3D: PCA scatter per phenotype — target vs dtype/dataset separation
+# Figure 3D: PCA scatter — raw vs normalized
 # ─────────────────────────────────────────────────────────────
-
-_DTYPE_MARKERS = {"Metagenomics": "o", "Amplicon": "^"}
-_TARGET_COLORS = {0: "#4878D0", 1: "#EE854A"}   # blue=control, orange=case
-_TARGET_LABELS = {0: "Control", 1: "Case"}
-
-
-def _pca_scatter(
-    ax: plt.Axes,
-    X: pd.DataFrame,
-    targets: np.ndarray,
-    dtypes: np.ndarray,
-    title: str,
-) -> None:
-    """Run PCA on X and draw scatter on ax. color=target, shape=dtype."""
-    from sklearn.decomposition import PCA
-    from sklearn.preprocessing import StandardScaler
-
-    Xs = StandardScaler().fit_transform(X.fillna(0))
-    pca = PCA(n_components=2, random_state=42)
-    coords = pca.fit_transform(Xs)
-    var = pca.explained_variance_ratio_
-
-    unique_dtypes = sorted(set(dtypes))
-    unique_targets = sorted(set(targets))
-
-    for dtype in unique_dtypes:
-        marker = _DTYPE_MARKERS.get(dtype, "s")
-        mask_d = dtypes == dtype
-        for tgt in unique_targets:
-            mask = mask_d & (targets == tgt)
-            if mask.sum() == 0:
-                continue
-            ax.scatter(
-                coords[mask, 0], coords[mask, 1],
-                c=_TARGET_COLORS.get(int(tgt), "#888888"),
-                marker=marker,
-                s=18, alpha=0.65, linewidths=0,
-            )
-
-    ax.set_xlabel(f"PC1 ({var[0]*100:.1f}%)", fontsize=9)
-    ax.set_ylabel(f"PC2 ({var[1]*100:.1f}%)", fontsize=9)
-    ax.set_title(title, fontsize=10, fontweight="bold")
-    ax.tick_params(labelsize=7)
-
 
 def plot_figure3d(
     phenotype_name: str,
     microbiome_dfs_by_dtype: Dict[str, List[pd.DataFrame]],
     target_dfs_by_dtype: Dict[str, List[pd.DataFrame]],
     dataset_names_by_dtype: Dict[str, List[str]],
-    normalization_approach: Optional[str] = "rankbird_wasserstein",
 ) -> plt.Figure:
     """
-    Generate figure 3d for one phenotype: two PCA scatter panels (raw | normalized).
-
-    Parameters
-    ----------
-    phenotype_name : str
-    microbiome_dfs_by_dtype : {'Metagenomics': [...], 'Amplicon': [...]}
-    target_dfs_by_dtype     : matching target DataFrames
-    dataset_names_by_dtype  : matching dataset name lists
-    normalization_approach  : passed to apply_normalization_pipeline; None skips norm panel
+    Two-panel UMAP scatter for one phenotype: Raw (left) | RANK-BIRD (right).
+    Always renders both panels. Color = dtype, black border = case (target=1).
     """
-    dtypes_present = [d for d in ["Metagenomics", "Amplicon"] if d in microbiome_dfs_by_dtype]
+    from src.rankbird.normalization.pipeline import apply_normalization_pipeline
 
-    # ── flatten all datasets in a consistent order ──────────────────────────
-    all_mb, all_tgt, all_names, all_dtypes_label = [], [], [], []
+    dtypes_present = [d for d in ["Metagenomics", "Amplicon"]
+                      if d in microbiome_dfs_by_dtype]
+
+    all_mb, all_tgt, all_names, all_dtype_labels = [], [], [], []
     for dtype in dtypes_present:
         for mb, tgt, name in zip(
             microbiome_dfs_by_dtype[dtype],
@@ -421,101 +559,86 @@ def plot_figure3d(
             all_mb.append(mb)
             all_tgt.append(tgt)
             all_names.append(name)
-            all_dtypes_label.extend([dtype] * len(mb))
+            all_dtype_labels.extend([dtype] * len(mb))
 
-    # ── common features (raw) ───────────────────────────────────────────────
+    def _build_arrays(mb_list, tgt_list, dtype_labels, common_cols):
+        X = pd.concat([df[common_cols] for df in mb_list], axis=0, ignore_index=True)
+        tgt_arr = np.concatenate([
+            t.iloc[:, 0].values if isinstance(t, pd.DataFrame) else t.values
+            for t in tgt_list
+        ])
+        return X, tgt_arr, np.array(dtype_labels)
+
+    fig, axes = plt.subplots(1, 2, figsize=(26, 11))
+
+    # ── Left: raw ─────────────────────────────────────────────
     common_raw = all_mb[0].columns
     for df in all_mb[1:]:
         common_raw = common_raw.intersection(df.columns)
 
-    n_cols = 2 if normalization_approach is not None else 1
-    fig, axes = plt.subplots(1, n_cols, figsize=(7 * n_cols, 6))
-    if n_cols == 1:
-        axes = [axes]
-
-    # ── helper: build (X, targets, dtype_arr) arrays ────────────────────────
-    def _build_arrays(mb_list, tgt_list, dtype_labels, common_cols):
-        X = pd.concat([df[common_cols] for df in mb_list], axis=0, ignore_index=True)
-        tgt_arr = np.concatenate([
-            tgt.iloc[:, 0].values if isinstance(tgt, pd.DataFrame) else tgt.values
-            for tgt in tgt_list
-        ])
-        dtype_arr = np.array(dtype_labels)
-        return X, tgt_arr, dtype_arr
-
-    # ── Panel 1: raw ─────────────────────────────────────────────────────────
     if len(common_raw) == 0:
-        axes[0].text(0.5, 0.5, "No common features (raw)", ha="center", va="center",
-                     transform=axes[0].transAxes)
-        axes[0].set_title("Raw", fontsize=10, fontweight="bold")
+        axes[0].text(0.5, 0.5, "No common features (raw)",
+                     ha="center", va="center", transform=axes[0].transAxes)
+        axes[0].set_title("Raw", fontsize=24, fontweight="bold")
     else:
-        print(f"  [3d] {phenotype_name}: {len(common_raw)} common raw features")
-        X_raw, tgt_raw, dt_raw = _build_arrays(all_mb, all_tgt, all_dtypes_label, common_raw)
-        _pca_scatter(axes[0], X_raw, tgt_raw, dt_raw, title="Raw")
+        X_raw, tgt_raw, dt_raw = _build_arrays(
+            all_mb, all_tgt, all_dtype_labels, common_raw)
+        _umap_scatter(axes[0], X_raw, tgt_raw, dt_raw, title="Raw")
 
-    # ── Panel 2: normalized ───────────────────────────────────────────────────
-    if normalization_approach is not None:
-        try:
-            from src.rankbird.normalization.pipeline import apply_normalization_pipeline
-            norm_mb, norm_names = apply_normalization_pipeline(
-                list(all_mb), list(all_names)
-            )
-            # rebuild dtype labels in the same order as returned names
-            name2dtype = {
-                name: dtype
-                for dtype in dtypes_present
-                for name in dataset_names_by_dtype[dtype]
-            }
-            norm_dtypes = []
-            norm_tgt_list = []
-            name2tgt = {
-                name: tgt
-                for dtype in dtypes_present
-                for name, tgt in zip(dataset_names_by_dtype[dtype], target_dfs_by_dtype[dtype])
-            }
-            for mb_norm, name_norm in zip(norm_mb, norm_names):
-                dtype_for_name = name2dtype.get(name_norm, "Unknown")
-                norm_dtypes.extend([dtype_for_name] * len(mb_norm))
-                norm_tgt_list.append(name2tgt[name_norm])
-
-            common_norm = norm_mb[0].columns
-            for df in norm_mb[1:]:
-                common_norm = common_norm.intersection(df.columns)
-
-            if len(common_norm) == 0:
-                axes[1].text(0.5, 0.5, "No common features (normalized)",
-                             ha="center", va="center", transform=axes[1].transAxes)
-                axes[1].set_title("RANK-BIRD", fontsize=10, fontweight="bold")
-            else:
-                print(f"  [3d] {phenotype_name}: {len(common_norm)} common normalized features")
-                X_norm, tgt_norm, dt_norm = _build_arrays(
-                    norm_mb, norm_tgt_list, norm_dtypes, common_norm
-                )
-                _pca_scatter(axes[1], X_norm, tgt_norm, dt_norm, title="RANK-BIRD")
-
-        except Exception as e:
-            print(f"  [3d] Normalization failed for {phenotype_name}: {e}")
-            axes[1].text(0.5, 0.5, f"Normalization error:\n{e}",
-                         ha="center", va="center", transform=axes[1].transAxes, fontsize=8)
-
-    # ── Shared legend ─────────────────────────────────────────────────────────
-    legend_handles = []
-    for tgt_val in [0, 1]:
-        legend_handles.append(mpatches.Patch(
-            color=_TARGET_COLORS[tgt_val], label=_TARGET_LABELS[tgt_val]
-        ))
-    for dtype in dtypes_present:
-        marker = _DTYPE_MARKERS.get(dtype, "s")
-        legend_handles.append(
-            plt.Line2D([0], [0], marker=marker, color="grey",
-                       linestyle="None", markersize=7, label=dtype)
+    # ── Right: RANK-BIRD normalized ────────────────────────────
+    print(f"  [3D] Normalizing {phenotype_name} for RANK-BIRD panel ...")
+    try:
+        norm_mb, norm_names = apply_normalization_pipeline(
+            list(all_mb), list(all_names),
+            min_samples_per_dataset=0,
         )
-    fig.legend(handles=legend_handles, loc="upper center",
-               ncol=len(legend_handles), fontsize=9,
-               framealpha=0.9, bbox_to_anchor=(0.5, 1.02))
+        name2dtype = {n: d for d in dtypes_present
+                      for n in dataset_names_by_dtype[d]}
+        name2tgt   = {n: t for d in dtypes_present
+                      for n, t in zip(dataset_names_by_dtype[d],
+                                      target_dfs_by_dtype[d])}
+        norm_dtype_labels = []
+        norm_tgt_list     = []
+        for mb_n, name_n in zip(norm_mb, norm_names):
+            norm_dtype_labels.extend([name2dtype.get(name_n, "Unknown")] * len(mb_n))
+            norm_tgt_list.append(name2tgt[name_n])
 
-    fig.suptitle(phenotype_name, fontsize=12, fontweight="bold", y=1.06)
-    plt.tight_layout()
+        common_norm = norm_mb[0].columns
+        for df in norm_mb[1:]:
+            common_norm = common_norm.intersection(df.columns)
+
+        if len(common_norm) == 0:
+            axes[1].text(0.5, 0.5, "No common features (normalized)",
+                         ha="center", va="center", transform=axes[1].transAxes)
+            axes[1].set_title("RANK-BIRD", fontsize=24, fontweight="bold")
+        else:
+            X_norm, tgt_norm, dt_norm = _build_arrays(
+                norm_mb, norm_tgt_list, norm_dtype_labels, common_norm)
+            _umap_scatter(axes[1], X_norm, tgt_norm, dt_norm, title="RANK-BIRD")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        axes[1].text(0.5, 0.5, f"Normalization error:\n{e}",
+                     ha="center", va="center",
+                     transform=axes[1].transAxes, fontsize=11, color="red")
+
+    # ── Shared legend ──────────────────────────────────────────
+    legend_handles = [
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor=_DTYPE_COLORS.get(d, "#888"),
+                   markeredgecolor="none", markersize=11, label=d)
+        for d in dtypes_present
+    ] + [
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="#888888", markeredgecolor=_CASE_EDGE,
+                   markeredgewidth=1.5, markersize=11, label="Case (border)"),
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="#888888", markeredgecolor="none",
+                   markersize=11, label="Control (no border)"),
+    ]
+    plt.tight_layout(rect=[0, 0, 1, 0.84])
+    fig.legend(handles=legend_handles, loc="upper center",
+               ncol=len(legend_handles), fontsize=30,
+               framealpha=0.9, bbox_to_anchor=(0.5, 0.97))
     return fig
 
 
@@ -525,52 +648,41 @@ def run_figure3d(
     figures_dir: str,
     normalization_approach: Optional[str] = "rankbird_wasserstein",
 ) -> None:
-    """
-    Generate and save figure 3d for every phenotype.
-
-    Phenotypes that exist in multiple dtypes (Metagenomics + Amplicon) show
-    both dtypes combined.  Phenotypes with only one dtype are included too.
-
-    Parameters
-    ----------
-    phenotypes : list of (phenotype, dtype) tuples
-    data_root  : root folder containing "<phenotype> <dtype>" subfolders
-    figures_dir: output directory
-    normalization_approach : passed to plot_figure3d
-    """
+    """Generate and save Figure 3D PCA scatter for every phenotype."""
     from evaluation.data_loading import load_microbiome_datasets_with_targets
 
     out  = Path(figures_dir)
+    out.mkdir(parents=True, exist_ok=True)
     data = Path(data_root)
 
-    # ── group (phenotype, dtype) tuples by base phenotype name ───────────────
     pheno_map: Dict[str, List[str]] = {}
     for phenotype, dtype in phenotypes:
         pheno_map.setdefault(phenotype, []).append(dtype)
 
     for phenotype, dtypes_for_pheno in pheno_map.items():
-        print(f"\n{'='*50}\nFigure 3d: {phenotype}\n{'='*50}")
+        safe     = phenotype.replace(" ", "_")
+        out_path = out / f"figure3d_{safe}.png"
+        if out_path.exists():
+            print(f"  Skipping 3D for {phenotype}: already saved")
+            continue
 
-        mb_by_dtype:   Dict[str, List[pd.DataFrame]] = {}
-        tgt_by_dtype:  Dict[str, List[pd.DataFrame]] = {}
-        name_by_dtype: Dict[str, List[str]]           = {}
+        print(f"\n{'='*50}\nFigure 3D: {phenotype}\n{'='*50}")
+        mb_by_dtype, tgt_by_dtype, name_by_dtype = {}, {}, {}
 
         for dtype in dtypes_for_pheno:
             pheno_str = f"{phenotype} {dtype}"
             folder    = data / pheno_str
             if not folder.exists():
-                print(f"  Skipping {pheno_str}: folder not found")
                 continue
             try:
                 mb_dfs, tgt_dfs, ds_names = load_microbiome_datasets_with_targets(str(folder))
             except Exception as e:
                 print(f"  Error loading {pheno_str}: {e}")
                 continue
-            if not mb_dfs:
-                continue
-            mb_by_dtype[dtype]   = mb_dfs
-            tgt_by_dtype[dtype]  = tgt_dfs
-            name_by_dtype[dtype] = ds_names
+            if mb_dfs:
+                mb_by_dtype[dtype]   = mb_dfs
+                tgt_by_dtype[dtype]  = tgt_dfs
+                name_by_dtype[dtype] = ds_names
 
         if not mb_by_dtype:
             print(f"  Skipping {phenotype}: no data loaded")
@@ -584,9 +696,230 @@ def run_figure3d(
                 dataset_names_by_dtype=name_by_dtype,
                 normalization_approach=normalization_approach,
             )
-            safe = phenotype.replace(" ", "_")
-            fig.savefig(out / f"figure3d_{safe}.png", dpi=300, bbox_inches="tight")
+            fig.savefig(out_path, dpi=300, bbox_inches="tight")
             plt.close(fig)
-            print(f"  Saved figure 3d for {phenotype}")
+            print(f"  Saved Figure 3D for {phenotype}")
         except Exception as e:
-            print(f"  Error generating figure 3d for {phenotype}: {e}")
+            print(f"  Error generating 3D for {phenotype}: {e}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Figure 3: assembled
+# ─────────────────────────────────────────────────────────────
+
+def assemble_figure3(
+    path_3a: Optional[Path] = None,
+    investigation_dir_3b: Optional[str] = None,
+    investigation_dir_3c: Optional[str] = None,
+    data_root_3d: Optional[str] = None,
+    phenotypes_3d: Optional[List[Tuple[str, str]]] = None,
+    normalization_approach: Optional[str] = "rankbird_wasserstein",
+    phenotype_name_3d: str = "PD",
+    path_3e: Optional[Path] = None,
+    figsize: tuple = (130, 100),
+) -> plt.Figure:
+    """
+    Assemble Figure 3 panels into one combined figure.
+
+    Layout
+    ------
+      ┌───────────────────┬─────────────┐
+      │  3A  (big)        │  3B panel 1 │
+      ├───────────────────┤  3B panel 2 │
+      │  3C  (side x3)    │  3B panel 3 │
+      │                   │  3B panel 4 │
+      ├───────────────────┴─────────────┤
+      │  3D  (left)   │  3E  (right)    │
+      └───────────────────────────────--┘
+
+    Parameters
+    ----------
+    path_3a              : path to schematic image (placeholder shown if missing)
+    investigation_dir_3b : directory with stability-investigation CSVs for 3B
+    investigation_dir_3c : directory with distribution-investigation CSVs for 3C
+    data_root_3d         : data root for loading phenotype data for 3D
+    phenotypes_3d        : list of (phenotype, dtype) tuples
+    normalization_approach : passed to plot_figure3d
+    phenotype_name_3d    : phenotype name to show in panel 3D (default "PD")
+    path_3e              : path to manually provided image for panel E
+    figsize              : figure size
+    """
+    from evaluation.data_loading import load_microbiome_datasets_with_targets
+
+    fig = plt.figure(figsize=figsize)
+    outer = mgridspec.GridSpec(
+        2, 1, figure=fig,
+        height_ratios=[18.0, 6.0],
+        hspace=0.22,
+        left=0.05, right=0.97, top=0.97, bottom=0.04,
+    )
+
+    # ── Top section: left col (A above C) | right col (B stacked) ──
+    gs_top = mgridspec.GridSpecFromSubplotSpec(
+        1, 2, subplot_spec=outer[0],
+        width_ratios=[1.5, 0.7], wspace=0.08,
+    )
+    # Left: A (big) above C
+    gs_left = mgridspec.GridSpecFromSubplotSpec(
+        2, 1, subplot_spec=gs_top[0, 0],
+        height_ratios=[2.5, 1.0], hspace=0.16,
+    )
+    ax_a = fig.add_subplot(gs_left[0, 0])
+    ax_c = fig.add_subplot(gs_left[1, 0])
+
+    # Right: B stacked (placeholder; plot_figure3b creates its own sub-axes)
+    ax_b = fig.add_subplot(gs_top[0, 1])
+
+    # ── Bottom section: D (left) | E (right) ───────────────────
+    gs_bot = mgridspec.GridSpecFromSubplotSpec(
+        1, 2, subplot_spec=outer[1],
+        width_ratios=[1.0, 1.0], wspace=0.08,
+    )
+    ax_d = fig.add_subplot(gs_bot[0, 0])
+    ax_e = fig.add_subplot(gs_bot[0, 1])
+
+    # ── Panel A: schematic (row 0, narrowed) ─────────────────
+    ax_a.set_axis_off()
+    _p3a = Path(path_3a) if path_3a else None
+    _img_a = (_p3a if (_p3a and _p3a.exists()) else
+              _find_any_image(_p3a.parent if _p3a else Path("figures_out/figure_3/3a")))
+    if _img_a:
+        img = _load_any_image(_img_a)
+        if img is not None:
+            ax_a.imshow(img, aspect="auto", interpolation="bilinear")
+    else:
+        ax_a.set_facecolor("#E8E8E8")
+        ax_a.text(0.5, 0.5,
+                  "Schematic\n(place image in\nfigures_out/figure_3/3a/)",
+                  ha="center", va="center", fontsize=13, color="#555555",
+                  transform=ax_a.transAxes)
+    ax_a.text(-0.02, 1.01, "A", transform=ax_a.transAxes,
+              fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+
+    # ── Panel B: stability investigation (right col, stacked 4×1) ─
+    _pos_b = ax_b.get_position()
+    ax_b.set_axis_off()
+    if investigation_dir_3b and Path(investigation_dir_3b).exists():
+        try:
+            import io as _io
+            fig_b = plot_figure3b(investigation_dir_3b,
+                                   plot_levels=[None],
+                                   plot_mode="mean",
+                                   stacked=True)
+            _buf  = _io.BytesIO()
+            fig_b.savefig(_buf, dpi=150, bbox_inches="tight",
+                          facecolor=fig_b.get_facecolor())
+            plt.close(fig_b)
+            _buf.seek(0)
+            img_b = mpimg.imread(_buf)
+            ax_b.imshow(img_b, aspect="auto", interpolation="bilinear")
+        except Exception as e:
+            print(f"  [3B] Error: {e}")
+            ax_b.text(0.5, 0.5, f"3B error:\n{e}", ha="center", va="center",
+                      transform=ax_b.transAxes, fontsize=10, color="#888")
+    else:
+        ax_b.set_facecolor("#E8E8E8")
+        ax_b.text(0.5, 0.5,
+                  "Stability investigation\n(run \"3b\" first to generate CSVs)",
+                  ha="center", va="center", fontsize=13, color="#555555",
+                  transform=ax_b.transAxes)
+    fig.text(_pos_b.x0 - 0.01, _pos_b.y1 + 0.01, "B",
+             fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+
+    # ── Panel C: distribution comparison (row 2, full width) ─
+    _pos_c = ax_c.get_position()
+    if investigation_dir_3c and Path(investigation_dir_3c).exists():
+        try:
+            plot_figure3c(investigation_dir_3c, ax=ax_c)
+        except Exception as e:
+            print(f"  [3C] Error: {e}")
+            ax_c.text(0.5, 0.5, f"3C error:\n{e}", ha="center", va="center",
+                      transform=ax_c.transAxes, fontsize=10, color="#888")
+            ax_c.set_axis_off()
+    else:
+        ax_c.set_facecolor("#F0F0F0")
+        ax_c.text(0.5, 0.5,
+                  "Distribution comparison\n(run \"3c\" first to generate CSVs)",
+                  ha="center", va="center", fontsize=13, color="#555555",
+                  transform=ax_c.transAxes)
+        ax_c.set_axis_off()
+    fig.text(_pos_c.x0 - 0.02, _pos_c.y1 + 0.01, "C",
+             fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+
+    # ── Panel D: UMAP scatter (row 3, left) ───────────────────
+    _pos_d = ax_d.get_position()
+    mb_by_dtype, tgt_by_dtype, name_by_dtype = {}, {}, {}
+
+    if data_root_3d and phenotypes_3d:
+        data_root_path = Path(data_root_3d)
+        pheno_map: Dict[str, List[str]] = {}
+        for pheno, dtype in phenotypes_3d:
+            pheno_map.setdefault(pheno, []).append(dtype)
+
+        dtypes_for_rep = pheno_map.get(phenotype_name_3d, [])
+        for dtype in dtypes_for_rep:
+            pheno_str = f"{phenotype_name_3d} {dtype}"
+            folder    = data_root_path / pheno_str
+            if not folder.exists():
+                continue
+            try:
+                mb_dfs, tgt_dfs, ds_names = load_microbiome_datasets_with_targets(
+                    str(folder)
+                )
+                if mb_dfs:
+                    mb_by_dtype[dtype]   = mb_dfs
+                    tgt_by_dtype[dtype]  = tgt_dfs
+                    name_by_dtype[dtype] = ds_names
+            except Exception as e:
+                print(f"  [3D] Error loading {pheno_str}: {e}")
+
+    ax_d.set_axis_off()
+    if mb_by_dtype:
+        try:
+            import io as _io
+            fig_d = plot_figure3d(
+                phenotype_name=phenotype_name_3d,
+                microbiome_dfs_by_dtype=mb_by_dtype,
+                target_dfs_by_dtype=tgt_by_dtype,
+                dataset_names_by_dtype=name_by_dtype,
+            )
+            _buf = _io.BytesIO()
+            fig_d.savefig(_buf, dpi=150, bbox_inches="tight",
+                          facecolor=fig_d.get_facecolor())
+            plt.close(fig_d)
+            _buf.seek(0)
+            img_d = mpimg.imread(_buf)
+            ax_d.imshow(img_d, aspect="auto", interpolation="bilinear")
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            print(f"  [3D] Error: {e}")
+            ax_d.text(0.5, 0.5, f"3D error:\n{e}", ha="center", va="center",
+                      transform=ax_d.transAxes, fontsize=10, color="red")
+    else:
+        ax_d.set_facecolor("#F0F0F0")
+        ax_d.text(0.5, 0.5,
+                  f"UMAP scatter — {phenotype_name_3d}\n(no data loaded)",
+                  ha="center", va="center", fontsize=13, color="#555555",
+                  transform=ax_d.transAxes)
+    fig.text(_pos_d.x0 - 0.02, _pos_d.y1 + 0.01, "D",
+             fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+
+    # ── Panel E: manually provided image (row 3, right) ─────
+    ax_e.set_axis_off()
+    _p3e = Path(path_3e) if path_3e else None
+    _img_e = (_p3e if (_p3e and _p3e.exists()) else
+              _find_any_image(_p3e.parent if _p3e else Path("figures_out/figure_3/3e")))
+    if _img_e:
+        img = _load_any_image(_img_e)
+        if img is not None:
+            ax_e.imshow(img, aspect="auto", interpolation="bilinear")
+    else:
+        ax_e.set_facecolor("#E8E8E8")
+        ax_e.text(0.5, 0.5,
+                  "Panel E\n(place image in\nfigures_out/figure_3/3e/)",
+                  ha="center", va="center", fontsize=13, color="#555555",
+                  transform=ax_e.transAxes)
+    ax_e.text(-0.03, 1.05, "E", transform=ax_e.transAxes,
+              fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+
+    return fig

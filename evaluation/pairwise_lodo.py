@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Tuple
@@ -184,14 +185,14 @@ def full_lodo_with_shap(
 # Orchestrator
 # ─────────────────────────────────────────────
 
-def run_figure4_analysis(
+def run_pairwise_lodo_analysis(
     phenotype: str,
     data_root: str,
     output_dir: str,
     load_function,
 ) -> Dict:
     """
-    Run figure 4 analysis for one phenotype.
+    Run pairwise LODO + full LODO + SHAP analysis for one phenotype.
     Loads from disk if results already exist, otherwise computes and saves.
 
     Returns dict with keys:
@@ -209,7 +210,7 @@ def run_figure4_analysis(
 
     # ── Load from disk if all artefacts exist ──────────────────────────────
     if all(p.exists() for p in [pairwise_path, full_lodo_path, shap_path, names_path]):
-        print(f"Loading existing figure 4 results for {phenotype}")
+        print(f"Loading existing pairwise LODO results for {phenotype}")
         return {
             'phenotype':         phenotype,
             'dataset_names':     names_path.read_text().strip().splitlines(),
@@ -225,11 +226,22 @@ def run_figure4_analysis(
         return None
 
     microbiome_dfs, target_dfs, dataset_names = load_function(folder)
-    if len(dataset_names) < 2:
-        print(f"Skipping {phenotype}: need ≥2 datasets, found {len(dataset_names)}")
-        return None
 
-    print(f"\n{'='*60}\nFigure 4 analysis: {phenotype}\nDatasets: {dataset_names}\n{'='*60}")
+    # Drop datasets that have only one class (all control or all case)
+    filtered = [
+        (mb, tgt, n)
+        for mb, tgt, n in zip(microbiome_dfs, target_dfs, dataset_names)
+        if len(np.unique(tgt.values.ravel())) >= 2
+    ]
+    if len(filtered) < len(dataset_names):
+        removed = set(dataset_names) - {n for _, _, n in filtered}
+        print(f"  Dropped single-class datasets for {phenotype}: {sorted(removed)}")
+    if len(filtered) < 2:
+        print(f"Skipping {phenotype}: need ≥2 datasets after filtering, found {len(filtered)}")
+        return None
+    microbiome_dfs, target_dfs, dataset_names = (list(x) for x in zip(*filtered))
+
+    print(f"\n{'='*60}\nPairwise LODO analysis: {phenotype}\nDatasets: {dataset_names}\n{'='*60}")
 
     pairwise_results, _          = pairwise_lodo_with_shap(microbiome_dfs, target_dfs, dataset_names)
     full_lodo_results, lodo_shap = full_lodo_with_shap(microbiome_dfs, target_dfs, dataset_names)

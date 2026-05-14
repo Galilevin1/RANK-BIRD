@@ -14,18 +14,26 @@ from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
 from figures.phenotype_grid import plot_figure_1a
 from figures.figure1 import assemble_figure1
 from figures.figure1f import run_figure1f, compute_figure1f
-from figures.figure2 import plot_figure2b, run_figure2b, run_figure2d
-from figures.figure3 import run_figure3, run_figure3c, run_figure3d
-from figures.figure4 import plot_figure4
-from figures.figure4e import run_figure4e_analysis, plot_figure4e
+import numpy as np
+from figures.figure2 import (
+    plot_figure2a,
+    assemble_figure2, compute_figure2d_data, compute_figure2e_data,
+    run_figure2b_supp, run_figure2c_supp, run_figure2d_supp,
+    run_figure2e_supp, run_figure2f_supp,
+)
+from figures.figure3 import assemble_figure3, run_figure3c, run_figure3d
+from figures.figure4 import assemble_figure4
+from figures.figure2e_optional import run_figure2e_optional, plot_figure2e_optional
 from figures.figure5 import plot_figure5
 from experiments.investigate_stability_threshold import (
     run_stability_investigation, run_microbe_characterization,
 )
-from experiments.investigate_distribution_approach import run_distribution_investigation
+from experiments.investigate_distribution_approach import (
+    run_distribution_investigation, print_auc_summary_table,
+    make_distribution_summary_figure,
+)
 from evaluation.data_loading import build_papers_auc_df, load_microbiome_datasets_with_targets
 from evaluation.dataset_analysis import run_dataset_analysis
-from evaluation.pairwise_lodo import run_figure4_analysis
 from evaluation.dataset_quality import run_quality_report
 
 from pathlib import Path
@@ -81,14 +89,16 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["1"], # "1" (combined), "1a","1c","1d","1e","1f" (individual)
-     #                   "2b","2c","3","4","4e","5"
+    "run_figures": ["1"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
+     #                   "2" (combined + all supp), "2b_supp","2c_supp","2d_supp","2f_supp" (supp only)
+     #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
+     #                   "3","4","5"
     "run_investigations": [],  # "stability_threshold", "stability_characterization", "distribution_approach"
     "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
     "phenotypes": phenotypes_papers,  # phenotypes_pipeline, phenotypes_papers
-    "data_folder": "Data_papers",      # "Data" for pipeline phenotypes, "Data_papers" for papers phenotypes
-     "preprocessing_scope": "global",   # "local" or "global"
+    "data_folder": "Data",             # "Data" for pipeline phenotypes, "Data_papers" for papers phenotypes
+    "preprocessing_scope": "global",   # "local" or "global"
     "normalization_approach": None,  # "rankbird_wasserstein", "rankbird_ranking", "rankbird_sigmoid", "rankbird_relu", "filter_only", None
     "decomposition": False,
 
@@ -339,7 +349,8 @@ def main():
     if "2a" in RUN_FIGS:
         _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2a")
         analysis_csv = RESULTS_DIR / "microbiome_analysis_results.csv"
-        if CONFIG["run_compute"]:
+        if not analysis_csv.exists() or CONFIG["run_compute"]:
+            print("  Computing microbiome_analysis_results.csv ...")
             all_mb, all_tgt, all_conf, all_names, d2p = [], [], [], [], {}
             seen_datasets = set()
             for phenotype, dtype in phenotypes_all:
@@ -362,50 +373,130 @@ def main():
                 output_path=str(analysis_csv),
                 confounder_dfs=all_conf,
             )
-        fig = plot_figure2b(csv_path=str(analysis_csv))
-        fig.savefig(_dir / "confounder_correlations.png", dpi=300, bbox_inches='tight')
+        fig, _ = plot_figure2a(csv_path=str(analysis_csv))
+        fig.savefig(_dir / "confounder_correlations.pdf", bbox_inches='tight')
         plt.close(fig)
 
-    if "2d" in RUN_FIGS:
-        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2d")
-        all_mb2d, all_names2d, d2p2d = [], [], {}
-        for phenotype, dtype in phenotypes:
-            pheno_str = f"{phenotype} {dtype}"
-            folder = PROJECT_ROOT / CONFIG.get("data_folder", "Data") / pheno_str
-            if not folder.exists():
-                continue
-            mb_dfs, _, ds_names = load_microbiome_datasets_with_targets(str(folder))
-            for mb, name in zip(mb_dfs, ds_names):
-                all_mb2d.append(mb)
-                all_names2d.append(name)
-                d2p2d[name] = pheno_str
-        run_figure2d(all_mb2d, all_names2d, d2p2d, figures_dir=str(_dir))
-
-    if "2b" in RUN_FIGS:
+    if "2b_supp" in RUN_FIGS:
         _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2b")
-        run_figure2b(
+        run_figure2b_supp(
             phenotypes=phenotypes,
             data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
             figures_dir=str(_dir),
-            normalization_approach=CONFIG.get("normalization_approach"),
         )
 
-    if "2c" in RUN_FIGS:
+    if "2c_supp" in RUN_FIGS:
         _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2c")
-        run_figure3(
+        run_figure2c_supp(
             phenotypes=phenotypes,
             data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
             figures_dir=str(_dir),
             normalization_approach=CONFIG.get("normalization_approach"),
         )
 
-    if "3" in RUN_FIGS:
-        run_figure3(
+    if "2d_supp" in RUN_FIGS:
+        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2d")
+        run_figure2d_supp(
             phenotypes=phenotypes,
-            data_root=str(PROJECT_ROOT / "Data"),
-            figures_dir=str(FIG3_DIR),
-            normalization_approach=CONFIG.get("normalization_approach"),
+            data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
+            figures_dir=str(_dir),
         )
+
+    if "2f_supp" in RUN_FIGS:
+        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2f")
+        run_figure2f_supp(
+            phenotypes=phenotypes,
+            data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
+            figures_dir=str(_dir),
+        )
+
+    if "2" in RUN_FIGS:
+        analysis_csv = RESULTS_DIR / "microbiome_analysis_results.csv"
+        if not analysis_csv.exists() or CONFIG["run_compute"]:
+            print("  Computing microbiome_analysis_results.csv ...")
+            all_mb, all_tgt, all_conf, all_names, d2p = [], [], [], [], {}
+            seen_datasets = set()
+            for phenotype, dtype in phenotypes_all:
+                pheno_str = f"{phenotype} {dtype}"
+                for _dr in ["Data", "Data_papers"]:
+                    folder = PROJECT_ROOT / _dr / pheno_str
+                    if not folder.exists():
+                        continue
+                    mb_dfs, tgt_dfs, ds_names, conf_dfs = load_microbiome_datasets_with_targets(
+                        str(folder), include_confounders=True)
+                    for mb, tgt, conf, name in zip(mb_dfs, tgt_dfs, conf_dfs, ds_names):
+                        if name in seen_datasets:
+                            continue
+                        seen_datasets.add(name)
+                        all_mb.append(mb); all_tgt.append(tgt)
+                        all_conf.append(conf); all_names.append(name); d2p[name] = pheno_str
+            run_dataset_analysis(
+                all_mb, all_tgt, all_names, d2p,
+                output_path=str(analysis_csv),
+                confounder_dfs=all_conf,
+            )
+        data_root = PROJECT_ROOT / CONFIG.get("data_folder", "Data")
+
+        # Pick the representative phenotype for the main figure panels (B–E).
+        # Use the first CD entry from the configured phenotypes list; fall back
+        # to the first phenotype overall if CD is not present.
+        _cd_entries = [(p, d) for p, d in phenotypes if p == "CD"]
+        _rep_pheno, _rep_dtype = _cd_entries[0] if _cd_entries else phenotypes[0]
+        _rep_str = f"{_rep_pheno} {_rep_dtype}"
+
+        # Load datasets for the representative phenotype, drop control-only
+        _rep_mb, _rep_tgt, _rep_names = [], [], []
+        _rep_folder = data_root / _rep_str
+        if _rep_folder.exists():
+            try:
+                _mb_dfs, _tgt_dfs, _ds_names = load_microbiome_datasets_with_targets(str(_rep_folder))
+                _filtered = [
+                    (mb, tgt, name)
+                    for mb, tgt, name in zip(_mb_dfs, _tgt_dfs, _ds_names)
+                    if len(np.unique(tgt.values.ravel())) >= 2
+                ]
+                if _filtered:
+                    _mbs, _tgts, _ns = zip(*_filtered)
+                    _rep_mb.extend(_mbs); _rep_tgt.extend(_tgts); _rep_names.extend(_ns)
+            except Exception as _e:
+                print(f"  Error loading {_rep_str}: {_e}")
+
+        _data_root = str(data_root)
+
+        # Figure 2D: KS fraction per phenotype (cached)
+        _d_data = compute_figure2d_data(
+            phenotypes=phenotypes,
+            data_root=_data_root,
+        )
+
+        # Figure 2E: pairwise LODO + SHAP (cached per phenotype)
+        _e_data = compute_figure2e_data(
+            phenotypes=phenotypes,
+            data_root=_data_root,
+        )
+
+        _fig2_dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2")
+        fig = assemble_figure2(
+            csv_path=str(analysis_csv),
+            cd_microbiome_dfs=_rep_mb or None,
+            cd_target_dfs=_rep_tgt or None,
+            cd_dataset_names=_rep_names or None,
+            figure2d_data=_d_data if not _d_data.empty else None,
+            figure2e_data=_e_data,
+            cd_phenotype_name=_rep_str,
+        )
+        fig.savefig(_fig2_dir / "figure2.pdf", bbox_inches="tight")
+        plt.close(fig)
+        print("  Saved Figure 2")
+
+        # ── Supplementary: one figure per phenotype ───────────
+        _supp_dir = str(_fig2_dir / "supp")
+        run_figure2b_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir)
+        run_figure2c_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir,
+                          normalization_approach=CONFIG.get("normalization_approach"))
+        run_figure2d_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir)
+        run_figure2e_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir)
+        run_figure2f_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir)
 
     if "3b" in RUN_FIGS:
         _3b_results_dir = FIGURES_BASE / "figure_3" / "3b"
@@ -440,41 +531,94 @@ def main():
             normalization_approach=CONFIG.get("normalization_approach"),
         )
 
-    if "4" in RUN_FIGS:
-        figure4_data_dir = RESULTS_DIR / "figure4"
-        figure4_data_dir.mkdir(exist_ok=True)
-
-        for pt in phenotypes:
-            phenotype = f"{pt[0]} {pt[1]}"
-            data = run_figure4_analysis(
-                phenotype=phenotype,
-                data_root=str(PROJECT_ROOT / "Data"),
-                output_dir=str(figure4_data_dir),
-                load_function=load_microbiome_datasets_with_targets,
-            )
-            if data is None:
-                continue
-            fig = plot_figure4(
-                phenotype_name=phenotype,
-                pairwise_results=data['pairwise_results'],
-                full_lodo_shap=data['full_lodo_shap'],
-                dataset_names=data['dataset_names'],
-            )
-            fig.savefig(
-                FIG4_DIR / f"figure4_{phenotype.replace(' ', '_')}.png",
-                dpi=300, bbox_inches='tight'
-            )
-            plt.close(fig)
-
-
-    if "4e" in RUN_FIGS:
-        figure4_data_dir = RESULTS_DIR / "figure4"
-        results_4e = run_figure4e_analysis(
-            figure4_data_dir=str(figure4_data_dir),
-            metric='auc',
+    if "3" in RUN_FIGS:
+        fig = assemble_figure3(
+            path_3a=FIGURES_BASE / "figure_3" / "3a" / "schematic.png",
+            investigation_dir_3b=str(FIGURES_BASE / "figure_3" / "3b"),
+            investigation_dir_3c=str(FIGURES_BASE / "figure_3" / "3c"),
+            data_root_3d=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
+            phenotypes_3d=phenotypes,
+            normalization_approach=CONFIG.get("normalization_approach"),
+            path_3e=FIGURES_BASE / "figure_3" / "3e" / "panel_e.png",
         )
-        if results_4e is not None:
-            plot_figure4e(results_4e, output_dir=str(FIG4_DIR))
+        fig.savefig(FIG3_DIR / "figure3.pdf", bbox_inches="tight")
+        plt.close(fig)
+        print("  Saved Figure 3")
+
+    if "4" in RUN_FIGS:
+        _data_root_4 = PROJECT_ROOT / CONFIG.get("data_folder", "Data")
+
+        # Representative phenotype (CD preferred, else first in list)
+        _cd_entries = [(p, d) for p, d in phenotypes if p == "CD"]
+        _rep_pheno, _rep_dtype = _cd_entries[0] if _cd_entries else phenotypes[0]
+        _rep_str = f"{_rep_pheno} {_rep_dtype}"
+
+        _rep_mb, _rep_tgt, _rep_names = [], [], []
+        _rep_folder = _data_root_4 / _rep_str
+        if _rep_folder.exists():
+            try:
+                _mb_dfs, _tgt_dfs, _ds_names = load_microbiome_datasets_with_targets(
+                    str(_rep_folder)
+                )
+                _filtered = [
+                    (mb, tgt, name)
+                    for mb, tgt, name in zip(_mb_dfs, _tgt_dfs, _ds_names)
+                    if len(np.unique(tgt.values.ravel())) >= 2
+                ]
+                if _filtered:
+                    _mbs, _tgts, _ns = zip(*_filtered)
+                    _rep_mb.extend(_mbs)
+                    _rep_tgt.extend(_tgts)
+                    _rep_names.extend(_ns)
+            except Exception as _e:
+                print(f"  Error loading {_rep_str}: {_e}")
+
+        # Panel 4C: KS fraction data — original and normalized (cached)
+        _fig4_dir = FIGURES_BASE / "figure_4"
+        _fig4_dir.mkdir(parents=True, exist_ok=True)
+        _fig2d_data = compute_figure2d_data(
+            phenotypes=phenotypes,
+            data_root=str(_data_root_4),
+            cache_path=str(_fig4_dir / "4c_ks_fractions.csv"),
+        )
+        _fig2d_norm_data = compute_figure2d_data(
+            phenotypes=phenotypes,
+            data_root=str(_data_root_4),
+            cache_path=str(_fig4_dir / "4c_ks_fractions_normalized.csv"),
+            normalization_approach=CONFIG.get("normalization_approach"),
+        )
+
+        # Panel 4D: place all distribution CSVs in figures_out/figure_4/4d/
+        _fig4d_dir = _fig4_dir / "4d"
+        _fig4d_dir.mkdir(parents=True, exist_ok=True)
+
+        if _rep_mb:
+            fig = assemble_figure4(
+                microbiome_dfs=_rep_mb,
+                target_dfs=_rep_tgt,
+                dataset_names=_rep_names,
+                phenotype_name=_rep_str,
+                dtype=_rep_dtype,
+                figure2d_data=_fig2d_data if not _fig2d_data.empty else None,
+                figure2d_norm_data=_fig2d_norm_data if not _fig2d_norm_data.empty else None,
+                data_dir_4d=_fig4d_dir,
+            )
+            fig.savefig(FIG4_DIR / "figure4.pdf", bbox_inches="tight")
+            plt.close(fig)
+            print("  Saved Figure 4")
+        else:
+            print(f"  Figure 4: no data for representative phenotype {_rep_str}")
+
+
+    if "2e_optional" in RUN_FIGS:
+        _pairwise_data_dir = RESULTS_DIR / "pairwise_lodo"
+        _2e_opt_dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2e_optional")
+        results_2e_opt = run_figure2e_optional(
+            pairwise_lodo_dir=str(_pairwise_data_dir),
+            metric="auc",
+        )
+        if results_2e_opt is not None:
+            plot_figure2e_optional(results_2e_opt, output_dir=str(_2e_opt_dir))
 
     if "stability_threshold" in CONFIG["run_investigations"]:
         _approach = CONFIG.get("normalization_approach") or "original"
@@ -516,6 +660,7 @@ def main():
     if "distribution_approach" in CONFIG["run_investigations"]:
         _combined_suffix = "_combined" if CONFIG.get("cross_dtype_normalization") else ""
         dist_dir = PROJECT_ROOT / "investigations" / f"distribution_approach{_combined_suffix}"
+        print(f"  [distribution_approach] output dir: {dist_dir.resolve()}")
         run_distribution_investigation(
             phenotypes=phenotypes,
             output_dir=dist_dir,
@@ -529,6 +674,18 @@ def main():
             stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
             taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         )
+        print_auc_summary_table(dist_dir)
+
+        # Combined summary figure — produced whenever both per-dtype and
+        # cross-dtype result directories exist (regardless of which was just run)
+        _base_dir     = PROJECT_ROOT / "investigations" / "distribution_approach"
+        _combined_dir = PROJECT_ROOT / "investigations" / "distribution_approach_combined"
+        if _base_dir.exists() or _combined_dir.exists():
+            make_distribution_summary_figure(
+                base_dir=_base_dir,
+                combined_dir=_combined_dir,
+                output_path=PROJECT_ROOT / "investigations" / "distribution_approach_full_summary.png",
+            )
 
     if "5" in RUN_FIGS:
         FIG5_DIR = build_figures_dir(FIGURES_BASE, CONFIG, "figure_5")

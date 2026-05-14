@@ -313,20 +313,20 @@ def _plot_sweep_lines(ax, sweep_df, protocol, color, plot_mode, suffix="", linew
     if show_mean:
         label = f"{protocol}{suffix}" if not show_median else f"{protocol} mean{suffix}"
         ax.plot(sub["percentile"], sub["mean_auc"],
-                marker="o", linewidth=linewidth, markersize=5,
+                marker="o", linewidth=linewidth, markersize=9,
                 color=color, alpha=alpha, label=label)
         ax.fill_between(
             sub["percentile"],
             sub["mean_auc"] - sub["std_auc"],
             sub["mean_auc"] + sub["std_auc"],
-            alpha=0.08 * alpha, color=color,
+            alpha=0.12 * alpha, color=color,
         )
     if show_median and "median_auc" in sub.columns:
         label = f"{protocol}{suffix}" if not show_mean else f"{protocol} median{suffix}"
         ax.plot(sub["percentile"], sub["median_auc"],
-                marker="^", linewidth=linewidth * 0.75 if show_mean else linewidth,
-                markersize=4, linestyle="-" if not show_mean else "--",
-                color=color, alpha=alpha * (0.75 if show_mean else 1.0),
+                marker="^", linewidth=linewidth,
+                markersize=8, linestyle="-" if not show_mean else "--",
+                color=color, alpha=alpha,
                 label=label)
 
 
@@ -338,6 +338,9 @@ def _plot_sweep_panel(
     original_auc: dict = None,
     filter_only_df: pd.DataFrame = None,
     plot_mode: str = "combined",
+    threshold_percentile: float = None,
+    show_left_yticks: bool = True,
+    show_right_yticks: bool = True,
 ):
     """AUC lines (left axis) + kept-microbe count & % annotations (right axis).
 
@@ -349,56 +352,67 @@ def _plot_sweep_panel(
     for protocol in PROTOCOLS:
         color = PROTOCOL_COLORS[protocol]
 
-        # 1. Original baseline — horizontal dotted line
+        # 1. Original baseline — horizontal dashed line
         if original_auc and protocol in original_auc:
             ax.axhline(
                 original_auc[protocol],
-                color=color, linestyle=":", linewidth=1.5, alpha=0.6,
+                color=color, linestyle="--", linewidth=3.5, alpha=0.85,
                 label=f"{protocol} (original)",
             )
 
         # 2. Filter-only sweep — thin line (only in combined mode)
         if filter_only_df is not None:
             _plot_sweep_lines(ax, filter_only_df, protocol, color, plot_mode,
-                              suffix=" (filter only)", linewidth=1.5, alpha=0.65)
+                              suffix=" (filter only)", linewidth=3.0, alpha=0.65)
 
         # 3. Main sweep — thick line; label with "(full)" only when both are shown
         main_suffix = " (full)" if filter_only_df is not None else ""
         _plot_sweep_lines(ax, sweep_df, protocol, color, plot_mode,
-                          suffix=main_suffix, linewidth=2.5, alpha=1.0)
+                          suffix=main_suffix, linewidth=5.0, alpha=1.0)
 
-    ax.axhline(0.5, color="gray", linestyle=":", linewidth=1.2, alpha=0.5,
+    ax.axhline(0.5, color="gray", linestyle="--", linewidth=2.5, alpha=0.75,
                label="Random (0.5)")
+    if threshold_percentile is not None:
+        ax.axvline(threshold_percentile, color="#555555", linestyle="--",
+                   linewidth=2.5, alpha=0.75, zorder=1)
     _ylabel = {"mean": "Mean AUC", "median": "Median AUC", "combined": "Mean / Median AUC"}
-    ax.set_ylabel(_ylabel.get(plot_mode, "AUC"), fontsize=10)
-    ax.set_xlabel("Stability Percentile", fontsize=10)
-    ax.set_xticks(PERCENTILES[::2])
-    ax.tick_params(axis="x", rotation=45)
+    ax.set_xlabel("Stability Percentile", fontsize=32)
+    ax.set_xticks([0.2, 0.4, 0.6, 0.8])
+    ax.tick_params(axis="x", rotation=45, labelsize=26)
     ax.set_xlim(PERCENTILES[0] - 0.02, PERCENTILES[-1] + 0.02)
-    ax.grid(axis="y", linestyle="--", alpha=0.25)
-    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.grid(axis="y", linestyle="--", alpha=0.45, linewidth=0.9)
+    ax.set_title(title, fontsize=32, fontweight="bold", pad=12)
+    if show_left_yticks:
+        ax.set_ylabel(_ylabel.get(plot_mode, "AUC"), fontsize=32)
+        ax.tick_params(axis="y", labelsize=26)
+    else:
+        ax.set_ylabel("")
+        ax.tick_params(axis="y", left=False, labelleft=False)
 
     # Right: microbe count
     ax2 = ax.twinx()
     ax2.plot(count_df["percentile"], count_df["n_kept"],
-             color="black", linestyle="--", linewidth=1.8,
-             marker="s", markersize=4, label="# kept microbes")
-    ax2.set_ylabel("# kept microbes", fontsize=10, color="black")
-    ax2.tick_params(axis="y", labelcolor="black")
+             color="black", linestyle="--", linewidth=4.5,
+             marker="s", markersize=7, label="# kept microbes")
+    ax2.set_ylabel("")  # label dropped per user request
+    if show_right_yticks:
+        ax2.tick_params(axis="y", labelcolor="black", labelsize=26)
+    else:
+        ax2.tick_params(axis="y", right=False, labelright=False)
+    _annot_step = max(1, len(count_df) // 4)
     for i, (_, row) in enumerate(count_df.iterrows()):
-        if i % 5 != 0:
+        if i % _annot_step != 0:
             continue
         ax2.annotate(
             f"{int(row['n_kept'])} ({row['pct_kept']:.0f}%)",
             xy=(row["percentile"], row["n_kept"]),
             xytext=(0, 6), textcoords="offset points",
-            fontsize=6.5, ha="center", color="black",
+            fontsize=20, ha="center", color="black",
         )
 
     lines1, labels1 = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines1 + lines2, labels1 + labels2,
-              fontsize=8, framealpha=0.85, loc="lower right")
+    return lines1 + lines2, labels1 + labels2
 
 
 # ── Display helpers ──────────────────────────────────────────────────────────
@@ -713,10 +727,11 @@ def run_stability_investigation(
 
             fig, axes = plt.subplots(
                 len(levels_to_plot), len(DISPLAY_DTYPES),
-                figsize=(7 * len(DISPLAY_DTYPES), 5 * len(levels_to_plot)),
+                figsize=(14 * len(DISPLAY_DTYPES), 7 * len(levels_to_plot)),
                 squeeze=False,
             )
 
+            _legend_lines, _legend_labels = [], []
             for row_idx, (level, level_label) in enumerate(levels_to_plot):
                 for col_idx, display_dtype in enumerate(DISPLAY_DTYPES):
                     ax   = axes[row_idx][col_idx]
@@ -725,17 +740,26 @@ def run_stability_investigation(
                         ax.set_visible(False)
                         continue
                     sweep_df, count_df, orig_auc, fo_df = data
-                    _plot_sweep_panel(ax, sweep_df, count_df,
+                    _thresh = _BEST_THRESHOLDS.get(display_dtype)
+                    result = _plot_sweep_panel(ax, sweep_df, count_df,
                                       title=f"{display_dtype} — {level_label}",
                                       original_auc=orig_auc,
                                       filter_only_df=fo_df,
-                                      plot_mode=pm)
-
-            fig.suptitle(
-                f"Stability Filter Percentile: {stat_title} & Kept Microbes  [{mode_label}]",
-                fontsize=14, fontweight="bold", y=1.01,
-            )
-            plt.tight_layout()
+                                      plot_mode=pm,
+                                      threshold_percentile=_thresh)
+                    if not _legend_lines and result:
+                        _legend_lines, _legend_labels = result
+            plt.tight_layout(rect=[0, 0, 0.82, 1])
+            if _legend_lines:
+                fig.legend(
+                    _legend_lines, _legend_labels,
+                    loc="center right",
+                    bbox_to_anchor=(0.99, 0.5),
+                    fontsize=14,
+                    framealpha=0.9,
+                    title="Legend",
+                    title_fontsize=15,
+                )
             out_path = output_dir / f"stability_threshold_investigation{mode_suffix}{stat_suffix}.png"
             fig.savefig(out_path, dpi=150, bbox_inches="tight")
             plt.close(fig)

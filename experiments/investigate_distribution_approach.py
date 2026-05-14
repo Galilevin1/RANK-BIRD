@@ -25,7 +25,27 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
-from scipy.stats import ttest_rel, f_oneway
+from scipy.stats import ttest_rel, f_oneway, wilcoxon
+
+try:
+    from statsmodels.stats.multitest import multipletests as _sm_multipletests
+    def _fdr_bh(pvalues: np.ndarray) -> np.ndarray:
+        if len(pvalues) == 0:
+            return pvalues
+        _, corrected, _, _ = _sm_multipletests(pvalues, method="fdr_bh")
+        return corrected
+except ImportError:
+    def _fdr_bh(pvalues: np.ndarray) -> np.ndarray:
+        n = len(pvalues)
+        if n == 0:
+            return pvalues
+        idx = np.argsort(pvalues)
+        ranked = np.array(pvalues, dtype=float)
+        for rank, i in enumerate(idx):
+            ranked[i] = pvalues[i] * n / (rank + 1)
+        for i in range(n - 2, -1, -1):
+            ranked[idx[i]] = min(ranked[idx[i]], ranked[idx[i + 1]])
+        return np.minimum(ranked, 1.0)
 
 from src.rankbird.normalization.stability import (
     union_microbes, nonzero_percent_by_dataset, auto_stability_filter,
@@ -265,6 +285,7 @@ def _aggregate_auc(results_df: pd.DataFrame) -> pd.DataFrame:
         rows.append({
             "protocol":   protocol,
             "mean_auc":   sub.mean(),
+            "median_auc": sub.median(),
             "std_auc":    sub.std(ddof=1) if len(sub) > 1 else 0.0,
             "n_datasets": len(sub),
         })
@@ -407,10 +428,123 @@ def run_statistical_tests(
                     "stars":               _assign_stars(p_bonf),
                 })
 
+    posthoc_df = pd.DataFrame(posthoc_rows)
+
+    # ── Apply BH FDR correction across all pairwise tests ────────────────────
+    if not posthoc_df.empty and "p_value_raw" in posthoc_df.columns:
+        p_raw_vals = posthoc_df["p_value_raw"].values.astype(float)
+        p_fdr = _fdr_bh(p_raw_vals)
+        posthoc_df["p_value_fdr"] = [round(float(v), 4) for v in p_fdr]
+        posthoc_df["stars_fdr"]   = [_assign_stars(v) for v in p_fdr]
+
     return {
         "anova":   pd.DataFrame(anova_rows),
-        "posthoc": pd.DataFrame(posthoc_rows),
+        "posthoc": posthoc_df,
     }
+
+
+def compute_normalization_comparison(
+    all_results: dict,
+    dtypes: list,
+    baseline: str = "original",
+    treatment: str = "rankbird",
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """
+    For each dtype × protocol compare baseline vs treatment (default: original vs RANK-BIRD).
+
+    Per paired dataset:
+      - delta_mean   = mean(treatment) - mean(baseline)
+      - delta_median = median(treatment) - median(baseline)
+      - p_ttest      : paired t-test on per-dataset AUC values (tests mean difference)
+      - p_wilcoxon   : Wilcoxon signed-rank test on per-dataset AUC differences (tests median)
+
+    Returns a DataFrame saved as delta_tests.csv in the investigation output dir.
+    """
+    rows = []
+    panels = _build_panels(all_results, dtypes)
+
+    for panel_name, auc_by_approach in panels.items():
+        if baseline not in auc_by_approach or treatment not in auc_by_approach:
+            continue
+
+        for protocol in PROTOCOLS:
+            s_base = (auc_by_approach[baseline]
+                      [auc_by_approach[baseline]["protocol"] == protocol]
+                      [["dataset", "auc"]].dropna()
+                      .set_index("dataset")["auc"])
+            s_treat = (auc_by_approach[treatment]
+                       [auc_by_approach[treatment]["protocol"] == protocol]
+                       [["dataset", "auc"]].dropna()
+                       .set_index("dataset")["auc"])
+
+            common = sorted(set(s_base.index) & set(s_treat.index))
+            if len(common) < 3:
+                continue
+
+            v_base  = s_base.loc[common].values
+            v_treat = s_treat.loc[common].values
+            diffs   = v_treat - v_base
+
+            # ── Means ──────────────────────────────────────────────────────────
+            mean_base  = float(v_base.mean())
+            mean_treat = float(v_treat.mean())
+            delta_mean = mean_treat - mean_base
+
+            # ── Medians ────────────────────────────────────────────────────────
+            median_base  = float(np.median(v_base))
+            median_treat = float(np.median(v_treat))
+            delta_median = median_treat - median_base
+
+            # ── Paired t-test (mean difference) ───────────────────────────────
+            try:
+                _, p_ttest = ttest_rel(v_treat, v_base)
+            except Exception:
+                p_ttest = float("nan")
+
+            # ── Wilcoxon signed-rank (median of differences) ──────────────────
+            try:
+                _, p_wilcoxon = wilcoxon(diffs, alternative="two-sided")
+            except Exception:
+                p_wilcoxon = float("nan")
+
+            rows.append({
+                "panel":          panel_name,
+                "protocol":       protocol,
+                "baseline":       APPROACH_LABELS.get(baseline, baseline),
+                "treatment":      APPROACH_LABELS.get(treatment, treatment),
+                "n_datasets":     len(common),
+                "mean_baseline":  round(mean_base,  3),
+                "mean_treatment": round(mean_treat, 3),
+                "delta_mean":     round(delta_mean, 3),
+                "p_ttest":        round(float(p_ttest), 4),
+                "sig_ttest":      _assign_stars(p_ttest),
+                "median_baseline":  round(median_base,  3),
+                "median_treatment": round(median_treat, 3),
+                "delta_median":     round(delta_median, 3),
+                "p_wilcoxon":       round(float(p_wilcoxon), 4),
+                "sig_wilcoxon":     _assign_stars(p_wilcoxon),
+            })
+
+    result_df = pd.DataFrame(rows)
+
+    # ── Apply BH FDR correction across all comparisons ───────────────────────
+    if not result_df.empty:
+        for p_col, sig_col, fdr_col, stars_fdr_col in [
+            ("p_ttest",    "sig_ttest",    "p_ttest_fdr",    "sig_ttest_fdr"),
+            ("p_wilcoxon", "sig_wilcoxon", "p_wilcoxon_fdr", "sig_wilcoxon_fdr"),
+        ]:
+            pvals = result_df[p_col].values.astype(float)
+            valid  = ~np.isnan(pvals)
+            fdr_vals = np.full(len(pvals), float("nan"))
+            if valid.any():
+                fdr_vals[valid] = _fdr_bh(pvals[valid])
+            result_df[fdr_col]     = [round(float(v), 4) if not np.isnan(v) else float("nan")
+                                      for v in fdr_vals]
+            result_df[stars_fdr_col] = [_assign_stars(v) if not np.isnan(v) else "nan"
+                                        for v in fdr_vals]
+
+    return result_df
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -450,7 +584,7 @@ def _make_combined_df(all_results: dict, dtypes: list) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-_BOX_WIDTH   = 0.7
+_BOX_WIDTH   = 0.45
 _N_APPROACHES = len(APPROACHES)
 # Seaborn dodge offsets for each hue level, assuming boxes are evenly spaced
 # within width, centered at the group x-position.
@@ -460,20 +594,32 @@ _HUE_OFFSETS = {
 }
 
 
-def _draw_panel(ax, data: pd.DataFrame, title: str):
+def _draw_panel(
+    ax,
+    data: pd.DataFrame,
+    title: str,
+    label_fontsize: int = 14,
+    title_fontsize: int = 14,
+    tick_fontsize: int = 11,
+    legend_fontsize: int = 11,
+    box_width: float = 0.7,
+    dot_size: float = 4,
+):
     """Draw one boxplot+stripplot panel onto ax with mean markers."""
+    import matplotlib.patches as _mp
     data = data.copy()
     data["auc"] = pd.to_numeric(data["auc"], errors="coerce")
-    protocol_order = [p for p in PROTOCOLS if p in data["protocol"].unique()]
+    protocol_order  = [p for p in PROTOCOLS if p in data["protocol"].unique()]
+    present_approaches = [a for a in APPROACHES if a in data["approach"].unique()]
 
     sns.boxplot(
         data=data,
         x="protocol", y="auc",
         hue="approach",
         order=protocol_order,
-        hue_order=APPROACHES,
-        palette=_BOX_PALETTE,
-        width=_BOX_WIDTH,
+        hue_order=present_approaches,
+        palette={a: _BOX_PALETTE[a] for a in present_approaches},
+        width=box_width,
         fliersize=0,
         linewidth=1.4,
         medianprops=dict(color="#DC143C", linewidth=2.5),
@@ -484,48 +630,66 @@ def _draw_panel(ax, data: pd.DataFrame, title: str):
         x="protocol", y="auc",
         hue="approach",
         order=protocol_order,
-        hue_order=APPROACHES,
-        palette=_STRIP_PALETTE,
+        hue_order=present_approaches,
+        palette={a: _STRIP_PALETTE[a] for a in present_approaches},
         dodge=True,
-        alpha=0.4, size=4, jitter=True,
+        alpha=0.5, size=dot_size, jitter=True,
         legend=False,
         ax=ax,
     )
 
-    ax.axhline(0.5, color="gray", linestyle=":", linewidth=1.5, alpha=0.7,
-               label="Random (0.5)")
+    ax.axhline(0.5, color="gray", linestyle=":", linewidth=1.5, alpha=0.7)
 
     all_auc = data["auc"].dropna()
     if not all_auc.empty:
-        y_min = max(0.0, float(all_auc.min()) - 0.05)
-        y_max = min(1.0, float(all_auc.max()) + 0.05)
-        ax.set_ylim(y_min, y_max)
+        q05 = float(np.percentile(all_auc, 5))
+        q95 = float(np.percentile(all_auc, 95))
+        pad = max(0.02, (q95 - q05) * 0.12)
+        ax.set_ylim(max(0.0, q05 - pad), min(1.0, q95 + pad))
 
     # ── Mean markers (white diamond with black border) ────────────────────────
+    hue_offsets = {
+        a: (box_width / len(present_approaches)) * (i - (len(present_approaches) - 1) / 2)
+        for i, a in enumerate(present_approaches)
+    }
     for x_pos, protocol in enumerate(protocol_order):
-        for approach in APPROACHES:
+        for approach in present_approaches:
             grp = data[(data["protocol"] == protocol) &
                        (data["approach"] == approach)]["auc"].dropna()
             if grp.empty:
                 continue
             ax.scatter(
-                x_pos + _HUE_OFFSETS[approach], grp.mean(),
+                x_pos + hue_offsets[approach], grp.mean(),
                 marker="D", s=35, color="white", edgecolors="black",
                 linewidths=1.4, zorder=5,
             )
 
-    ax.set_xlabel("Protocol", fontsize=12, fontweight="bold")
-    ax.set_ylabel("AUC", fontsize=12, fontweight="bold")
-    # title pushed up to leave room above stars
-    ax.set_title(title, fontsize=13, fontweight="bold", pad=28)
-    ax.tick_params(axis="x", labelsize=11)
-    ax.tick_params(axis="y", labelsize=10)
+    # Tighten x-axis to remove blank space between groups
+    ax.set_xlim(-0.5, len(protocol_order) - 0.5)
+
+    _PROTO_DISPLAY = {
+        "Internal Validation": "Internal\nValidation",
+        "Within Learning":     "Within\nLearning",
+    }
+    ax.set_xticks(range(len(protocol_order)))
+    ax.set_xticklabels(
+        [_PROTO_DISPLAY.get(p, p) for p in protocol_order],
+        fontsize=tick_fontsize, rotation=0,
+    )
+    ax.set_xlabel("Protocol", fontsize=label_fontsize, fontweight="bold")
+    ax.set_ylabel("AUC", fontsize=label_fontsize, fontweight="bold")
+    if title:
+        ax.set_title(title, fontsize=title_fontsize, fontweight="bold", pad=10)
+    ax.tick_params(axis="y", labelsize=tick_fontsize)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
 
-    handles, labels = ax.get_legend_handles_labels()
-    labels = [APPROACH_LABELS.get(l, l) for l in labels]
-    ax.legend(handles=handles, labels=labels, fontsize=9,
-              framealpha=0.9, loc="lower right")
+    legend_handles = [
+        _mp.Patch(facecolor=_BOX_PALETTE[a], edgecolor="black", linewidth=0.8,
+                  label=APPROACH_LABELS.get(a, a))
+        for a in present_approaches
+    ]
+    ax.legend(handles=legend_handles, fontsize=legend_fontsize, framealpha=0.9,
+              loc="lower right")
 
     for spine in ax.spines.values():
         spine.set_linewidth(1.2)
@@ -578,6 +742,89 @@ def _plot_comparison(
         fontsize=13, fontweight="bold",
     )
     plt.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {output_path}")
+
+
+def make_distribution_summary_figure(
+    base_dir: Path,
+    combined_dir: Path,
+    output_path: Path,
+) -> None:
+    """
+    Single comprehensive figure combining per-dtype and cross-dtype results.
+
+    Panels (left → right):
+      Metagenomics | Amplicon | All datasets | Combined (cross-dtype)
+
+    Skips any panel whose CSVs are absent so the figure degrades gracefully
+    when only one set of results exists.
+    """
+    base_dir     = Path(base_dir)
+    combined_dir = Path(combined_dir)
+
+    all_results: dict = {}
+
+    # Load per-dtype results
+    for dtype in ["Metagenomics", "Amplicon"]:
+        for approach in APPROACHES:
+            p = base_dir / f"results_{dtype.lower()}_{approach}.csv"
+            if p.exists():
+                all_results[(dtype, approach)] = pd.read_csv(p)
+
+    # Load cross-dtype Combined results
+    for approach in APPROACHES:
+        p = combined_dir / f"results_combined_{approach}.csv"
+        if p.exists():
+            all_results[("Combined", approach)] = pd.read_csv(p)
+
+    per_dtypes   = [d for d in ["Metagenomics", "Amplicon"]
+                    if any((d, a) in all_results for a in APPROACHES)]
+    has_combined = any(("Combined", a) in all_results for a in APPROACHES)
+
+    if not per_dtypes and not has_combined:
+        print(f"  [summary figure] no results found in {base_dir} or {combined_dir} — skipping")
+        return
+
+    panels = per_dtypes[:]
+    if per_dtypes:
+        panels.append("All datasets")
+    if has_combined:
+        panels.append("Combined")
+
+    fig, axes = plt.subplots(1, len(panels), figsize=(9 * len(panels), 6), sharey=False)
+    if len(panels) == 1:
+        axes = [axes]
+
+    for ax, panel in zip(axes, panels):
+        if panel == "All datasets":
+            df = _make_combined_df(all_results, per_dtypes)
+        elif panel == "Combined":
+            frames = [
+                all_results[("Combined", a)].assign(approach=a)
+                for a in APPROACHES if ("Combined", a) in all_results
+                and not all_results[("Combined", a)].empty
+            ]
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        else:
+            frames = [
+                all_results[(panel, a)].assign(approach=a)
+                for a in APPROACHES if (panel, a) in all_results
+                and not all_results[(panel, a)].empty
+            ]
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+        if df.empty:
+            ax.set_title(f"{panel} — no data", fontsize=11)
+            continue
+        _draw_panel(ax, df, title=panel)
+
+    fig.suptitle("Distribution Approach Comparison — Full Summary",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {output_path}")
@@ -713,11 +960,20 @@ def run_distribution_investigation(
 
     if not posthoc_df.empty:
         posthoc_df.to_csv(output_dir / "stats_posthoc.csv", index=False)
-        print(f"\nPost-hoc (Bonferroni-corrected paired t-test):")
-        print(posthoc_df[["panel", "protocol", "approach_1", "approach_2",
-                           "mean_diff", "t_statistic",
-                           "p_value_raw", "p_value_bonferroni", "stars"]]
-              .to_string(index=False))
+        show_cols = ["panel", "protocol", "approach_1", "approach_2",
+                     "mean_diff", "t_statistic", "p_value_raw",
+                     "p_value_bonferroni", "stars"]
+        if "p_value_fdr" in posthoc_df.columns:
+            show_cols += ["p_value_fdr", "stars_fdr"]
+        print(f"\nPost-hoc (Bonferroni + BH-FDR corrected paired t-test):")
+        print(posthoc_df[show_cols].to_string(index=False))
+
+    # ── Delta + tests: original vs RANK-BIRD ─────────────────────────────────
+    delta_df = compute_normalization_comparison(all_results, dtypes)
+    if not delta_df.empty:
+        delta_df.to_csv(output_dir / "delta_tests.csv", index=False)
+        print("\nOriginal vs RANK-BIRD — delta & statistical tests:")
+        print(delta_df.to_string(index=False))
 
     _plot_comparison(
         all_results=all_results,
@@ -727,3 +983,112 @@ def run_distribution_investigation(
         sigmoid_center=sigmoid_center,
         relu_threshold=relu_threshold,
     )
+
+
+def print_auc_summary_table(output_dir: Path, approaches=("original", "rankbird")):
+    """
+    Print a formatted mean ± std / median comparison table for the given
+    approaches across all dtypes and protocols, reading from agg_*.csv files.
+
+    Example
+    -------
+        from experiments.investigate_distribution_approach import print_auc_summary_table
+        print_auc_summary_table(Path("figures_out/figure_3/3c"))
+    """
+    output_dir = Path(output_dir)
+
+    # Discover available dtypes from saved agg files
+    dtypes_found = sorted({
+        p.stem.split("_", 1)[1].rsplit("_", len(APPROACHES[0].split("_")))[0]
+        for p in output_dir.glob("agg_*.csv")
+    })
+    # Simpler: just check the known combinations
+    rows = []
+    for p in sorted(output_dir.glob("agg_*.csv")):
+        stem = p.stem[len("agg_"):]          # e.g. "metagenomics_rankbird"
+        # match approach suffix
+        approach = next((a for a in APPROACHES if stem.endswith(a)), None)
+        if approach not in approaches:
+            continue
+        dtype_raw = stem[: len(stem) - len(approach) - 1]   # e.g. "metagenomics"
+        dtype = dtype_raw.title()                            # "Metagenomics"
+        try:
+            df = pd.read_csv(p)
+        except Exception:
+            continue
+        for _, r in df.iterrows():
+            rows.append({
+                "dtype":      dtype,
+                "approach":   APPROACH_LABELS.get(approach, approach),
+                "protocol":   r["protocol"],
+                "mean":       round(r["mean_auc"], 3),
+                "median":     round(r["median_auc"], 3) if "median_auc" in r else float("nan"),
+                "std":        round(r["std_auc"], 3),
+                "n":          int(r["n_datasets"]),
+            })
+
+    if not rows:
+        print("No agg_*.csv files found. Run the investigation first.")
+        return
+
+    tbl = pd.DataFrame(rows).sort_values(["dtype", "protocol", "approach"])
+
+    # ── Pretty print ─────────────────────────────────────────────────────────
+    col_w = {"dtype": 14, "protocol": 22, "approach": 20, "mean": 7,
+             "median": 8, "std": 7, "n": 4}
+    header = (f"{'Dtype':<{col_w['dtype']}}  {'Protocol':<{col_w['protocol']}}"
+              f"  {'Approach':<{col_w['approach']}}  {'Mean':>{col_w['mean']}}"
+              f"  {'Median':>{col_w['median']}}  {'Std':>{col_w['std']}}"
+              f"  {'N':>{col_w['n']}}")
+    sep = "-" * len(header)
+
+    print("\n" + sep)
+    print(header)
+    print(sep)
+
+    prev_dtype = prev_proto = None
+    for _, r in tbl.iterrows():
+        if r["dtype"] != prev_dtype or r["protocol"] != prev_proto:
+            if prev_dtype is not None:
+                print()
+            prev_dtype, prev_proto = r["dtype"], r["protocol"]
+
+        print(f"{r['dtype']:<{col_w['dtype']}}  {r['protocol']:<{col_w['protocol']}}"
+              f"  {r['approach']:<{col_w['approach']}}  {r['mean']:>{col_w['mean']}.3f}"
+              f"  {r['median']:>{col_w['median']}.3f}  {r['std']:>{col_w['std']}.3f}"
+              f"  {r['n']:>{col_w['n']}}")
+
+    print(sep + "\n")
+
+    # ── Delta table ───────────────────────────────────────────────────────────
+    delta_path = output_dir / "delta_tests.csv"
+    if delta_path.exists():
+        delta = pd.read_csv(delta_path)
+        cw = {"panel": 16, "protocol": 22, "n": 4,
+              "mb": 8, "mt": 8, "dm": 7, "pt": 8, "st": 4,
+              "mdb": 8, "mdt": 8, "dmed": 7, "pw": 8, "sw": 4}
+        hdr = (f"\n{'Panel':<{cw['panel']}}  {'Protocol':<{cw['protocol']}}"
+               f"  {'N':>{cw['n']}}"
+               f"  {'Mean(O)':>{cw['mb']}}  {'Mean(R)':>{cw['mt']}}  {'ΔMean':>{cw['dm']}}"
+               f"  {'p(t-test)':>{cw['pt']}}  {'':>{cw['st']}}"
+               f"  {'Med(O)':>{cw['mdb']}}  {'Med(R)':>{cw['mdt']}}  {'ΔMedian':>{cw['dmed']}}"
+               f"  {'p(Wilcox)':>{cw['pw']}}  {'':>{cw['sw']}}")
+        sep2 = "-" * (len(hdr) - 1)
+        print(sep2)
+        print(hdr)
+        print(sep2)
+        prev = None
+        for _, r in delta.iterrows():
+            if r["panel"] != prev:
+                if prev is not None:
+                    print()
+                prev = r["panel"]
+            print(f"{r['panel']:<{cw['panel']}}  {r['protocol']:<{cw['protocol']}}"
+                  f"  {int(r['n_datasets']):>{cw['n']}}"
+                  f"  {r['mean_baseline']:>{cw['mb']}.3f}  {r['mean_treatment']:>{cw['mt']}.3f}"
+                  f"  {r['delta_mean']:>+{cw['dm']}.3f}  {r['p_ttest']:>{cw['pt']}.4f}"
+                  f"  {str(r['sig_ttest']):<{cw['st']}}"
+                  f"  {r['median_baseline']:>{cw['mdb']}.3f}  {r['median_treatment']:>{cw['mdt']}.3f}"
+                  f"  {r['delta_median']:>+{cw['dmed']}.3f}  {r['p_wilcoxon']:>{cw['pw']}.4f}"
+                  f"  {str(r['sig_wilcoxon']):<{cw['sw']}}")
+        print(sep2 + "\n")

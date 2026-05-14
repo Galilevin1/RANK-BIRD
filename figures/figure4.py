@@ -1,171 +1,313 @@
+"""
+Figure 4: Normalization effect overview.
+
+  4A — ROC + LODO: original vs RANK-BIRD normalized  (representative phenotype)
+  4B — Microbiome feature heatmap: original vs RANK-BIRD normalized
+  4C — KS-significant shared taxa bar chart (same as figure 2D)
+  4D — Distribution approach comparison: all 4 data conditions
+       (Metagenomics | Amplicon | All datasets | Combined)
+       reads pre-computed CSVs from data_dir_4d
+       (place all relevant results_*.csv files in figures_out/figure_4/4d/)
+
+Layout
+------
+  ┌───────────────────┬───────────────────┐
+  │  4A (Original)    │  4A (RANK-BIRD)   │  row A — ROC + LODO
+  ├───────────────────┼───────────────────┤
+  │  4B (Original)    │  4B (RANK-BIRD)   │  row B — feature heatmap
+  ├───────────────────┴───────────────────┤
+  │         4C (KS fraction bar chart)    │  row C — figure-2D style
+  ├───────────────────────────────────────┤
+  │         4D (distribution, 4-panel)    │  row D — approach comparison
+  └───────────────────────────────────────┘
+"""
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import List, Dict
+import matplotlib.gridspec as mgridspec
+from pathlib import Path
+from typing import List, Optional
 
-from utils.microbe_names import rename_microbes
 
+# ─────────────────────────────────────────────────────────────
+# Panel 4D: distribution approach — all data conditions
+# ─────────────────────────────────────────────────────────────
 
-def plot_figure4(
-    phenotype_name: str,
-    pairwise_results: pd.DataFrame,
-    full_lodo_shap: Dict,
-    dataset_names: List[str],
-    rename_features: bool = True,
-    top_n: int = 10,
-) -> plt.Figure:
+def plot_figure4d(base_dir, combined_dir=None, ax=None) -> plt.Figure:
     """
-    Single figure with 3 side-by-side panels for one phenotype.
+    Four-panel distribution approach comparison.
+    Panels: Metagenomics | Amplicon | All datasets | Combined
 
-    Panel A (left):   SHAP feature presence grid — which top-N SHAP features
-                      appear for each LODO test dataset.
-    Panel B (middle): Pairwise LODO AUC heatmap — AUC when training on column
-                      dataset and testing on row dataset.
-    Panel C (right):  Feature consistency barplot — % of LODO test datasets
-                      in which each feature appears in the top-N SHAP list.
-
-    Figure height scales automatically with the number of features.
+    base_dir     : directory containing per-dtype CSVs
+                   (results_metagenomics_<approach>.csv, results_amplicon_<approach>.csv)
+                   — typically investigations/distribution_approach/
+    combined_dir : directory containing cross-dtype CSVs
+                   (results_combined_<approach>.csv)
+                   — typically investigations/distribution_approach_combined/
+                   Defaults to base_dir when not provided.
+    ax           : embed into this axes' bounding box; if None a new figure is created.
     """
-    # Count unique features to size the figure dynamically
-    seen = set()
-    for ds in dataset_names:
-        if ds in full_lodo_shap:
-            for f in full_lodo_shap[ds]['top_10_features']['feature']:
-                seen.add(f)
-    n_features = max(len(seen), 1)
-
-    # Each panel is square: panel_size × panel_size.
-    # Height driven by number of feature rows; width = 3 × height.
-    panel_size = max(12, n_features * 0.5 + 4)
-    fig_height = panel_size
-    fig_width  = panel_size * 3
-
-    fig, axes = plt.subplots(
-        1, 3, figsize=(fig_width, fig_height),
-        gridspec_kw={'width_ratios': [1, 1, 1]}
+    from experiments.investigate_distribution_approach import (
+        _draw_panel, _make_combined_df, APPROACHES,
     )
 
-    _plot_shap_grid(axes[0], full_lodo_shap, dataset_names, rename_features, top_n)
-    _plot_pairwise_heatmap(axes[1], pairwise_results, dataset_names)
-    _plot_consistency_bar(axes[2], full_lodo_shap, dataset_names, rename_features, top_n)
+    base_dir     = Path(base_dir)
+    combined_dir = Path(combined_dir) if combined_dir is not None else base_dir
+    dtypes       = ["Metagenomics", "Amplicon"]
 
-    fig.suptitle(
-        f'{phenotype_name} — LODO Dataset Comparison',
-        fontsize=14, fontweight='bold'
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    # ── Load all results ──────────────────────────────────────
+    all_results: dict = {}
+    for dtype in dtypes:
+        for approach in APPROACHES:
+            p = base_dir / f"results_{dtype.lower()}_{approach}.csv"
+            if p.exists():
+                all_results[(dtype, approach)] = pd.read_csv(p)
+
+    for approach in APPROACHES:
+        p = combined_dir / f"results_combined_{approach}.csv"
+        if p.exists():
+            all_results[("Combined", approach)] = pd.read_csv(p)
+
+    has_combined = any(("Combined", a) in all_results for a in APPROACHES)
+    n_panels     = 4 if has_combined else 3
+
+    # ── Create axes ───────────────────────────────────────────
+    _standalone = ax is None
+    if _standalone:
+        fig, _axes = plt.subplots(1, n_panels,
+                                  figsize=(9 * n_panels, 6), sharey=False)
+        axes = list(_axes) if n_panels > 1 else [_axes]
+    else:
+        fig = ax.figure
+        ax.set_visible(False)
+        bb  = ax.get_position()
+        gap = 0.015
+        pw  = (bb.width - (n_panels - 1) * gap) / n_panels
+        axes = [
+            fig.add_axes([bb.x0 + i * (pw + gap), bb.y0, pw, bb.height])
+            for i in range(n_panels)
+        ]
+
+    # ── Build data frames for each panel ─────────────────────
+    panel_configs = [
+        ("Metagenomics", "Metagenomics"),
+        ("Amplicon",     "Amplicon"),
+        ("All datasets", None),
+    ]
+    if has_combined:
+        panel_configs.append(("Combined", "Combined"))
+
+    for sub_ax, (title, dtype_key) in zip(axes, panel_configs):
+        if dtype_key is None:
+            df = _make_combined_df(all_results, dtypes)
+        elif dtype_key == "Combined":
+            frames = [
+                all_results[("Combined", a)].assign(approach=a)
+                for a in APPROACHES
+                if ("Combined", a) in all_results
+                and not all_results[("Combined", a)].empty
+            ]
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        else:
+            frames = [
+                all_results[(dtype_key, a)].assign(approach=a)
+                for a in APPROACHES
+                if (dtype_key, a) in all_results
+                and not all_results[(dtype_key, a)].empty
+            ]
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+        if df.empty:
+            sub_ax.text(0.5, 0.5, f"{title}\n(no data)",
+                        ha="center", va="center",
+                        transform=sub_ax.transAxes, fontsize=12, color="#888")
+            sub_ax.set_axis_off()
+            continue
+
+        _draw_panel(sub_ax, df, title=title,
+                    label_fontsize=40, title_fontsize=36,
+                    tick_fontsize=32, legend_fontsize=30,
+                    box_width=0.75, dot_size=6)
+
+    # ylabel only on leftmost
+    for sub_ax in axes[1:]:
+        sub_ax.set_ylabel("")
+    # xlabel only on middle panel
+    for sub_ax in axes:
+        sub_ax.set_xlabel("")
+    axes[n_panels // 2].set_xlabel("Protocol", fontsize=40, fontweight="bold")
+
+    if _standalone:
+        plt.tight_layout()
     return fig
 
 
 # ─────────────────────────────────────────────────────────────
-# Panel A: SHAP feature presence grid
+# Assembled figure 4
 # ─────────────────────────────────────────────────────────────
 
-def _plot_shap_grid(ax, full_lodo_shap, dataset_names, rename_features, top_n):
-    # Collect all unique top features (preserving first-seen order)
-    all_features = []
-    seen = set()
-    for ds in dataset_names:
-        if ds in full_lodo_shap:
-            for f in full_lodo_shap[ds]['top_10_features']['feature']:
-                if f not in seen:
-                    all_features.append(f)
-                    seen.add(f)
+def assemble_figure4(
+    microbiome_dfs: List[pd.DataFrame],
+    target_dfs: List[pd.DataFrame],
+    dataset_names: List[str],
+    phenotype_name: str = "",
+    dtype: str = "Metagenomics",
+    figure2d_data: Optional[pd.DataFrame] = None,
+    figure2d_norm_data: Optional[pd.DataFrame] = None,
+    data_dir_4d: Optional[Path] = None,
+    figsize: tuple = (80, 96),
+) -> plt.Figure:
+    """
+    Assemble Figure 4 panels.
 
-    if not all_features:
-        ax.set_visible(False)
-        return
+    Parameters
+    ----------
+    microbiome_dfs     : original (raw) microbiome DataFrames for one phenotype
+    target_dfs         : corresponding target DataFrames
+    dataset_names      : corresponding dataset names
+    phenotype_name     : display label for the phenotype
+    dtype              : dtype label for the data (unused; kept for API consistency)
+    figure2d_data      : pre-computed KS fraction DataFrame (original) for panel 4C left
+    figure2d_norm_data : pre-computed KS fraction DataFrame (normalized) for panel 4C right
+    data_dir_4d        : flat directory containing all distribution CSVs for panel 4D
+                         (results_metagenomics_*.csv, results_amplicon_*.csv,
+                          results_combined_*.csv)
+    figsize            : overall figure size
+    """
+    from figures.figure2 import plot_figure2b, plot_figure2c, plot_figure2d_ks_bars
 
-    labels = rename_microbes(all_features) if rename_features else all_features
+    # ── Normalize data for panels A and B ──────────────────────
+    try:
+        from src.rankbird.normalization.pipeline import apply_normalization_pipeline
+        norm_mb, norm_names = apply_normalization_pipeline(
+            list(microbiome_dfs), list(dataset_names), min_samples_per_dataset=0,
+        )
+        name2tgt   = {n: t for n, t in zip(dataset_names, target_dfs)}
+        norm_names = [n for n in norm_names if n in name2tgt]
+        norm_mb    = norm_mb[:len(norm_names)]
+        norm_tgt   = [name2tgt[n] for n in norm_names]
+    except Exception as e:
+        print(f"  [Figure 4] Normalization failed: {e}")
+        norm_mb, norm_tgt, norm_names = (
+            list(microbiome_dfs), list(target_dfs), list(dataset_names)
+        )
 
-    # Build binary presence matrix (features × datasets)
-    presence = np.zeros((len(all_features), len(dataset_names)))
-    for j, ds in enumerate(dataset_names):
-        if ds in full_lodo_shap:
-            top = set(full_lodo_shap[ds]['top_10_features']['feature'])
-            for i, f in enumerate(all_features):
-                presence[i, j] = 1.0 if f in top else 0.0
-
-    sns.heatmap(
-        presence, ax=ax,
-        xticklabels=dataset_names,
-        yticklabels=labels,
-        cmap='Greys', vmin=0, vmax=1,
-        linewidths=0.4, linecolor='lightgrey',
-        cbar=False,
+    # ── Figure layout ──────────────────────────────────────────
+    fig = plt.figure(figsize=figsize)
+    outer = mgridspec.GridSpec(
+        4, 1, figure=fig,
+        height_ratios=[1.5, 1.4, 1.2, 1.0],
+        hspace=0.30,
+        left=0.05, right=0.97, top=0.97, bottom=0.04,
     )
-    ax.set_title(f'Top {top_n} SHAP Features\nper LODO Test Dataset',
-                 fontsize=12, fontweight='bold')
-    ax.set_xlabel('Test Dataset', fontsize=10)
-    ax.set_ylabel('')
-    plt.setp(ax.get_xticklabels(), rotation=40, ha='right', fontsize=9)
-    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=9)
 
+    gs_a = mgridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=outer[0], wspace=0.38)
+    ax_4a_orig = fig.add_subplot(gs_a[0, 0])
+    ax_4a_norm = fig.add_subplot(gs_a[0, 1])
 
-# ─────────────────────────────────────────────────────────────
-# Panel B: Pairwise LODO AUC heatmap
-# ─────────────────────────────────────────────────────────────
+    gs_b = mgridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=outer[1], wspace=0.38)
+    ax_4b_orig = fig.add_subplot(gs_b[0, 0])
+    ax_4b_norm = fig.add_subplot(gs_b[0, 1])
 
-def _plot_pairwise_heatmap(ax, pairwise_results, dataset_names):
-    n = len(dataset_names)
-    matrix = np.full((n, n), np.nan)
+    gs_c = mgridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=outer[2], wspace=0.35)
+    ax_4c_orig = fig.add_subplot(gs_c[0, 0])
+    ax_4c_norm = fig.add_subplot(gs_c[0, 1])
 
-    for _, row in pairwise_results.iterrows():
-        if row['train_dataset'] in dataset_names and row['test_dataset'] in dataset_names:
-            ti = dataset_names.index(row['train_dataset'])
-            xi = dataset_names.index(row['test_dataset'])
-            matrix[xi, ti] = row['auc']
+    ax_4d = fig.add_subplot(outer[3])
 
-    sns.heatmap(
-        matrix, ax=ax,
-        xticklabels=dataset_names,
-        yticklabels=dataset_names,
-        annot=True, fmt='.2f',
-        cmap='coolwarm_r', vmin=0.4, vmax=1.0, center=0.7,
-        linewidths=0.4, linecolor='lightgrey',
-        cbar_kws={'label': 'AUC', 'shrink': 0.8},
-    )
-    ax.set_title('Pairwise LODO AUC\n(row = test, col = train)',
-                 fontsize=11, fontweight='bold')
-    ax.set_xlabel('Train Dataset', fontsize=10)
-    ax.set_ylabel('Test Dataset', fontsize=10)
-    plt.setp(ax.get_xticklabels(), rotation=40, ha='right', fontsize=8)
-    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=8)
+    def _placeholder(ax, msg):
+        ax.text(0.5, 0.5, msg, ha="center", va="center",
+                transform=ax.transAxes, fontsize=12, color="#888")
+        ax.set_axis_off()
 
+    # ── Panel A: ROC curves + LODO bars (orig | norm) ──────────
+    try:
+        plot_figure2b(
+            microbiome_dfs=list(microbiome_dfs),
+            target_dfs=list(target_dfs),
+            dataset_names=list(dataset_names),
+            phenotype_name=f"{phenotype_name} — Original",
+            ax=ax_4a_orig,
+        )
+    except Exception as e:
+        _placeholder(ax_4a_orig, f"4A (original) error:\n{e}")
+    ax_4a_orig.text(-0.03, 1.02, "A", transform=ax_4a_orig.transAxes,
+                    fontsize=42, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
-# ─────────────────────────────────────────────────────────────
-# Panel C: Feature consistency barplot (% of datasets)
-# ─────────────────────────────────────────────────────────────
+    try:
+        plot_figure2b(
+            microbiome_dfs=norm_mb,
+            target_dfs=norm_tgt,
+            dataset_names=norm_names,
+            phenotype_name=f"{phenotype_name} — CIFAR",
+            ax=ax_4a_norm,
+        )
+    except Exception as e:
+        _placeholder(ax_4a_norm, f"4A (normalized) error:\n{e}")
 
-def _plot_consistency_bar(ax, full_lodo_shap, dataset_names, rename_features, top_n):
-    n_datasets = len(dataset_names)
+    # ── Panel B: microbiome feature heatmap (orig | norm) ───────
+    try:
+        plot_figure2c(
+            microbiome_dfs=list(microbiome_dfs),
+            target_dfs=list(target_dfs),
+            dataset_names=list(dataset_names),
+            phenotype_name=f"{phenotype_name} — Original",
+            ax=ax_4b_orig,
+        )
+    except Exception as e:
+        _placeholder(ax_4b_orig, f"4B (original) error:\n{e}")
+    ax_4b_orig.text(-0.03, 1.02, "B", transform=ax_4b_orig.transAxes,
+                    fontsize=42, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
-    feature_counts: dict = {}
-    for ds in dataset_names:
-        if ds in full_lodo_shap:
-            for f in full_lodo_shap[ds]['top_10_features']['feature']:
-                feature_counts[f] = feature_counts.get(f, 0) + 1
+    try:
+        plot_figure2c(
+            microbiome_dfs=norm_mb,
+            target_dfs=norm_tgt,
+            dataset_names=norm_names,
+            phenotype_name=f"{phenotype_name} — CIFAR",
+            ax=ax_4b_norm,
+        )
+    except Exception as e:
+        _placeholder(ax_4b_norm, f"4B (normalized) error:\n{e}")
 
-    if not feature_counts:
-        ax.set_visible(False)
-        return
+    # ── Panel C: KS fraction bar chart — Original | CIFAR ───────
+    _pos_c = ax_4c_orig.get_position()
+    if figure2d_data is not None and not figure2d_data.empty:
+        try:
+            plot_figure2d_ks_bars(figure2d_data, ax=ax_4c_orig)
+            ax_4c_orig.set_title("Original", fontsize=38, fontweight="bold", pad=8)
+        except Exception as e:
+            _placeholder(ax_4c_orig, f"4C (original) error:\n{e}")
+    else:
+        _placeholder(ax_4c_orig, "4C: provide figure2d_data\n(run compute_figure2d_data first)")
 
-    sorted_items = sorted(feature_counts.items(), key=lambda x: x[1], reverse=True)[:20]
-    features, counts = zip(*sorted_items)
-    percentages = [c / n_datasets * 100 for c in counts]
-    labels = rename_microbes(list(features)) if rename_features else list(features)
+    if figure2d_norm_data is not None and not figure2d_norm_data.empty:
+        try:
+            plot_figure2d_ks_bars(figure2d_norm_data, ax=ax_4c_norm)
+            ax_4c_norm.set_title("CIFAR", fontsize=38, fontweight="bold", pad=8)
+        except Exception as e:
+            _placeholder(ax_4c_norm, f"4C (normalized) error:\n{e}")
+    else:
+        _placeholder(ax_4c_norm, "4C: provide figure2d_norm_data\n(run compute_figure2d_data with normalization)")
 
-    ax.barh(range(len(labels)), percentages, color='#333333')
-    ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels, fontsize=9)
-    ax.invert_yaxis()
-    ax.set_xlabel('% of LODO Datasets', fontsize=10)
-    ax.set_xlim(0, 120)
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0f}%'))
-    ax.set_title(f'Feature Consistency\n(top {top_n} SHAP, % datasets)',
-                 fontsize=12, fontweight='bold')
-    ax.grid(axis='x', alpha=0.3)
+    fig.text(_pos_c.x0 - 0.01, _pos_c.y1 + 0.005, "C",
+             fontsize=42, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
-    for i, pct in enumerate(percentages):
-        ax.text(pct + 2, i, f'{pct:.0f}%', va='center', fontsize=9)
+    # ── Panel D: distribution approach (all 4 conditions) ───────
+    _pos_d = ax_4d.get_position()
+    if data_dir_4d is not None and Path(data_dir_4d).exists():
+        try:
+            plot_figure4d(base_dir=data_dir_4d, ax=ax_4d)
+        except Exception as e:
+            _placeholder(ax_4d, f"4D error:\n{e}")
+    else:
+        _placeholder(
+            ax_4d,
+            "4D: place distribution CSVs in figures_out/figure_4/4d/\n"
+            "(results_metagenomics_*.csv, results_amplicon_*.csv, results_combined_*.csv)",
+        )
+    fig.text(_pos_d.x0 - 0.01, _pos_d.y1 + 0.005, "D",
+             fontsize=42, fontweight="bold", va="bottom", ha="right", clip_on=False)
+
+    return fig
