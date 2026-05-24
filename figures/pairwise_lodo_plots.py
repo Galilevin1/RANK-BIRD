@@ -66,7 +66,13 @@ def _plot_shap_grid(ax, full_lodo_shap, dataset_names, rename_features, top_n):
         ax.set_visible(False)
         return
 
-    labels = rename_microbes(all_features) if rename_features else all_features
+    raw_labels = rename_microbes(all_features) if rename_features else list(all_features)
+    # Sort rows alphabetically by display label
+    sorted_pairs = sorted(zip(raw_labels, all_features), key=lambda x: x[0].lower())
+    labels, all_features = zip(*sorted_pairs)
+    labels      = [l.replace("-", " ") for l in labels]
+    all_features = list(all_features)
+
     presence = np.zeros((len(all_features), len(dataset_names)))
     for j, ds in enumerate(dataset_names):
         if ds in full_lodo_shap:
@@ -77,13 +83,15 @@ def _plot_shap_grid(ax, full_lodo_shap, dataset_names, rename_features, top_n):
     sns.heatmap(presence, ax=ax,
                 xticklabels=dataset_names, yticklabels=labels,
                 cmap="Greys", vmin=0, vmax=1,
-                linewidths=0.4, linecolor="lightgrey", cbar=False)
-    ax.set_title(f"Top {top_n} SHAP Features\nper LODO Test Dataset",
-                 fontsize=12, fontweight="bold")
-    ax.set_xlabel("Test Dataset", fontsize=10)
+                linewidths=0.5, linecolor="lightgrey", cbar=False)
+    ax.set_title("")
+    ax.set_xlabel("Test Dataset", fontsize=88, fontweight="bold")
     ax.set_ylabel("")
-    plt.setp(ax.get_xticklabels(), rotation=40, ha="right", fontsize=9)
-    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=9)
+    ax.yaxis.tick_right()
+    ax.yaxis.set_label_position("right")
+    ax.tick_params(axis="y", pad=50)
+    plt.setp(ax.get_xticklabels(), rotation=25, ha="right", fontsize=88)
+    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=62)
 
 
 def _plot_pairwise_heatmap(ax, pairwise_results, dataset_names):

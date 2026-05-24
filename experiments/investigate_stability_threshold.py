@@ -380,6 +380,7 @@ def _plot_sweep_panel(
     ax.set_xticks([0.2, 0.4, 0.6, 0.8])
     ax.tick_params(axis="x", rotation=45, labelsize=26)
     ax.set_xlim(PERCENTILES[0] - 0.02, PERCENTILES[-1] + 0.02)
+    ax.set_ylim(top=1.02)
     ax.grid(axis="y", linestyle="--", alpha=0.45, linewidth=0.9)
     ax.set_title(title, fontsize=32, fontweight="bold", pad=12)
     if show_left_yticks:

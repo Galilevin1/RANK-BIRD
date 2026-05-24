@@ -25,7 +25,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import matplotlib.gridspec as mgridspec
-import numpy as np
 import pandas as pd
 from typing import Optional
 
@@ -37,15 +36,15 @@ def assemble_figure1(
     selected_combinations=None,
     path_1b: Optional[Path] = None,
     figure1f_df: Optional[pd.DataFrame] = None,
-    figsize: tuple = (46, 59),
-    left_col_ratio: float = 1.0,
-    right_col_ratio: float = 1.7,
-    top_row_ratio: float = 1.0,
-    mid_row_ratio: float = 1.25,
+    figsize: tuple = (62, 80),
+    left_col_ratio: float = 1.15,
+    right_col_ratio: float = 1.85,
+    top_row_ratio: float = 2.8,
+    mid_row_ratio: float = 2.8,
     mid_col_ratios: tuple = (0.85, 0.75),
     section_hspace: float = 0.22,
     top_hspace: float = 0.48,
-    top_wspace: float = 0.42,
+    top_wspace: float = 0.28,
 ) -> plt.Figure:
     """
     Assemble panels A–F as live subplots in one combined Figure 1.
@@ -72,8 +71,8 @@ def assemble_figure1(
     from figures.figure1f import plot_figure1f
 
     top_height = top_row_ratio + mid_row_ratio   # combined inner rows of top section
-    mid_height = top_height * 0.62               # 1d + 1e row
-    bot_height = top_height * 0.52               # 1f row
+    mid_height = top_height * 0.48               # 1d + 1e row
+    bot_height = top_height * 0.40               # 1f row
 
     fig = plt.figure(figsize=figsize)
     outer = mgridspec.GridSpec(
@@ -95,15 +94,21 @@ def assemble_figure1(
     ax_b = fig.add_subplot(gs_top[:, 1])   # right, spans both inner rows
     ax_c = fig.add_subplot(gs_top[1, 0])   # bottom-left
 
-    # Shift 1b left without resizing
+    # Shift 1b right without resizing
     _pos_b = ax_b.get_position()
-    ax_b.set_position([_pos_b.x0 - 0.05, _pos_b.y0, _pos_b.width, _pos_b.height])
+    ax_b.set_position([_pos_b.x0 - 0.02, _pos_b.y0, _pos_b.width, _pos_b.height])
+
+    # Shift 1a and 1c slightly to the left
+    _pos_a = ax_a.get_position()
+    ax_a.set_position([_pos_a.x0 - 0.03, _pos_a.y0, _pos_a.width, _pos_a.height])
+    _pos_c = ax_c.get_position()
+    ax_c.set_position([_pos_c.x0 - 0.03, _pos_c.y0, _pos_c.width, _pos_c.height])
 
     # ── Section 2: 1d left, gap, 1e right (small outer margins) ─────────────
     gs_mid = mgridspec.GridSpecFromSubplotSpec(
         1, 4, subplot_spec=outer[1],
         width_ratios=[0.0, mid_col_ratios[0], mid_col_ratios[1], 0.12],
-        wspace=0.30,
+        wspace=0.15,
     )
 
     ax_d = fig.add_subplot(gs_mid[1])
@@ -128,7 +133,7 @@ def assemble_figure1(
     # ── Panel A: paper–phenotype grid ────────────────────────────────────────
     plot_figure_1a(ax=ax_a)
     ax_a.text(-0.18, 1.0, "A", transform=ax_a.transAxes,
-              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=52, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel B: schematic image ──────────────────────────────────────────────
     ax_b.set_axis_off()
@@ -141,7 +146,7 @@ def assemble_figure1(
                   ha="center", va="center", fontsize=13, color="#555555",
                   transform=ax_b.transAxes)
     ax_b.text(0.01, 1.0, "B", transform=ax_b.transAxes,
-              fontsize=42, fontweight="bold", va="top", ha="left", clip_on=False)
+              fontsize=52, fontweight="bold", va="top", ha="left", clip_on=False)
 
     # ── Panel C: papers vs LightGBM LODO bars ────────────────────────────────
     if papers_df is not None:
@@ -155,7 +160,7 @@ def assemble_figure1(
         ax_c.text(0.5, 0.5, "No papers data", ha="center", va="center",
                   transform=ax_c.transAxes, fontsize=12, color="#888888")
     ax_c.text(-0.18, 1.08, "C", transform=ax_c.transAxes,
-              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=52, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel D: protocol AUC heatmap ─────────────────────────────────────────
     plot_protocol_heatmap(
@@ -166,16 +171,16 @@ def assemble_figure1(
         ax=ax_d,
     )
     ax_d.text(-0.22, 1.0, "D", transform=ax_d.transAxes,
-              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=52, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel E: protocol AUC boxplots ────────────────────────────────────────
     plot_protocol_boxplots(results_df, ax=ax_e)
     ax_e.text(-0.12, 1.0, "E", transform=ax_e.transAxes,
-              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=52, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel F: cross-dtype LODO on overlap microbes ─────────────────────────
     plot_figure1f(figure1f_df if figure1f_df is not None else pd.DataFrame(), ax=ax_f)
     ax_f.text(-0.05, 1.0, "F", transform=ax_f.transAxes,
-              fontsize=42, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=52, fontweight="bold", va="top", ha="right", clip_on=False)
 
     return fig

@@ -57,6 +57,15 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     else:
         groups_to_plot = df_papers["Group"].unique()
 
+    # Amplicon groups first (bottom), Metagenomics groups last (top visually)
+    groups_to_plot = sorted(groups_to_plot,
+                            key=lambda g: (1 if "Metagenomics" in g else 0, g))
+
+    def _fmt_group(g):
+        return (g.replace("Delivery_mode_", "DM ")
+                 .replace("Metagenomics", "WGS")
+                 .replace("Amplicon", "16S"))
+
     ignore = {"Phenotype full name", "Phenotype", "Type", "Metadata Mapping", "Dataset", "Notes", "Group"}
     paper_cols = [c for c in df_papers.columns if c not in ignore and pd.api.types.is_numeric_dtype(df_papers[c])]
 
@@ -233,16 +242,16 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
 
     # Group labels
     for group, ymid in group_positions:
-        ax.text(-0.05, ymid, group, ha="right", va="center",
-                fontsize=42, fontweight="bold",
+        ax.text(-0.05, ymid, _fmt_group(group), ha="right", va="center",
+                fontsize=52, fontweight="bold",
                 transform=ax.get_yaxis_transform(),
                 bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgray',
                           edgecolor='gray', alpha=0.3))
 
     # Aesthetics
     ax.set_yticks([])
-    ax.tick_params(axis="x", labelsize=38)
-    ax.set_xlabel("LODO AUC (Mean ± SE)", fontsize=42, fontweight="bold")
+    ax.tick_params(axis="x", labelsize=58)
+    ax.set_xlabel("LODO AUC (Mean ± SE)", fontsize=52, fontweight="bold")
     ax.set_xlim(0, 1.05)
     if _standalone:
         ax.set_title("Model Performance: LightGBM vs. Published Results\n(Mann-Whitney U Test + FDR Correction)",
@@ -275,7 +284,8 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     else:
         ax.legend(ordered_handles, ordered_labels,
                   title="* = sig. vs LightGBM",
-                  title_fontsize=8, fontsize=7,
-                  loc="lower right", frameon=True, framealpha=0.9)
+                  title_fontsize=28, fontsize=26,
+                  bbox_to_anchor=(1.02, 1), loc="upper left",
+                  frameon=True, framealpha=0.9)
 
     return fig, ax, statistical_results

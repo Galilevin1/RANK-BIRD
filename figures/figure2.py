@@ -434,11 +434,11 @@ def plot_figure2a(
         cmap='coolwarm_r', center=0,
         cbar=_standalone,
         cbar_kws={'shrink': 0.5} if _standalone else {},
-        annot_kws={'size': 30},
+        annot_kws={'size': 56},
         ax=ax,
     )
-    hm.set_xticklabels(pretty, fontsize=32, rotation=45, ha='right')
-    hm.set_yticklabels(pretty, fontsize=32, rotation=0)
+    hm.set_xticklabels(pretty, fontsize=66, rotation=45, ha='right')
+    hm.set_yticklabels(pretty, fontsize=66, rotation=0)
 
     # Black border on significant lower-triangle cells
     for i in range(n):
@@ -474,6 +474,9 @@ def plot_figure2b(
     dataset_names: List[str],
     phenotype_name: str = "",
     ax=None,
+    show_legend: bool = True,
+    suppress_xlabel: bool = False,
+    inner_width_ratios: list = None,
 ) -> Tuple[plt.Figure, pd.DataFrame]:
     """
     Left panel  : ROC curves for the zero-percentage predictor (solid, bold).
@@ -493,11 +496,16 @@ def plot_figure2b(
             1, 2, figsize=(34, 12), gridspec_kw={"width_ratios": [2.2, 1]}
         )
     else:
+        import matplotlib.gridspec as _mgs
         fig = ax.figure
-        ax.set_visible(False)
-        bb = ax.get_position()
-        ax_roc = fig.add_axes([bb.x0,                   bb.y0, bb.width * 0.60, bb.height])
-        ax_bar = fig.add_axes([bb.x0 + bb.width * 0.66, bb.y0, bb.width * 0.34, bb.height])
+        ax.set_axis_off()   # hide frame/ticks but keep text (e.g. panel letter) visible
+        _bar_ratios = inner_width_ratios if inner_width_ratios is not None else [2.2, 1]
+        gs_inner = _mgs.GridSpecFromSubplotSpec(
+            1, 2, subplot_spec=ax.get_subplotspec(),
+            width_ratios=_bar_ratios, wspace=0.3,
+        )
+        ax_roc = fig.add_subplot(gs_inner[0, 0])
+        ax_bar = fig.add_subplot(gs_inner[0, 1])
 
     # ── Left: zero-% ROC curves (solid, bold) ───────────────
     for i, name in enumerate(dataset_names):
@@ -509,12 +517,12 @@ def plot_figure2b(
 
     ax_roc.plot([0, 1], [0, 1], "k:", linewidth=2, alpha=0.6, label="Random")
     ax_roc.set_xlim(0, 1);  ax_roc.set_ylim(0, 1.05)
-    ax_roc.set_xlabel("False Positive Rate", fontsize=44, fontweight="bold")
-    ax_roc.set_ylabel("True Positive Rate",  fontsize=44, fontweight="bold")
-    ax_roc.set_title("Zero-% Baseline ROC", fontsize=42, fontweight="bold")
-    ax_roc.tick_params(labelsize=34)
-    ax_roc.legend(loc="lower right", fontsize=28, framealpha=0.9,
-                  title="Dataset (AUC)", title_fontsize=26)
+    ax_roc.set_xlabel("False Positive Rate", fontsize=88, fontweight="bold")
+    ax_roc.set_ylabel("True Positive Rate",  fontsize=88, fontweight="bold")
+    ax_roc.set_title("Zero-% Baseline ROC", fontsize=86, fontweight="bold")
+    ax_roc.tick_params(labelsize=76)
+    ax_roc.legend(loc="lower right", fontsize=64, framealpha=0.9,
+                  title="Dataset (AUC)", title_fontsize=62)
     ax_roc.grid(True, alpha=0.25, linestyle="--")
 
     # ── Right: LODO AUC horizontal bars ─────────────────────
@@ -525,19 +533,32 @@ def plot_figure2b(
         color=[color_map[n] for n in dataset_names],
         edgecolor="black", linewidth=1.2, alpha=0.9,
     )
-    ax_bar.axvline(0.5, color="red", linestyle="--", linewidth=2, alpha=0.7, label="Random (0.5)")
+    ax_bar.axvline(0.5, color="red", linestyle="-", linewidth=5, alpha=1.0, zorder=10, label="Random (0.5)")
+    ax_bar.spines["left"].set_color("red")
+    ax_bar.spines["left"].set_linewidth(5)
     for bar, auc in zip(bars, lodo_aucs):
         if not np.isnan(auc):
-            ax_bar.text(auc + 0.015, bar.get_y() + bar.get_height() / 2,
+            ax_bar.text(auc + 0.005, bar.get_y() + bar.get_height() / 2,
                         f"{auc:.2f}", va="center", ha="left",
-                        fontsize=32, fontweight="bold")
+                        fontsize=72, fontweight="bold")
     ax_bar.set_yticks([])
-    ax_bar.set_xlabel("LODO AUC", fontsize=44, fontweight="bold")
-    ax_bar.set_title("LightGBM LODO", fontsize=42, fontweight="bold")
-    ax_bar.set_xlim(0, 1.18)
-    ax_bar.tick_params(axis="x", labelsize=34)
-    ax_bar.legend(fontsize=28, loc="lower right")
+    ax_bar.set_xlabel("LODO AUC", fontsize=88, fontweight="bold")
+    ax_bar.set_title("LightGBM LODO", fontsize=86, fontweight="bold")
+    ax_bar.set_xlim(0.5, 1.22)
+    ax_bar.tick_params(axis="x", labelsize=76)
+    ax_bar.legend(fontsize=64, loc="lower right")
     ax_bar.grid(True, alpha=0.25, axis="x", linestyle="--")
+
+    if not show_legend:
+        for _ax in (ax_roc, ax_bar):
+            lgnd = _ax.get_legend()
+            if lgnd:
+                lgnd.remove()
+
+    if suppress_xlabel:
+        for _ax in (ax_roc, ax_bar):
+            _ax.set_xlabel("")
+            _ax.tick_params(axis="x", labelbottom=False)
 
     if _standalone and phenotype_name:
         fig.suptitle(phenotype_name, fontsize=42, fontweight="bold")
@@ -638,6 +659,7 @@ def compute_figure2d_data(
 
     cache.parent.mkdir(parents=True, exist_ok=True)
     rows = []
+    detail_rows = []
 
     for phenotype, dtype in phenotypes:
         pheno_str = f"{phenotype} {dtype}"
@@ -680,18 +702,20 @@ def compute_figure2d_data(
         if len(common) == 0:
             continue
 
-        ks_pvals, feat_labels = [], []
+        ks_pvals, ks_stats, feat_labels, ds1_labels, ds2_labels = [], [], [], [], []
         for feat in common:
             for i, j in _comb(range(len(mb_dfs)), 2):
-                _, p = ks_2samp(mb_dfs[i][feat].values, mb_dfs[j][feat].values)
+                stat, p = ks_2samp(mb_dfs[i][feat].values, mb_dfs[j][feat].values)
                 ks_pvals.append(p)
+                ks_stats.append(stat)
                 feat_labels.append(feat)
+                ds1_labels.append(ds_names[i])
+                ds2_labels.append(ds_names[j])
 
         if not ks_pvals:
             continue
 
-        reject, _, _, _ = multipletests(ks_pvals, method="fdr_bh")
-        feat_series = pd.Series(dict(zip(feat_labels, reject)))
+        reject, p_adj, _, _ = multipletests(ks_pvals, method="fdr_bh")
         sig_per_feat = pd.Series(reject, index=feat_labels).groupby(level=0).max()
         frac_sig = float(sig_per_feat.mean())
 
@@ -702,11 +726,222 @@ def compute_figure2d_data(
             "n_datasets":         int(len(ds_names)),
             "ks_sig_fraction":    frac_sig,
         })
+
+        for feat, d1, d2, stat, p, padj, sig in zip(
+            feat_labels, ds1_labels, ds2_labels,
+            ks_stats, ks_pvals, p_adj, reject,
+        ):
+            detail_rows.append({
+                "phenotype":    pheno_str,
+                "dtype":        dtype,
+                "feature":      feat,
+                "dataset_1":    d1,
+                "dataset_2":    d2,
+                "ks_statistic": round(float(stat), 6),
+                "p_value":      float(p),
+                "p_adjusted":   float(padj),
+                "significant":  bool(sig),
+            })
+
         print(f"  {pheno_str}: {frac_sig*100:.1f}% of {len(common)} shared features significant")
 
     df = pd.DataFrame(rows)
     df.to_csv(cache, index=False)
+
+    detail_path = cache.parent / (cache.stem + "_per_feature.csv")
+    pd.DataFrame(detail_rows).to_csv(detail_path, index=False)
+    print(f"  Saved per-feature KS details → {detail_path}")
     return df
+
+
+def compute_ks_summary_stats(
+    ks_cache_path: str,
+    output_path: str = None,
+) -> pd.DataFrame:
+    """
+    Compute summary statistics from the KS fractions CSV for paper reporting.
+
+    Reports: overall range, overall median, median per dtype (Amplicon / Metagenomics).
+    Saves to output_path (defaults to same dir as ks_cache_path, named ks_summary_stats.csv).
+
+    Returns a DataFrame with one row per statistic.
+    """
+    cache = Path(ks_cache_path)
+    if not cache.exists():
+        print(f"  KS fractions file not found: {cache}")
+        return pd.DataFrame()
+
+    df = pd.read_csv(cache)
+    df["ks_pct"] = df["ks_sig_fraction"] * 100
+
+    stats = []
+
+    overall_min    = df["ks_pct"].min()
+    overall_max    = df["ks_pct"].max()
+    overall_median = df["ks_pct"].median()
+    stats.append({"stat": "range_min_pct",     "value": round(overall_min,    1)})
+    stats.append({"stat": "range_max_pct",     "value": round(overall_max,    1)})
+    stats.append({"stat": "median_overall_pct","value": round(overall_median, 1)})
+
+    for dtype_label, dtype_key in [("16S (Amplicon)", "Amplicon"), ("WGS (Metagenomics)", "Metagenomics")]:
+        sub = df[df["dtype"] == dtype_key]["ks_pct"]
+        if len(sub) > 0:
+            stats.append({"stat": f"median_{dtype_key.lower()}_pct", "value": round(sub.median(), 1),
+                          "dtype": dtype_label, "n_phenotypes": len(sub)})
+            stats.append({"stat": f"min_{dtype_key.lower()}_pct",    "value": round(sub.min(),    1),
+                          "dtype": dtype_label, "n_phenotypes": len(sub)})
+            stats.append({"stat": f"max_{dtype_key.lower()}_pct",    "value": round(sub.max(),    1),
+                          "dtype": dtype_label, "n_phenotypes": len(sub)})
+
+    stats_df = pd.DataFrame(stats)
+
+    out = Path(output_path) if output_path else cache.parent / "ks_summary_stats.csv"
+    stats_df.to_csv(out, index=False)
+
+    print(f"\n  KS fraction summary stats:")
+    print(f"    Range:           {overall_min:.1f}% – {overall_max:.1f}%")
+    print(f"    Median (all):    {overall_median:.1f}%")
+    for dtype_key in ["Amplicon", "Metagenomics"]:
+        sub = df[df["dtype"] == dtype_key]["ks_pct"]
+        if len(sub) > 0:
+            print(f"    Median {dtype_key}: {sub.median():.1f}%  (n={len(sub)} phenotypes)")
+    print(f"  Saved → {out}")
+
+    return stats_df
+
+
+def compute_ks_lodo_correlation(
+    phenotypes: List[Tuple[str, str]],
+    data_root: str,
+    ks_per_feature_path: str = "figures_out/figure_2/2d/ks_fractions_per_feature.csv",
+    output_dir: str = "figures_out/figure_2/2d",
+    lodo_cache_path: str = "figures_out/figure_2/2d/lodo_aucs_per_dataset.csv",
+) -> pd.DataFrame:
+    """
+    Correlate per-dataset mean KS distance with LODO AUC.
+
+    For each (phenotype, dataset), computes the mean KS statistic across all
+    pairwise comparisons involving that dataset (i.e., how different it is from
+    every other dataset on average), then correlates with the LODO AUC when
+    that dataset is the held-out test set.
+
+    Saves two files to output_dir:
+      ks_lodo_per_dataset.csv   — one row per (phenotype, dataset)
+      ks_lodo_correlation.csv   — Spearman r, Pearson r, p-values
+
+    Returns the per-dataset DataFrame.
+    """
+    from evaluation.data_loading import load_microbiome_datasets_with_targets
+    from evaluation.learning_protocols import lodo_protocol
+    from scipy.stats import spearmanr, pearsonr
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    per_dataset_path = out_dir / "ks_lodo_per_dataset.csv"
+    stats_path       = out_dir / "ks_lodo_correlation.csv"
+
+    # ── Load per-feature KS data ──────────────────────────────
+    ks_path = Path(ks_per_feature_path)
+    if not ks_path.exists():
+        print(f"  Per-feature KS file not found: {ks_path}")
+        print("  Run compute_figure2d_data first to generate it.")
+        return pd.DataFrame()
+
+    ks_df = pd.read_csv(ks_path)
+
+    # ── Load or compute LODO AUC per dataset ─────────────────
+    lodo_cache = Path(lodo_cache_path)
+    if lodo_cache.exists():
+        print(f"  Loading cached LODO AUCs from {lodo_cache}")
+        lodo_df = pd.read_csv(lodo_cache)
+    else:
+        lodo_rows = []
+        for phenotype, dtype in phenotypes:
+            pheno_str = f"{phenotype} {dtype}"
+            folder    = Path(data_root) / pheno_str
+            if not folder.exists():
+                continue
+            try:
+                mb_dfs, tgt_dfs, ds_names = load_microbiome_datasets_with_targets(str(folder))
+            except Exception as e:
+                print(f"  Error loading {pheno_str}: {e}")
+                continue
+            filtered = [
+                (mb, tgt, n) for mb, tgt, n in zip(mb_dfs, tgt_dfs, ds_names)
+                if len(np.unique(tgt.values.ravel())) >= 2
+            ]
+            if len(filtered) < 2:
+                continue
+            mb_f, tgt_f, names_f = (list(x) for x in zip(*filtered))
+            try:
+                res = lodo_protocol(mb_f, tgt_f, names_f)
+                for _, row in res.iterrows():
+                    lodo_rows.append({
+                        "phenotype":  pheno_str,
+                        "dtype":      dtype,
+                        "dataset":    row["test_dataset"],
+                        "lodo_auc":   float(row["auc"]),
+                    })
+            except Exception as e:
+                print(f"  LODO failed for {pheno_str}: {e}")
+
+        lodo_df = pd.DataFrame(lodo_rows)
+        lodo_df.to_csv(lodo_cache, index=False)
+        print(f"  Saved LODO AUCs → {lodo_cache}")
+
+    if lodo_df.empty:
+        print("  No LODO results available.")
+        return pd.DataFrame()
+
+    # ── Compute per-dataset mean KS distance ─────────────────
+    # For each (phenotype, dataset): average KS statistic over all pairs
+    # involving that dataset (across all features).
+    ks_long = pd.concat([
+        ks_df[["phenotype", "dataset_1", "ks_statistic"]].rename(columns={"dataset_1": "dataset"}),
+        ks_df[["phenotype", "dataset_2", "ks_statistic"]].rename(columns={"dataset_2": "dataset"}),
+    ], ignore_index=True)
+    mean_ks = (
+        ks_long
+        .groupby(["phenotype", "dataset"])["ks_statistic"]
+        .mean()
+        .reset_index()
+        .rename(columns={"ks_statistic": "mean_ks_distance"})
+    )
+
+    # ── Merge ─────────────────────────────────────────────────
+    merged = pd.merge(mean_ks, lodo_df, on=["phenotype", "dataset"], how="inner")
+    if merged.empty:
+        print("  No matching (phenotype, dataset) pairs between KS and LODO data.")
+        return pd.DataFrame()
+
+    merged.to_csv(per_dataset_path, index=False)
+    print(f"  Saved per-dataset KS vs LODO AUC → {per_dataset_path}")
+    print(f"  {len(merged)} data points across {merged['phenotype'].nunique()} phenotypes")
+
+    # ── Correlation ───────────────────────────────────────────
+    x = merged["mean_ks_distance"].values
+    y = merged["lodo_auc"].values
+
+    sp_r, sp_p = spearmanr(x, y)
+    pe_r, pe_p = pearsonr(x, y)
+
+    stats_rows = [
+        {"metric": "Spearman r",  "value": round(sp_r, 4), "p_value": round(sp_p, 6)},
+        {"metric": "Pearson r",   "value": round(pe_r, 4), "p_value": round(pe_p, 6)},
+        {"metric": "n_datapoints", "value": len(merged),   "p_value": np.nan},
+        {"metric": "n_phenotypes", "value": merged["phenotype"].nunique(), "p_value": np.nan},
+    ]
+    stats_df = pd.DataFrame(stats_rows)
+    stats_df.to_csv(stats_path, index=False)
+
+    print(f"\n  KS distance × LODO AUC correlation:")
+    print(f"    Spearman r = {sp_r:.4f}  (p = {sp_p:.4e})")
+    print(f"    Pearson  r = {pe_r:.4f}  (p = {pe_p:.4e})")
+    print(f"    n = {len(merged)} dataset observations")
+    print(f"  Saved stats → {stats_path}")
+
+    return merged
 
 
 def plot_figure2d_ks_bars(
@@ -747,35 +982,94 @@ def plot_figure2d_ks_bars(
         ax.text(bar.get_width() + 1.0,
                 bar.get_y() + bar.get_height() / 2,
                 f"{row['ks_sig_fraction']*100:.0f}%",
-                va="center", ha="left", fontsize=32, fontweight="bold")
+                va="center", ha="left", fontsize=72, fontweight="bold")
 
+    _dtype_display = {"Metagenomics": "WGS", "Amplicon": "16S"}
     labels = [
         r["phenotype"]
-        .replace(" Metagenomics", "\n(Shotgun)")
-        .replace(" Amplicon", "\n(16S)")
+        .replace(" Metagenomics", "")
+        .replace(" Amplicon", "")
         for _, r in data_df.iterrows()
     ]
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(labels, fontsize=34, fontweight="bold")
+    ax.set_yticklabels(labels, fontsize=76, fontweight="bold")
     ax.set_xlabel(
         "% Shared Taxa with Significant\nInter-Dataset Difference (KS, FDR)",
-        fontsize=36, fontweight="bold",
+        fontsize=76, fontweight="bold",
     )
-    ax.set_xlim(0, 125)
-    ax.tick_params(axis="x", labelsize=30)
+    ax.set_xlim(0, 108)
+    ax.tick_params(axis="x", labelsize=70)
     ax.grid(True, alpha=0.3, axis="x", linestyle="--")
 
     from matplotlib.patches import Patch
     legend_elements = [
-        Patch(facecolor=c, label=d)
+        Patch(facecolor=c, label=_dtype_display.get(d, d))
         for d, c in dtype_colors.items()
         if d in data_df["dtype"].values
     ]
-    ax.legend(handles=legend_elements, fontsize=30, loc="lower right")
+    ax.legend(handles=legend_elements, fontsize=68, loc="lower right")
 
     if _standalone:
         plt.tight_layout()
     return fig
+
+
+def _plot_umap_raw_panel(
+    ax,
+    mb_by_dtype: Dict,
+    tgt_by_dtype: Dict,
+    names_by_dtype: Dict,
+    phenotype_name: str = "",
+) -> None:
+    """Draw the raw UMAP/PCA scatter (left panel of Figure 3D) into an existing ax."""
+    from figures.figure3 import _umap_scatter, _DTYPE_COLORS, _CASE_EDGE
+
+    dtypes_present = [d for d in ["Metagenomics", "Amplicon"] if d in mb_by_dtype]
+    all_mb, all_tgt, all_dtype_labels = [], [], []
+    for dtype in dtypes_present:
+        for mb, tgt in zip(mb_by_dtype[dtype], tgt_by_dtype[dtype]):
+            all_mb.append(mb)
+            all_tgt.append(tgt)
+            all_dtype_labels.extend([dtype] * len(mb))
+
+    if len(all_mb) < 2:
+        ax.text(0.5, 0.5, "Need ≥2 datasets for UMAP",
+                ha="center", va="center", transform=ax.transAxes,
+                fontsize=14, color="#888")
+        return
+
+    common = all_mb[0].columns
+    for df in all_mb[1:]:
+        common = common.intersection(df.columns)
+    if len(common) == 0:
+        ax.text(0.5, 0.5, "No common features (raw)",
+                ha="center", va="center", transform=ax.transAxes)
+        return
+
+    X = pd.concat([df[common] for df in all_mb], axis=0, ignore_index=True)
+    tgt_arr = np.concatenate([
+        t.iloc[:, 0].values if isinstance(t, pd.DataFrame) else t.values
+        for t in all_tgt
+    ])
+    dt_arr = np.array(all_dtype_labels)
+
+    title = f"Raw — {phenotype_name}" if phenotype_name else "Raw"
+    _umap_scatter(ax, X, tgt_arr, dt_arr, title=title)
+
+    legend_handles = [
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor=_DTYPE_COLORS.get(d, "#888"),
+                   markeredgecolor="none", markersize=14, label=d)
+        for d in dtypes_present
+    ] + [
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="#888888", markeredgecolor=_CASE_EDGE,
+                   markeredgewidth=1.5, markersize=14, label="Case (border)"),
+        plt.Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor="#888888", markeredgecolor="none",
+                   markersize=14, label="Control (no border)"),
+    ]
+    ax.legend(handles=legend_handles, fontsize=24, framealpha=0.9, loc="best")
 
 
 def assemble_figure2(
@@ -784,63 +1078,49 @@ def assemble_figure2(
     cd_target_dfs: Optional[List[pd.DataFrame]] = None,
     cd_dataset_names: Optional[List[str]] = None,
     figure2d_data: Optional[pd.DataFrame] = None,
-    figure2e_data: Optional[Dict] = None,
+    figure2e_data: Optional[Dict] = None,   # kept for backward compat; unused in main figure
     cd_phenotype_name: str = "CD",
-    figsize: tuple = (46, 54),
+    shap_full_lodo: Optional[Dict] = None,
+    shap_dataset_names: Optional[List[str]] = None,
+    figsize: tuple = (90, 90),
 ) -> plt.Figure:
     """
     Assemble Figure 2 panels into one combined figure.
 
-      2A — Spearman correlation heatmap (confounders vs performance)
-      2B — Zero-% baseline ROC curves (left) + LightGBM LODO AUC bars (right) for CD
-      2C — Microbiome feature presence heatmap for CD
-      2D — % shared taxa with significant inter-dataset KS difference (all phenotypes)
-      2E — Pairwise LODO AUC vs SHAP Jaccard scatter for CD
+      Col 0 (left)  — A (row 0) / B (row 1) / C (row 2) — all same width
+      Col 1 (right) — E spanning rows 0–1 (tall) / D (row 2)
 
     Parameters
     ----------
-    csv_path          : path to microbiome_analysis_results.csv
-    cd_microbiome_dfs : microbiome DataFrames for CD
-    cd_target_dfs     : target DataFrames for CD
-    cd_dataset_names  : dataset names for CD
-    figure2d_data     : pre-computed DataFrame from compute_figure2d_data(); if None panel D shows placeholder
-    figure2e_data     : pre-computed dict from compute_figure2e_data(); if None panel E shows placeholder
-    cd_phenotype_name : key in figure2e_data to use for panel E (default "CD")
-
-    Stats CSVs are always saved to figures_out/figure_2/2a/, .../2b/, ... etc.
+    csv_path            : path to microbiome_analysis_results.csv
+    cd_microbiome_dfs   : microbiome DataFrames for the representative phenotype
+    cd_target_dfs       : target DataFrames for the representative phenotype
+    cd_dataset_names    : dataset names for the representative phenotype
+    figure2d_data       : pre-computed DataFrame from compute_figure2d_data()
+    figure2e_data       : unused in main figure (kept for backward compat)
+    cd_phenotype_name   : label for the representative phenotype (default "CD")
+    shap_full_lodo      : {dataset: {"top_10_features": df}} from _load_shap_details()
+    shap_dataset_names  : ordered list of dataset names matching shap_full_lodo keys
     """
     import matplotlib.gridspec as mgridspec
 
     fig = plt.figure(figsize=figsize)
-    outer = mgridspec.GridSpec(
-        3, 1, figure=fig,
-        height_ratios=[1.0, 1.0, 0.75],
-        hspace=0.38,
+    gs = mgridspec.GridSpec(
+        3, 2, figure=fig,
+        width_ratios=[3.0, 1.5],
+        height_ratios=[1.0, 1.0, 1.0],
+        hspace=0.42, wspace=0.38,
         left=0.07, right=0.97, top=0.96, bottom=0.05,
     )
 
-    # ── Top row: A (left) + B (right) ────────────────────────
-    gs_top = mgridspec.GridSpecFromSubplotSpec(
-        1, 2, subplot_spec=outer[0],
-        width_ratios=[1.0, 2.5], wspace=0.35,
-    )
-    ax_a = fig.add_subplot(gs_top[0, 0])
-    ax_b = fig.add_subplot(gs_top[0, 1])
+    # ── Left column: A / B / C ────────────────────────────────
+    ax_a = fig.add_subplot(gs[0, 0])
+    ax_b = fig.add_subplot(gs[1, 0])
+    ax_c = fig.add_subplot(gs[2, 0])
 
-    # ── Middle row: C (left) + D (right) ─────────────────────
-    gs_mid = mgridspec.GridSpecFromSubplotSpec(
-        1, 2, subplot_spec=outer[1],
-        width_ratios=[1.0, 1.0], wspace=0.35,
-    )
-    ax_c = fig.add_subplot(gs_mid[0, 0])
-    ax_d = fig.add_subplot(gs_mid[0, 1])
-
-    # ── Bottom row: E (centred, not full width) ───────────────
-    gs_bot = mgridspec.GridSpecFromSubplotSpec(
-        1, 3, subplot_spec=outer[2],
-        width_ratios=[0.15, 1.0, 0.15], wspace=0,
-    )
-    ax_e = fig.add_subplot(gs_bot[0, 1])
+    # ── Right column: E (rows 0–1, tall) / D (row 2) ─────────
+    ax_e = fig.add_subplot(gs[0:2, 1])
+    ax_d = fig.add_subplot(gs[2, 1])
 
     def _placeholder(ax, msg):
         ax.text(0.5, 0.5, msg, ha="center", va="center",
@@ -857,8 +1137,8 @@ def assemble_figure2(
 
     # ── Panel A ───────────────────────────────────────────────
     _, stats_2a = plot_figure2a(csv_path, ax=ax_a)
-    ax_a.text(-0.08, 1.0, "A", transform=ax_a.transAxes,
-              fontsize=32, fontweight="bold", va="top", ha="right", clip_on=False)
+    ax_a.text(-0.10, 1.0, "A", transform=ax_a.transAxes,
+              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
     stats_2a.to_csv(subdirs["2a"] / "spearman_correlations.csv", index=False)
 
     # ── Panel B: CD ROC curves ────────────────────────────────
@@ -868,41 +1148,36 @@ def assemble_figure2(
         auc_2b.to_csv(subdirs["2b"] / f"roc_auc_{cd_phenotype_name}.csv", index=False)
     else:
         _placeholder(ax_b, "CD data not provided")
-    ax_b.text(-0.08, 1.0, "B", transform=ax_b.transAxes,
-              fontsize=32, fontweight="bold", va="top", ha="right", clip_on=False)
+    ax_b.text(-0.10, 1.0, "B", transform=ax_b.transAxes,
+              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel C: CD microbiome feature heatmap ───────────────
     if cd_microbiome_dfs is not None:
         plot_figure2c(cd_microbiome_dfs, cd_target_dfs,
-                      cd_dataset_names, cd_phenotype_name, ax=ax_c)
+                      cd_dataset_names, phenotype_name="", ax=ax_c)
     else:
         _placeholder(ax_c, "CD data not provided")
-    ax_c.text(-0.08, 1.0, "C", transform=ax_c.transAxes,
-              fontsize=32, fontweight="bold", va="top", ha="right", clip_on=False)
+    ax_c.text(-0.10, 1.0, "C", transform=ax_c.transAxes,
+              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel D: KS fraction bar chart (all phenotypes) ──────
     if figure2d_data is not None:
         plot_figure2d_ks_bars(figure2d_data, ax=ax_d)
-        figure2d_data.to_csv(subdirs["2d"] / "ks_sig_fractions.csv", index=False)
     else:
         _placeholder(ax_d, "figure2d_data not provided\n(run compute_figure2d_data first)")
-    ax_d.text(-0.08, 1.0, "D", transform=ax_d.transAxes,
-              fontsize=32, fontweight="bold", va="top", ha="right", clip_on=False)
+    ax_d.text(-0.18, 1.0, "D", transform=ax_d.transAxes,
+              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
 
-    # ── Panel E: delta AUC vs SHAP Jaccard ───────────────────
-    if figure2e_data:
-        plot_figure2e(figure2e_data, ax=ax_e)   # pooled across all phenotypes
-        rows_e = []
-        for pheno_str, pd_data in figure2e_data.items():
-            for tr, te, j, auc in zip(pd_data["train_dataset"], pd_data["test_dataset"],
-                                      pd_data["jaccard"], pd_data["pairwise_auc"]):
-                rows_e.append({"phenotype": pheno_str, "train": tr, "test": te,
-                                "jaccard": j, "pairwise_auc": auc})
-        pd.DataFrame(rows_e).to_csv(subdirs["2e"] / "jaccard_pairwise_auc_all.csv", index=False)
+    # ── Panel E: SHAP feature presence grid ──────────────────
+    if shap_full_lodo and shap_dataset_names:
+        from figures.pairwise_lodo_plots import _plot_shap_grid
+        _plot_shap_grid(ax_e, shap_full_lodo, shap_dataset_names,
+                        rename_features=True, top_n=10)
     else:
-        _placeholder(ax_e, "figure2e_data not provided\n(run compute_figure2e_data first)")
-    ax_e.text(-0.05, 1.0, "E", transform=ax_e.transAxes,
-              fontsize=32, fontweight="bold", va="top", ha="right", clip_on=False)
+        _placeholder(ax_e, "shap_full_lodo not provided\n(run figure 2F supp first)")
+    ax_e.text(-0.18, 1.0, "E", transform=ax_e.transAxes,
+              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
+
 
     return fig
 
@@ -1002,11 +1277,11 @@ def plot_figure2c(
     for i, name in enumerate(dataset_names):
         y_mid = (boundaries[i] + boundaries[i + 1]) / 2
         ax.text(-0.01, y_mid, name, ha="right", va="center",
-                fontsize=40, fontweight="bold",
+                fontsize=80, fontweight="bold",
                 transform=ax.get_yaxis_transform())
 
     if phenotype_name:
-        ax.set_title(phenotype_name, fontsize=40, fontweight="bold")
+        ax.set_title(phenotype_name, fontsize=46, fontweight="bold")
 
     if _standalone:
         plt.tight_layout()
@@ -1503,13 +1778,13 @@ def plot_figure2e(
                 label="Overall trend")
         r, p = stats.spearmanr(all_j, all_auc)
         ax.text(0.97, 0.97, f"ρ={r:.2f}, p={p:.3f}\n(all phenotypes)",
-                transform=ax.transAxes, ha="right", va="top", fontsize=28,
+                transform=ax.transAxes, ha="right", va="top", fontsize=34,
                 fontweight="bold",
                 bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.85))
 
-    ax.set_xlabel("SHAP Jaccard (top-10 features)", fontsize=38, fontweight="bold")
-    ax.set_ylabel("Pairwise LODO AUC",               fontsize=38, fontweight="bold")
-    ax.tick_params(labelsize=30)
+    ax.set_xlabel("SHAP Jaccard (top-10 features)", fontsize=46, fontweight="bold")
+    ax.set_ylabel("Pairwise LODO AUC",               fontsize=46, fontweight="bold")
+    ax.tick_params(labelsize=38)
     ax.grid(True, alpha=0.25, linestyle="--")
 
     # Legend: phenotypes + dtype marker guide
@@ -1522,8 +1797,8 @@ def plot_figure2e(
                markersize=22, label="Amplicon (16S)"),
     ]
     ax.legend(handles=handles + dtype_handles,
-              fontsize=20, loc="lower right", framealpha=0.9,
-              title="Phenotype  (shape = dtype)", title_fontsize=20,
+              fontsize=26, loc="lower right", framealpha=0.9,
+              title="Phenotype  (shape = dtype)", title_fontsize=26,
               ncol=2)
 
     if _standalone:

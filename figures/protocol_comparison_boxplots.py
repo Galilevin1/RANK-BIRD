@@ -261,8 +261,15 @@ def plot_protocol_boxplots(results_df: pd.DataFrame, ax=None):
     """
     Boxplot of LightGBM LODO, Internal Validation, Within Learning.
     One dot per dataset. Returns fig, ax, stats_df (pairwise Mann-Whitney between protocols).
+    Significant pairs annotated with *, **, *** brackets.
     """
     from scipy.stats import mannwhitneyu
+
+    def _stars(p):
+        if p < 0.001: return "***"
+        if p < 0.01:  return "**"
+        if p < 0.05:  return "*"
+        return ""
 
     METHOD_ORDER = ["LODO", "Internal Validation", "Within Learning"]
     LABELS       = ["LGBM\nLODO", "LGBM\nInternal\nValidation", "LGBM\nWithin\nLearning"]
@@ -271,6 +278,33 @@ def plot_protocol_boxplots(results_df: pd.DataFrame, ax=None):
     plot_df = results_df[results_df["protocol"].isin(METHOD_ORDER)].copy()
     plot_df["auc"] = pd.to_numeric(plot_df["auc"], errors="coerce")
     available = [m for m in METHOD_ORDER if m in plot_df["protocol"].unique()]
+
+    # ── Pairwise Mann-Whitney (computed first to size ylim) ────
+    stat_rows = []
+    sig_pairs = []
+    for p1, p2 in combinations(available, 2):
+        v1 = plot_df[plot_df["protocol"] == p1]["auc"].dropna().values
+        v2 = plot_df[plot_df["protocol"] == p2]["auc"].dropna().values
+        if len(v1) >= 2 and len(v2) >= 2:
+            U, pval = mannwhitneyu(v1, v2, alternative="two-sided")
+            stat_rows.append({
+                "protocol_1":  p1,
+                "protocol_2":  p2,
+                "n_1":         len(v1),
+                "n_2":         len(v2),
+                "mean_1":      float(np.mean(v1)),
+                "mean_2":      float(np.mean(v2)),
+                "mean_diff":   float(np.mean(v1) - np.mean(v2)),
+                "U_statistic": float(U),
+                "p_value":     float(pval),
+                "significant": bool(pval < 0.05),
+            })
+            if pval < 0.05:
+                sig_pairs.append((available.index(p1) + 1,
+                                  available.index(p2) + 1, pval))
+
+    # shorter spans first → lower brackets
+    sig_pairs.sort(key=lambda t: t[1] - t[0])
 
     sns.set_style("whitegrid", {"grid.linestyle": "--", "grid.alpha": 0.3})
     _standalone = ax is None
@@ -302,40 +336,34 @@ def plot_protocol_boxplots(results_df: pd.DataFrame, ax=None):
         vals = plot_df[plot_df["protocol"] == method]["auc"].dropna().values
         np.random.seed(42)
         ax.scatter(np.random.normal(i, 0.05, len(vals)), vals,
-                   alpha=0.6, s=70, color="#404040",
+                   alpha=0.6, s=180, color="#404040",
                    edgecolors="black", linewidths=0.8, zorder=3)
 
-    ax.set_xticklabels([LABELS[METHOD_ORDER.index(m)] for m in available], fontsize=32)
-    ax.set_ylabel("AUC", fontsize=34, fontweight="bold")
+    # ── Significance brackets ──────────────────────────────────
+    y_start = 1.02
+    y_step  = 0.09
+    for k, (x1, x2, pval) in enumerate(sig_pairs):
+        y = y_start + k * y_step
+        h = 0.02
+        ax.plot([x1, x1, x2, x2], [y, y + h, y + h, y],
+                lw=2, color="black", clip_on=False)
+        ax.text((x1 + x2) / 2, y + h + 0.005, _stars(pval),
+                ha="center", va="bottom", fontsize=76,
+                fontweight="bold", color="black", clip_on=False)
+
+    ylim_top = y_start + len(sig_pairs) * y_step + 0.08 if sig_pairs else 1.08
+
+    ax.set_xticklabels([LABELS[METHOD_ORDER.index(m)] for m in available], fontsize=72)
+    ax.set_ylabel("AUC", fontsize=74, fontweight="bold")
     ax.set_xlabel("")
-    ax.tick_params(axis="y", labelsize=32)
+    ax.tick_params(axis="y", labelsize=72)
     ax.axhline(0.5, color="#696969", linestyle=":", linewidth=2.5, alpha=0.6)
-    ax.set_ylim(0.4, 1.05)
+    ax.set_ylim(0.4, ylim_top)
     for spine in ax.spines.values():
         spine.set_edgecolor("#2F2F2F")
         spine.set_linewidth(1.5)
 
     if _standalone:
         plt.tight_layout()
-
-    # ── Pairwise Mann-Whitney between protocols ────────────────
-    stat_rows = []
-    for p1, p2 in combinations(available, 2):
-        v1 = plot_df[plot_df["protocol"] == p1]["auc"].dropna().values
-        v2 = plot_df[plot_df["protocol"] == p2]["auc"].dropna().values
-        if len(v1) >= 2 and len(v2) >= 2:
-            U, p = mannwhitneyu(v1, v2, alternative="two-sided")
-            stat_rows.append({
-                "protocol_1":  p1,
-                "protocol_2":  p2,
-                "n_1":         len(v1),
-                "n_2":         len(v2),
-                "mean_1":      float(np.mean(v1)),
-                "mean_2":      float(np.mean(v2)),
-                "mean_diff":   float(np.mean(v1) - np.mean(v2)),
-                "U_statistic": float(U),
-                "p_value":     float(p),
-                "significant": bool(p < 0.05),
-            })
 
     return fig, ax, pd.DataFrame(stat_rows)

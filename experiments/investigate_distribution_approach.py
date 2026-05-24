@@ -73,7 +73,7 @@ APPROACHES = ["original", "original_filtered", "rankbird", "ranking", "ranking_s
 APPROACH_LABELS = {
     "original":          "Original",
     "original_filtered": "Original + Filter",
-    "rankbird":          "RANK-BIRD",
+    "rankbird":          "CIFAR",
     "ranking":           "Ranking",
     "ranking_sig":       "Ranking + Sigmoid",
     "ranking_relu":      "Ranking + Relu",

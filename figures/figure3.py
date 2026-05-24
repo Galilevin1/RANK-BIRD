@@ -123,10 +123,10 @@ def _umap_scatter(
                 edgecolors=edge, linewidths=lw,
             )
 
-    ax.set_xlabel(x_label, fontsize=32, labelpad=4)
-    ax.set_ylabel(y_label, fontsize=32, labelpad=4)
-    ax.set_title(title, fontsize=34, fontweight="bold")
-    ax.tick_params(labelsize=26)
+    ax.set_xlabel(x_label, fontsize=72, labelpad=4)
+    ax.set_ylabel(y_label, fontsize=72, labelpad=4)
+    ax.set_title(title, fontsize=76, fontweight="bold")
+    ax.tick_params(labelsize=60)
     ax.margins(0.05)
 
 
@@ -142,6 +142,7 @@ def plot_figure3b(
     combined_subdir: str = "stability_threshold_rankbird_wasserstein_combined",
     force_single_row: bool = False,
     stacked: bool = False,
+    prefer_filter_only: bool = False,
 ) -> plt.Figure:
     """
     Draw the stability threshold investigation grid directly onto axes.
@@ -184,7 +185,10 @@ def plot_figure3b(
             op = inv_dir / f"original_auc_{base}.csv"
             if op.exists():
                 orig_store[(level, dd)] = pd.read_csv(op).iloc[0].to_dict()
-            for suffix in ("_full_raw", "_full", "_filter_only_raw", "_filter_only"):
+            _suffixes = (("_filter_only_raw", "_filter_only", "_full_raw", "_full")
+                         if prefer_filter_only
+                         else ("_full_raw", "_full", "_filter_only_raw", "_filter_only"))
+            for suffix in _suffixes:
                 candidate = inv_dir / f"auc_sweep_{base}{suffix}.csv"
                 if candidate.exists():
                     raw_store[(level, dd)] = pd.read_csv(candidate)
@@ -200,7 +204,10 @@ def plot_figure3b(
             op = comb_dir / f"original_auc_{base}.csv"
             if op.exists():
                 orig_store[(level, "Combined")] = pd.read_csv(op).iloc[0].to_dict()
-            for suffix in ("_full_raw", "_full", "_filter_only_raw", "_filter_only"):
+            _suffixes = (("_filter_only_raw", "_filter_only", "_full_raw", "_full")
+                         if prefer_filter_only
+                         else ("_full_raw", "_full", "_filter_only_raw", "_filter_only"))
+            for suffix in _suffixes:
                 candidate = comb_dir / f"auc_sweep_{base}{suffix}.csv"
                 if candidate.exists():
                     raw_store[(level, "Combined")] = pd.read_csv(candidate)
@@ -448,8 +455,8 @@ def plot_figure3c(investigation_dir: str, ax=None, stacked: bool = False) -> plt
             ]
 
     _panel_kwargs = dict(
-        label_fontsize=72, title_fontsize=66,
-        tick_fontsize=60, legend_fontsize=60,
+        label_fontsize=104, title_fontsize=96,
+        tick_fontsize=88, legend_fontsize=104,
         box_width=0.75, dot_size=8,
     )
 
@@ -501,14 +508,17 @@ def plot_figure3c(investigation_dir: str, ax=None, stacked: bool = False) -> plt
         # xlabel "Protocol" only on bottom panel; ylabel "AUC" on all
         for sub_ax in axes[:-1]:
             sub_ax.set_xlabel("")
-        axes[-1].set_xlabel("Protocol", fontsize=52, fontweight="bold")
+        axes[-1].set_xlabel("Protocol", fontsize=96, fontweight="bold")
     else:
-        # xlabel only on middle panel; ylabel only on leftmost
+        # xlabel on panel nearest center; y-axis only on rightmost panel
         for sub_ax in axes:
             sub_ax.set_xlabel("")
-        axes[n_panels // 2].set_xlabel("Protocol", fontsize=52, fontweight="bold")
+        axes[n_panels // 2].set_xlabel("Protocol", fontsize=118, fontweight="bold")
         for sub_ax in axes[1:]:
             sub_ax.set_ylabel("")
+            sub_ax.tick_params(axis="y", left=False, labelleft=False)
+        axes[0].set_ylabel("AUC", fontsize=84, fontweight="bold")
+        axes[0].tick_params(axis="y", labelsize=88)
 
     if _standalone:
         plt.tight_layout()
@@ -614,7 +624,8 @@ def plot_figure3d(
         else:
             X_norm, tgt_norm, dt_norm = _build_arrays(
                 norm_mb, norm_tgt_list, norm_dtype_labels, common_norm)
-            _umap_scatter(axes[1], X_norm, tgt_norm, dt_norm, title="RANK-BIRD")
+            _umap_scatter(axes[1], X_norm, tgt_norm, dt_norm, title="CIFAR")
+            axes[1].set_ylabel("")
     except Exception as e:
         import traceback; traceback.print_exc()
         axes[1].text(0.5, 0.5, f"Normalization error:\n{e}",
@@ -636,6 +647,7 @@ def plot_figure3d(
                    markersize=11, label="Control (no border)"),
     ]
     plt.tight_layout(rect=[0, 0, 1, 0.84])
+    plt.subplots_adjust(wspace=0.45)
     fig.legend(handles=legend_handles, loc="upper center",
                ncol=len(legend_handles), fontsize=30,
                framealpha=0.9, bbox_to_anchor=(0.5, 0.97))
@@ -773,7 +785,7 @@ def assemble_figure3(
     # ── Bottom section: D (left) | E (right) ───────────────────
     gs_bot = mgridspec.GridSpecFromSubplotSpec(
         1, 2, subplot_spec=outer[1],
-        width_ratios=[1.0, 1.0], wspace=0.08,
+        width_ratios=[1.5, 1.0], wspace=0.18,
     )
     ax_d = fig.add_subplot(gs_bot[0, 0])
     ax_e = fig.add_subplot(gs_bot[0, 1])
@@ -794,7 +806,7 @@ def assemble_figure3(
                   ha="center", va="center", fontsize=13, color="#555555",
                   transform=ax_a.transAxes)
     ax_a.text(-0.02, 1.01, "A", transform=ax_a.transAxes,
-              fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+              fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel B: stability investigation (right col, stacked 4×1) ─
     _pos_b = ax_b.get_position()
@@ -805,7 +817,8 @@ def assemble_figure3(
             fig_b = plot_figure3b(investigation_dir_3b,
                                    plot_levels=[None],
                                    plot_mode="mean",
-                                   stacked=True)
+                                   stacked=True,
+                                   prefer_filter_only=True)
             _buf  = _io.BytesIO()
             fig_b.savefig(_buf, dpi=150, bbox_inches="tight",
                           facecolor=fig_b.get_facecolor())
@@ -824,7 +837,7 @@ def assemble_figure3(
                   ha="center", va="center", fontsize=13, color="#555555",
                   transform=ax_b.transAxes)
     fig.text(_pos_b.x0 - 0.01, _pos_b.y1 + 0.01, "B",
-             fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+             fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel C: distribution comparison (row 2, full width) ─
     _pos_c = ax_c.get_position()
@@ -843,8 +856,8 @@ def assemble_figure3(
                   ha="center", va="center", fontsize=13, color="#555555",
                   transform=ax_c.transAxes)
         ax_c.set_axis_off()
-    fig.text(_pos_c.x0 - 0.02, _pos_c.y1 + 0.01, "C",
-             fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+    fig.text(_pos_c.x0 - 0.04, _pos_c.y1 + 0.01, "C",
+             fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel D: UMAP scatter (row 3, left) ───────────────────
     _pos_d = ax_d.get_position()
@@ -902,24 +915,27 @@ def assemble_figure3(
                   ha="center", va="center", fontsize=13, color="#555555",
                   transform=ax_d.transAxes)
     fig.text(_pos_d.x0 - 0.02, _pos_d.y1 + 0.01, "D",
-             fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+             fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
-    # ── Panel E: manually provided image (row 3, right) ─────
-    ax_e.set_axis_off()
-    _p3e = Path(path_3e) if path_3e else None
-    _img_e = (_p3e if (_p3e and _p3e.exists()) else
-              _find_any_image(_p3e.parent if _p3e else Path("figures_out/figure_3/3e")))
-    if _img_e:
-        img = _load_any_image(_img_e)
-        if img is not None:
-            ax_e.imshow(img, aspect="auto", interpolation="bilinear")
-    else:
-        ax_e.set_facecolor("#E8E8E8")
-        ax_e.text(0.5, 0.5,
-                  "Panel E\n(place image in\nfigures_out/figure_3/3e/)",
-                  ha="center", va="center", fontsize=13, color="#555555",
-                  transform=ax_e.transAxes)
+    # ── Panel E: taxa kept vs dropped bar chart ──────────────
+    _kept    = {"saliv": 2, "oral": 1}
+    _dropped = {"muri": 124, "saliv": 5, "oral": 73, "cutis": 8,
+                "aqua": 5, "rhizo": 5, "roden": 4, "dental": 3}
+    _cats    = sorted(set(_kept.keys()) | set(_dropped.keys()))
+    _x       = np.arange(len(_cats))
+    _w       = 0.4
+    ax_e.bar(_x - _w / 2, [_kept.get(c, 0)    for c in _cats], _w,
+             label="Kept",    color="#7b2cbf")
+    ax_e.bar(_x + _w / 2, [_dropped.get(c, 0) for c in _cats], _w,
+             label="Dropped", color="#c77dff")
+    ax_e.set_xticks(_x)
+    ax_e.set_xticklabels(_cats, fontsize=120)
+    ax_e.set_ylabel("Number of taxa", fontsize=124)
+    ax_e.tick_params(axis="y", labelsize=120)
+    ax_e.legend(fontsize=120)
+    ax_e.spines["top"].set_visible(False)
+    ax_e.spines["right"].set_visible(False)
     ax_e.text(-0.03, 1.05, "E", transform=ax_e.transAxes,
-              fontsize=60, fontweight="bold", va="bottom", ha="right", clip_on=False)
+              fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     return fig

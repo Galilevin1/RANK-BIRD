@@ -18,6 +18,7 @@ import numpy as np
 from figures.figure2 import (
     plot_figure2a,
     assemble_figure2, compute_figure2d_data, compute_figure2e_data,
+    compute_ks_lodo_correlation, compute_ks_summary_stats,
     run_figure2b_supp, run_figure2c_supp, run_figure2d_supp,
     run_figure2e_supp, run_figure2f_supp,
 )
@@ -89,14 +90,15 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["1"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
+    "run_figures": ["2d_ks_lodo"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
      #                   "2" (combined + all supp), "2b_supp","2c_supp","2d_supp","2f_supp" (supp only)
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
+     #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
      #                   "3","4","5"
     "run_investigations": [],  # "stability_threshold", "stability_characterization", "distribution_approach"
     "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
-    "phenotypes": phenotypes_papers,  # phenotypes_pipeline, phenotypes_papers
+    "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
     "data_folder": "Data",             # "Data" for pipeline phenotypes, "Data_papers" for papers phenotypes
     "preprocessing_scope": "global",   # "local" or "global"
     "normalization_approach": None,  # "rankbird_wasserstein", "rankbird_ranking", "rankbird_sigmoid", "rankbird_relu", "filter_only", None
@@ -402,6 +404,29 @@ def main():
             figures_dir=str(_dir),
         )
 
+    if "2d_ks_lodo" in RUN_FIGS:
+        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2d")
+        _ks_cache      = _dir / "ks_fractions.csv"
+        _ks_per_feat   = _dir / "ks_fractions_per_feature.csv"
+        if not _ks_per_feat.exists():
+            print("  Per-feature KS file missing — running compute_figure2d_data first...")
+            compute_figure2d_data(
+                phenotypes=phenotypes,
+                data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
+                cache_path=str(_ks_cache),
+            )
+        compute_ks_summary_stats(
+            ks_cache_path=str(_ks_cache),
+            output_path=str(_dir / "ks_summary_stats.csv"),
+        )
+        compute_ks_lodo_correlation(
+            phenotypes=phenotypes,
+            data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
+            ks_per_feature_path=str(_ks_per_feat),
+            output_dir=str(_dir),
+            lodo_cache_path=str(_dir / "lodo_aucs_per_dataset.csv"),
+        )
+
     if "2f_supp" in RUN_FIGS:
         _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2f")
         run_figure2f_supp(
@@ -476,6 +501,12 @@ def main():
         )
 
         _fig2_dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2")
+        from evaluation.pairwise_lodo import _load_shap_details
+        _shap_path = Path("figures_out") / "figure_2" / "2e" / \
+                     f"{_rep_str.replace(' ', '_')}_shap_details.txt"
+        _rep_shap       = _load_shap_details(_shap_path) if _shap_path.exists() else None
+        _rep_shap_names = list(_rep_shap.keys()) if _rep_shap else None
+
         fig = assemble_figure2(
             csv_path=str(analysis_csv),
             cd_microbiome_dfs=_rep_mb or None,
@@ -484,6 +515,8 @@ def main():
             figure2d_data=_d_data if not _d_data.empty else None,
             figure2e_data=_e_data,
             cd_phenotype_name=_rep_str,
+            shap_full_lodo=_rep_shap,
+            shap_dataset_names=_rep_shap_names,
         )
         fig.savefig(_fig2_dir / "figure2.pdf", bbox_inches="tight")
         plt.close(fig)

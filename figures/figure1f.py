@@ -239,7 +239,7 @@ def plot_figure1f(
             xs = rng.normal(x_pos + offset, 0.04, len(sub_d))
             ax.scatter(xs, sub_d["auc"].values,
                        c=color, marker=marker,
-                       s=280, alpha=0.85, zorder=3, linewidths=0)
+                       s=1200, alpha=0.85, zorder=3, linewidths=0)
 
             mean_auc = sub_d["auc"].mean()
             ax.plot([x_pos + offset - 0.10, x_pos + offset + 0.10],
@@ -247,31 +247,36 @@ def plot_figure1f(
                     color=color, linewidth=8, zorder=4)
 
         x_ticks.append(x_pos)
-        x_labels.append(base_pheno.replace("_", "\n"))
+        _label = base_pheno
+        if _label.startswith("Delivery_mode_"):
+            _label = "DM\n" + _label[len("Delivery_mode_"):]
+        else:
+            _label = _label.replace("_", "\n")
+        x_labels.append(_label)
 
         if x_pos > 0:
             ax.axvline(x_pos - 0.5, color="lightgray", linewidth=0.8, zorder=1)
 
     ax.axhline(0.5, color="gray", linestyle=":", linewidth=1.5, alpha=0.6)
     ax.set_xticks(x_ticks)
-    ax.set_xticklabels(x_labels, fontsize=40)
-    ax.set_ylabel("LODO AUC", fontsize=42, fontweight="bold")
-    ax.tick_params(axis="y", labelsize=40)
+    ax.set_xticklabels(x_labels, fontsize=76)
+    ax.set_ylabel("LODO AUC", fontsize=76, fontweight="bold")
+    ax.tick_params(axis="y", labelsize=76)
     ax.set_ylim(0.3, 1.05)
     ax.set_xlim(-0.3, len(order) - 0.7)
-    ax.set_xlabel("Phenotype", fontsize=56, fontweight="bold")
+    ax.set_xlabel("Phenotype", fontsize=76, fontweight="bold")
 
     legend_handles = [
         plt.Line2D([0], [0], marker=_DTYPE_MARKERS["Metagenomics"], color="w",
                    markerfacecolor=_DTYPE_COLORS["Metagenomics"],
-                   markersize=22, label="Metagenomics"),
+                   markersize=32, label="WGS"),
         plt.Line2D([0], [0], marker=_DTYPE_MARKERS["Amplicon"], color="w",
                    markerfacecolor=_DTYPE_COLORS["Amplicon"],
-                   markersize=22, label="Amplicon"),
+                   markersize=32, label="16S"),
         mpatches.Patch(color="gold", alpha=0.35, label="Both dtypes"),
     ]
-    ax.legend(handles=legend_handles, fontsize=34, framealpha=0.9,
-              loc="lower right")
+    ax.legend(handles=legend_handles, fontsize=46, framealpha=0.9,
+              bbox_to_anchor=(1.02, 1), loc="upper left")
 
     if _standalone:
         plt.tight_layout()

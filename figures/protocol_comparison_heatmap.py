@@ -122,9 +122,9 @@ def plot_protocol_heatmap(
 
     # Rename protocol columns to include "LightGBM" prefix
     pivot = pivot.rename(columns={
-        "LODO":                 "LightGBM\nLODO",
-        "Internal Validation":  "LightGBM\nInternal\nValidation",
-        "Within Learning":      "LightGBM\nWithin Learning",
+        "LODO":                 "LGBM\nLODO",
+        "Internal Validation":  "LGBM\nInternal\nValidation",
+        "Within Learning":      "LGBM\nWithin Learning",
     })
 
     # ── Add Papers LODO column + per-phenotype stats ───────────
@@ -141,8 +141,8 @@ def plot_protocol_heatmap(
         )
 
     # Enforce column order
-    col_order = ["Papers LODO", "LightGBM\nLODO",
-                 "LightGBM\nInternal\nValidation", "LightGBM\nWithin Learning"]
+    col_order = ["Papers LODO", "LGBM\nLODO",
+                 "LGBM\nInternal\nValidation", "LGBM\nWithin Learning"]
     pivot = pivot.reindex(columns=[c for c in col_order if c in pivot.columns])
 
     # ── Custom annotation: add * to Papers LODO cells where significant ──
@@ -167,21 +167,22 @@ def plot_protocol_heatmap(
         vmax=1,
         cbar=_standalone,
         cbar_kws={"label": "Mean AUC"} if _standalone else {},
-        annot_kws={"size": 28},
+        annot_kws={"size": 60},
         ax=ax,
     )
 
     ax.set_aspect("auto")
     ax.set_ylabel("")
-    ax.set_xlabel("Protocol", fontsize=46, fontweight="bold")
-    ax.set_xticklabels(ax.get_xticklabels(), fontsize=28, fontweight="bold")
+    ax.set_xlabel("Protocol", fontsize=58, fontweight="bold")
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=60)
 
     # Strip " Amplicon" / " Metagenomics" suffix from y-tick labels
     stripped = [
         t.get_text().replace(" Amplicon", "").replace(" Metagenomics", "")
+                    .replace("Delivery_mode_", "DM ")
         for t in ax.get_yticklabels()
     ]
-    ax.set_yticklabels(stripped, fontsize=30, fontweight="bold")
+    ax.set_yticklabels(stripped, fontsize=62, fontweight="bold")
 
     if _standalone:
         ax.figure.axes[-1].yaxis.label.set_size(14)
@@ -201,14 +202,14 @@ def plot_protocol_heatmap(
     if 0 < n_meta < n_total:
         trans = blended_transform_factory(ax.transAxes, ax.transData)
         y_mid_meta = n_meta / 2
-        y_mid_amp  = n_meta + (n_total - n_meta) / 2
+        y_mid_amp  = n_meta + (n_total - n_meta) * 0.18
 
-        ax.text(-0.32, y_mid_meta, "Metagenomics\n(Shotgun)",
-                transform=trans, fontsize=32, fontweight="bold",
+        ax.text(-0.18, y_mid_meta, "WGS",
+                transform=trans, fontsize=68, fontweight="bold",
                 va="center", ha="center", rotation=0, clip_on=False,
                 color="steelblue")
-        ax.text(-0.42, y_mid_amp,  "Amplicon\n(16S rRNA)",
-                transform=trans, fontsize=32, fontweight="bold",
+        ax.text(-0.18, y_mid_amp,  "16S",
+                transform=trans, fontsize=68, fontweight="bold",
                 va="center", ha="center", rotation=0, clip_on=False,
                 color="crimson")
 
