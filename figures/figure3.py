@@ -91,18 +91,11 @@ def _umap_scatter(
     dtypes: np.ndarray,
     title: str,
 ) -> None:
-    """Run UMAP on X and draw scatter. color=dtype, black border=case samples."""
+    """Run t-SNE on X and draw scatter. color=dtype, black border=case samples."""
     from sklearn.preprocessing import StandardScaler
-    try:
-        import umap
-        reducer = umap.UMAP(n_components=2, random_state=42)
-        x_label, y_label = "UMAP 1", "UMAP 2"
-    except ImportError:
-        from sklearn.decomposition import PCA
-        reducer = PCA(n_components=2, random_state=42)
-        x_label, y_label = "PC1", "PC2"
-        print("  umap-learn not installed — falling back to PCA. "
-              "Install with: pip install umap-learn")
+    from sklearn.manifold import TSNE
+    reducer = TSNE(n_components=2, random_state=42, perplexity=min(30, len(X) - 1))
+    x_label, y_label = "t-SNE 1", "t-SNE 2"
 
     Xs     = StandardScaler().fit_transform(X.fillna(0))
     coords = reducer.fit_transform(Xs)
@@ -342,16 +335,17 @@ def plot_figure3b(
     # ── Legend ────────────────────────────────────────────────
     if _legend_lines:
         if stacked and _standalone:
-            # Legend outside the figure to the right
+            # Legend at bottom of figure, 2 columns
             fig.legend(
                 _legend_lines, _legend_labels,
-                loc="center left", bbox_to_anchor=(1.01, 0.5),
-                fontsize=22, framealpha=0.9,
-                title="Legend", title_fontsize=24,
+                loc="lower center", bbox_to_anchor=(0.5, 0.0),
+                ncol=2,
+                fontsize=30, framealpha=0.9,
+                title="Legend", title_fontsize=32,
                 borderpad=1.2, labelspacing=0.8,
             )
             plt.tight_layout()
-            fig.subplots_adjust(right=0.78)
+            fig.subplots_adjust(bottom=0.22)
         elif stacked:
             # Embedded stacked: legend inside the first (top) panel
             axes[0][0].legend(
@@ -579,7 +573,7 @@ def plot_figure3d(
         ])
         return X, tgt_arr, np.array(dtype_labels)
 
-    fig, axes = plt.subplots(1, 2, figsize=(26, 11))
+    fig, axes = plt.subplots(1, 2, figsize=(40, 17))
 
     # ── Left: raw ─────────────────────────────────────────────
     common_raw = all_mb[0].columns
@@ -636,21 +630,21 @@ def plot_figure3d(
     legend_handles = [
         plt.Line2D([0], [0], marker="o", color="w",
                    markerfacecolor=_DTYPE_COLORS.get(d, "#888"),
-                   markeredgecolor="none", markersize=11, label=d)
+                   markeredgecolor="none", markersize=36, label=d)
         for d in dtypes_present
     ] + [
         plt.Line2D([0], [0], marker="o", color="w",
                    markerfacecolor="#888888", markeredgecolor=_CASE_EDGE,
-                   markeredgewidth=1.5, markersize=11, label="Case (border)"),
+                   markeredgewidth=2.5, markersize=36, label="Case (border)"),
         plt.Line2D([0], [0], marker="o", color="w",
                    markerfacecolor="#888888", markeredgecolor="none",
-                   markersize=11, label="Control (no border)"),
+                   markersize=36, label="Control (no border)"),
     ]
-    plt.tight_layout(rect=[0, 0, 1, 0.84])
+    plt.tight_layout(rect=[0, 0, 1, 0.88])
     plt.subplots_adjust(wspace=0.45)
-    fig.legend(handles=legend_handles, loc="upper center",
-               ncol=len(legend_handles), fontsize=30,
-               framealpha=0.9, bbox_to_anchor=(0.5, 0.97))
+    fig.legend(handles=legend_handles, loc="lower center",
+               ncol=len(legend_handles), fontsize=64,
+               framealpha=0.9, bbox_to_anchor=(0.5, 0.90))
     return fig
 
 
@@ -761,7 +755,7 @@ def assemble_figure3(
     fig = plt.figure(figsize=figsize)
     outer = mgridspec.GridSpec(
         2, 1, figure=fig,
-        height_ratios=[18.0, 6.0],
+        height_ratios=[22.0, 8.0],
         hspace=0.22,
         left=0.05, right=0.97, top=0.97, bottom=0.04,
     )
@@ -790,6 +784,12 @@ def assemble_figure3(
     ax_d = fig.add_subplot(gs_bot[0, 0])
     ax_e = fig.add_subplot(gs_bot[0, 1])
 
+    # Compute all GridSpec positions upfront (they don't change after draw)
+    _pos_a = ax_a.get_position()
+    _pos_b = ax_b.get_position()
+    _pos_c = ax_c.get_position()
+    _pos_d = ax_d.get_position()
+
     # ── Panel A: schematic (row 0, narrowed) ─────────────────
     ax_a.set_axis_off()
     _p3a = Path(path_3a) if path_3a else None
@@ -805,11 +805,10 @@ def assemble_figure3(
                   "Schematic\n(place image in\nfigures_out/figure_3/3a/)",
                   ha="center", va="center", fontsize=13, color="#555555",
                   transform=ax_a.transAxes)
-    ax_a.text(-0.02, 1.01, "A", transform=ax_a.transAxes,
-              fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
+    fig.text(_pos_c.x0 - 0.04, _pos_a.y1, "A",
+             fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel B: stability investigation (right col, stacked 4×1) ─
-    _pos_b = ax_b.get_position()
     ax_b.set_axis_off()
     if investigation_dir_3b and Path(investigation_dir_3b).exists():
         try:
@@ -840,7 +839,6 @@ def assemble_figure3(
              fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel C: distribution comparison (row 2, full width) ─
-    _pos_c = ax_c.get_position()
     if investigation_dir_3c and Path(investigation_dir_3c).exists():
         try:
             plot_figure3c(investigation_dir_3c, ax=ax_c)
@@ -860,7 +858,6 @@ def assemble_figure3(
              fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel D: UMAP scatter (row 3, left) ───────────────────
-    _pos_d = ax_d.get_position()
     mb_by_dtype, tgt_by_dtype, name_by_dtype = {}, {}, {}
 
     if data_root_3d and phenotypes_3d:
@@ -914,7 +911,7 @@ def assemble_figure3(
                   f"UMAP scatter — {phenotype_name_3d}\n(no data loaded)",
                   ha="center", va="center", fontsize=13, color="#555555",
                   transform=ax_d.transAxes)
-    fig.text(_pos_d.x0 - 0.02, _pos_d.y1 + 0.01, "D",
+    fig.text(_pos_c.x0 - 0.04, _pos_d.y1 + 0.01, "D",
              fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel E: taxa kept vs dropped bar chart ──────────────
@@ -925,9 +922,9 @@ def assemble_figure3(
     _x       = np.arange(len(_cats))
     _w       = 0.4
     ax_e.bar(_x - _w / 2, [_kept.get(c, 0)    for c in _cats], _w,
-             label="Kept",    color="#7b2cbf")
+             label="RM",  color="#98df8a", edgecolor="black", linewidth=1.2)
     ax_e.bar(_x + _w / 2, [_dropped.get(c, 0) for c in _cats], _w,
-             label="Dropped", color="#c77dff")
+             label="CM", color="#ffbb78", edgecolor="black", linewidth=1.2)
     ax_e.set_xticks(_x)
     ax_e.set_xticklabels(_cats, fontsize=120)
     ax_e.set_ylabel("Number of taxa", fontsize=124)

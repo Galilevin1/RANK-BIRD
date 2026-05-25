@@ -182,14 +182,14 @@ def plot_paper_phenotype_grid_circles(data_shotgun, data_16s,
     ax.set_xticks(range(len(all_phenotypes)))
     ax.set_xticklabels(
         ["DM" if p == "Delivery mode" else p for p in all_phenotypes],
-        rotation=45, ha='right', fontsize=46,
+        rotation=45, ha='right', fontsize=80,
     )
 
     # Y-axis: Papers (Shotgun then 16S)
     yticks = list(range(len(all_papers))) + [offset + i for i in range(len(all_papers))]
     ylabels = all_papers + all_papers
     ax.set_yticks(yticks)
-    ax.set_yticklabels(ylabels, fontsize=46)
+    ax.set_yticklabels(ylabels, fontsize=80)
 
     # ---- Section labels ----
     y_mid_shotgun = len(all_papers) / 2 - 0.5
@@ -200,19 +200,19 @@ def plot_paper_phenotype_grid_circles(data_shotgun, data_16s,
     bbox_props_16s = dict(boxstyle='round,pad=1.0', facecolor='lightcoral',
                           edgecolor='black', linewidth=2.5, alpha=0.8)
 
-    ax.text(-5.5, y_mid_shotgun, "Metagenomics\n(WGS)",
-            fontsize=46, fontweight='bold',
+    ax.text(-5.5, y_mid_shotgun, "WGS",
+            fontsize=88, fontweight='bold',
             rotation=0, va='center', ha='center',
             bbox=bbox_props_shotgun, clip_on=False)
 
-    ax.text(-5.5, y_mid_16s, "Amplicon\n(16S)",
-            fontsize=46, fontweight='bold',
+    ax.text(-5.5, y_mid_16s, "16S",
+            fontsize=88, fontweight='bold',
             rotation=0, va='center', ha='center',
             bbox=bbox_props_16s, clip_on=False)
 
     # ---- Axis labels (no title) ----
-    ax.set_xlabel('Phenotype', fontsize=50, fontweight='bold')
-    ax.set_ylabel('Paper', fontsize=50, fontweight='bold')
+    ax.set_xlabel('Phenotype', fontsize=76, fontweight='bold')
+    ax.set_ylabel('Paper', fontsize=76, fontweight='bold')
 
     # ---- Legend ----
     legend_elements = [
@@ -224,12 +224,12 @@ def plot_paper_phenotype_grid_circles(data_shotgun, data_16s,
                        label='16S section\n(hatched background)'),
     ]
 
-    ax.legend(handles=legend_elements, loc='upper left',
-              bbox_to_anchor=(1.02, 1), fontsize=32, frameon=True, shadow=True,
-              title='Legend', title_fontsize=34)
+    ax.legend(handles=legend_elements, loc='lower center',
+              bbox_to_anchor=(0.5, 1.03), ncol=3, fontsize=80, frameon=True, shadow=True,
+              title_fontsize=82)
 
     # ---- Circle size annotation box ----
-    _y_yellow = 2 * len(all_papers) - 0.3
+    _y_yellow = 2 * len(all_papers) + 2.0
     if _standalone:
         fig.text(0.04, 0.06,
                  'Circle size: Area proportional to dataset count\n',
@@ -237,10 +237,10 @@ def plot_paper_phenotype_grid_circles(data_shotgun, data_16s,
                  bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
                  ha='left', va='bottom')
     else:
-        ax.text(-5.5, _y_yellow, 'Circle size\n∝ dataset count',
-                fontsize=32, style='italic', fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.8', facecolor='wheat',
-                          edgecolor='goldenrod', linewidth=2.0, alpha=0.7),
+        ax.text(-3.5, _y_yellow, 'Circle size\n∝ dataset count',
+                fontsize=62, style='italic', fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.9', facecolor='wheat',
+                          edgecolor='goldenrod', linewidth=2.5, alpha=0.7),
                 ha='center', va='center', clip_on=False)
 
     ax.grid(False)

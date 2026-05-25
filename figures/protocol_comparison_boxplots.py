@@ -336,7 +336,7 @@ def plot_protocol_boxplots(results_df: pd.DataFrame, ax=None):
         vals = plot_df[plot_df["protocol"] == method]["auc"].dropna().values
         np.random.seed(42)
         ax.scatter(np.random.normal(i, 0.05, len(vals)), vals,
-                   alpha=0.6, s=180, color="#404040",
+                   alpha=0.6, s=400, color="#404040",
                    edgecolors="black", linewidths=0.8, zorder=3)
 
     # ── Significance brackets ──────────────────────────────────
@@ -348,15 +348,15 @@ def plot_protocol_boxplots(results_df: pd.DataFrame, ax=None):
         ax.plot([x1, x1, x2, x2], [y, y + h, y + h, y],
                 lw=2, color="black", clip_on=False)
         ax.text((x1 + x2) / 2, y + h + 0.005, _stars(pval),
-                ha="center", va="bottom", fontsize=76,
+                ha="center", va="bottom", fontsize=110,
                 fontweight="bold", color="black", clip_on=False)
 
     ylim_top = y_start + len(sig_pairs) * y_step + 0.08 if sig_pairs else 1.08
 
-    ax.set_xticklabels([LABELS[METHOD_ORDER.index(m)] for m in available], fontsize=72)
-    ax.set_ylabel("AUC", fontsize=74, fontweight="bold")
+    ax.set_xticklabels([LABELS[METHOD_ORDER.index(m)] for m in available], fontsize=110)
+    ax.set_ylabel("AUC", fontsize=112, fontweight="bold")
     ax.set_xlabel("")
-    ax.tick_params(axis="y", labelsize=72)
+    ax.tick_params(axis="y", labelsize=110)
     ax.axhline(0.5, color="#696969", linestyle=":", linewidth=2.5, alpha=0.6)
     ax.set_ylim(0.4, ylim_top)
     for spine in ax.spines.values():

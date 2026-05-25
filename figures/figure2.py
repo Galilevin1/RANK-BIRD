@@ -416,7 +416,7 @@ def plot_figure2a(
     for i in range(n):
         for j in range(n):
             if i < j:
-                annot[i, j] = f'p={p_mat[i, j]:.3f}'
+                annot[i, j] = f'p={p_mat[i, j]:.2f}'
             else:
                 annot[i, j] = f'{corr_mat[i, j]:.2f}'
 
@@ -434,11 +434,11 @@ def plot_figure2a(
         cmap='coolwarm_r', center=0,
         cbar=_standalone,
         cbar_kws={'shrink': 0.5} if _standalone else {},
-        annot_kws={'size': 56},
+        annot_kws={'size': 96},
         ax=ax,
     )
-    hm.set_xticklabels(pretty, fontsize=66, rotation=45, ha='right')
-    hm.set_yticklabels(pretty, fontsize=66, rotation=0)
+    hm.set_xticklabels(pretty, fontsize=100, rotation=45, ha='right')
+    hm.set_yticklabels(pretty, fontsize=100, rotation=0)
 
     # Black border on significant lower-triangle cells
     for i in range(n):
@@ -517,12 +517,14 @@ def plot_figure2b(
 
     ax_roc.plot([0, 1], [0, 1], "k:", linewidth=2, alpha=0.6, label="Random")
     ax_roc.set_xlim(0, 1);  ax_roc.set_ylim(0, 1.05)
-    ax_roc.set_xlabel("False Positive Rate", fontsize=88, fontweight="bold")
-    ax_roc.set_ylabel("True Positive Rate",  fontsize=88, fontweight="bold")
-    ax_roc.set_title("Zero-% Baseline ROC", fontsize=86, fontweight="bold")
-    ax_roc.tick_params(labelsize=76)
-    ax_roc.legend(loc="lower right", fontsize=64, framealpha=0.9,
-                  title="Dataset (AUC)", title_fontsize=62)
+    ax_roc.set_xlabel("False Positive Rate", fontsize=132, fontweight="bold")
+    ax_roc.set_ylabel("True Positive Rate",  fontsize=132, fontweight="bold")
+    ax_roc.set_title("Zero-% Baseline ROC", fontsize=130, fontweight="bold")
+    ax_roc.tick_params(labelsize=118)
+    ax_roc.xaxis.set_major_formatter(plt.FuncFormatter(
+        lambda x, _: "" if x == 0 else f"{x:.1f}"))
+    ax_roc.legend(loc="lower right", fontsize=90, framealpha=0.9,
+                  title="Dataset (AUC)", title_fontsize=88)
     ax_roc.grid(True, alpha=0.25, linestyle="--")
 
     # ── Right: LODO AUC horizontal bars ─────────────────────
@@ -540,13 +542,15 @@ def plot_figure2b(
         if not np.isnan(auc):
             ax_bar.text(auc + 0.005, bar.get_y() + bar.get_height() / 2,
                         f"{auc:.2f}", va="center", ha="left",
-                        fontsize=72, fontweight="bold")
+                        fontsize=100, fontweight="bold")
     ax_bar.set_yticks([])
-    ax_bar.set_xlabel("LODO AUC", fontsize=88, fontweight="bold")
-    ax_bar.set_title("LightGBM LODO", fontsize=86, fontweight="bold")
+    ax_bar.set_xlabel("LODO AUC", fontsize=132, fontweight="bold")
+    ax_bar.set_title("LightGBM LODO", fontsize=130, fontweight="bold")
     ax_bar.set_xlim(0.5, 1.22)
-    ax_bar.tick_params(axis="x", labelsize=76)
-    ax_bar.legend(fontsize=64, loc="lower right")
+    ax_bar.tick_params(axis="x", labelsize=118)
+    ax_bar.xaxis.set_major_formatter(plt.FuncFormatter(
+        lambda x, _: "" if x == 0.5 else f"{x:.1f}"))
+    ax_bar.legend(fontsize=90, loc="lower right")
     ax_bar.grid(True, alpha=0.25, axis="x", linestyle="--")
 
     if not show_legend:
@@ -982,7 +986,7 @@ def plot_figure2d_ks_bars(
         ax.text(bar.get_width() + 1.0,
                 bar.get_y() + bar.get_height() / 2,
                 f"{row['ks_sig_fraction']*100:.0f}%",
-                va="center", ha="left", fontsize=72, fontweight="bold")
+                va="center", ha="left", fontsize=124, fontweight="bold")
 
     _dtype_display = {"Metagenomics": "WGS", "Amplicon": "16S"}
     labels = [
@@ -992,13 +996,13 @@ def plot_figure2d_ks_bars(
         for _, r in data_df.iterrows()
     ]
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(labels, fontsize=76, fontweight="bold")
+    ax.set_yticklabels(labels, fontsize=124, fontweight="bold")
     ax.set_xlabel(
         "% Shared Taxa with Significant\nInter-Dataset Difference (KS, FDR)",
-        fontsize=76, fontweight="bold",
+        fontsize=124, fontweight="bold",
     )
     ax.set_xlim(0, 108)
-    ax.tick_params(axis="x", labelsize=70)
+    ax.tick_params(axis="x", labelsize=120)
     ax.grid(True, alpha=0.3, axis="x", linestyle="--")
 
     from matplotlib.patches import Patch
@@ -1007,7 +1011,7 @@ def plot_figure2d_ks_bars(
         for d, c in dtype_colors.items()
         if d in data_df["dtype"].values
     ]
-    ax.legend(handles=legend_elements, fontsize=68, loc="lower right")
+    ax.legend(handles=legend_elements, fontsize=134, loc="lower right")
 
     if _standalone:
         plt.tight_layout()
@@ -1082,7 +1086,7 @@ def assemble_figure2(
     cd_phenotype_name: str = "CD",
     shap_full_lodo: Optional[Dict] = None,
     shap_dataset_names: Optional[List[str]] = None,
-    figsize: tuple = (90, 90),
+    figsize: tuple = (120, 145),
 ) -> plt.Figure:
     """
     Assemble Figure 2 panels into one combined figure.
@@ -1107,8 +1111,8 @@ def assemble_figure2(
     fig = plt.figure(figsize=figsize)
     gs = mgridspec.GridSpec(
         3, 2, figure=fig,
-        width_ratios=[3.0, 1.5],
-        height_ratios=[1.0, 1.0, 1.0],
+        width_ratios=[2.0, 1.5],
+        height_ratios=[3.0, 2.2, 1.5],
         hspace=0.42, wspace=0.38,
         left=0.07, right=0.97, top=0.96, bottom=0.05,
     )
@@ -1137,8 +1141,8 @@ def assemble_figure2(
 
     # ── Panel A ───────────────────────────────────────────────
     _, stats_2a = plot_figure2a(csv_path, ax=ax_a)
-    ax_a.text(-0.10, 1.0, "A", transform=ax_a.transAxes,
-              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
+    ax_a.text(-0.17, 1.0, "A", transform=ax_a.transAxes,
+              fontsize=130, fontweight="bold", va="top", ha="right", clip_on=False)
     stats_2a.to_csv(subdirs["2a"] / "spearman_correlations.csv", index=False)
 
     # ── Panel B: CD ROC curves ────────────────────────────────
@@ -1148,25 +1152,24 @@ def assemble_figure2(
         auc_2b.to_csv(subdirs["2b"] / f"roc_auc_{cd_phenotype_name}.csv", index=False)
     else:
         _placeholder(ax_b, "CD data not provided")
-    ax_b.text(-0.10, 1.0, "B", transform=ax_b.transAxes,
-              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
+    ax_b.text(-0.17, 1.0, "B", transform=ax_b.transAxes,
+              fontsize=130, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel C: CD microbiome feature heatmap ───────────────
     if cd_microbiome_dfs is not None:
         plot_figure2c(cd_microbiome_dfs, cd_target_dfs,
-                      cd_dataset_names, phenotype_name="", ax=ax_c)
+                      cd_dataset_names, phenotype_name="", ax=ax_c,
+                      max_features=50)
     else:
         _placeholder(ax_c, "CD data not provided")
-    ax_c.text(-0.10, 1.0, "C", transform=ax_c.transAxes,
-              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
+    ax_c.text(-0.17, 1.08, "C", transform=ax_c.transAxes,
+              fontsize=130, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel D: KS fraction bar chart (all phenotypes) ──────
     if figure2d_data is not None:
         plot_figure2d_ks_bars(figure2d_data, ax=ax_d)
     else:
         _placeholder(ax_d, "figure2d_data not provided\n(run compute_figure2d_data first)")
-    ax_d.text(-0.18, 1.0, "D", transform=ax_d.transAxes,
-              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel E: SHAP feature presence grid ──────────────────
     if shap_full_lodo and shap_dataset_names:
@@ -1175,9 +1178,22 @@ def assemble_figure2(
                         rename_features=True, top_n=10)
     else:
         _placeholder(ax_e, "shap_full_lodo not provided\n(run figure 2F supp first)")
-    ax_e.text(-0.18, 1.0, "E", transform=ax_e.transAxes,
-              fontsize=72, fontweight="bold", va="top", ha="right", clip_on=False)
+    ax_e.text(-0.17, 1.0, "E", transform=ax_e.transAxes,
+              fontsize=130, fontweight="bold", va="top", ha="right", clip_on=False)
 
+    # ── Extend D right edge to match E's tight bbox (inc. tick labels) ──
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    bb_e = ax_e.get_tightbbox(renderer).transformed(fig.transFigure.inverted())
+    pos_d = ax_d.get_position()
+    new_d_width = bb_e.x1 - pos_d.x0
+    if new_d_width > pos_d.width:
+        ax_d.set_position([pos_d.x0, pos_d.y0, new_d_width, pos_d.height])
+        pos_d = ax_d.get_position()
+
+    # ── Place D letter using figure coordinates ───────────────
+    fig.text(pos_d.x0 - 0.02, pos_d.y1 + 0.005, "D",
+             fontsize=130, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     return fig
 
@@ -1277,7 +1293,7 @@ def plot_figure2c(
     for i, name in enumerate(dataset_names):
         y_mid = (boundaries[i] + boundaries[i + 1]) / 2
         ax.text(-0.01, y_mid, name, ha="right", va="center",
-                fontsize=80, fontweight="bold",
+                fontsize=112, fontweight="bold",
                 transform=ax.get_yaxis_transform())
 
     if phenotype_name:
@@ -1286,6 +1302,121 @@ def plot_figure2c(
     if _standalone:
         plt.tight_layout()
     return fig
+
+
+def compute_figure2c_chi2_stats(
+    phenotypes: List[Tuple[str, str]],
+    data_root: str,
+    output_dir: str = "figures_out/figure_2/global_original",
+) -> pd.DataFrame:
+    """
+    Chi-square prevalence homogeneity test across datasets, per phenotype.
+
+    For each shared microbe in each phenotype, computes:
+        χ² = Σ_i (o_i − e_i)² / e_i   (df = K − 1, K = number of datasets)
+
+    where o_i is the observed zero-prevalence fraction in dataset i and
+    e_i is the mean zero-prevalence fraction across all K datasets.
+
+    Returns a DataFrame with columns:
+        phenotype, dtype, n_shared_microbes, n_datasets,
+        n_significant, fraction_significant, chi2_range_min, chi2_range_max
+
+    Saves full per-microbe results to output_dir/chi2_per_microbe.csv
+    and summary per phenotype to output_dir/chi2_summary.csv.
+    """
+    from evaluation.data_loading import load_microbiome_datasets_with_targets
+    from scipy.stats import chi2 as chi2_dist
+    from statsmodels.stats.multitest import multipletests
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    summary_rows = []
+    per_microbe_rows = []
+
+    for phenotype, dtype in phenotypes:
+        pheno_str = f"{phenotype} {dtype}"
+        folder    = Path(data_root) / pheno_str
+        if not folder.exists():
+            continue
+        try:
+            mb_dfs, tgt_dfs, ds_names = load_microbiome_datasets_with_targets(str(folder))
+        except Exception as e:
+            print(f"  Error loading {pheno_str}: {e}")
+            continue
+
+        filtered = [
+            (mb, tgt, n) for mb, tgt, n in zip(mb_dfs, tgt_dfs, ds_names)
+            if len(np.unique(tgt.values.ravel())) >= 2
+        ]
+        if len(filtered) < 2:
+            continue
+        mb_dfs_f, _, ds_names_f = (list(x) for x in zip(*filtered))
+
+        common = mb_dfs_f[0].columns
+        for df in mb_dfs_f[1:]:
+            common = common.intersection(df.columns)
+        if len(common) == 0:
+            continue
+
+        K = len(ds_names_f)
+        pvals, chi2_scores, microbe_names = [], [], []
+
+        for microbe in common:
+            zero_prevs = np.array([
+                float((mb[microbe] == 0).mean()) for mb in mb_dfs_f
+            ])
+            e_bar = zero_prevs.mean()
+            if e_bar <= 0 or e_bar >= 1:
+                continue
+            chi2_stat = float(np.sum((zero_prevs - e_bar) ** 2 / e_bar))
+            p = float(1 - chi2_dist.cdf(chi2_stat, df=K - 1))
+            pvals.append(p)
+            chi2_scores.append(chi2_stat)
+            microbe_names.append(microbe)
+
+        if not pvals:
+            continue
+
+        reject, p_adj, _, _ = multipletests(pvals, method="fdr_bh")
+        n_sig  = int(reject.sum())
+        frac   = n_sig / len(microbe_names)
+
+        for mic, chi2_s, p, padj, sig in zip(
+            microbe_names, chi2_scores, pvals, p_adj, reject
+        ):
+            per_microbe_rows.append({
+                "phenotype":  pheno_str,
+                "dtype":      dtype,
+                "microbe":    mic,
+                "chi2":       round(chi2_s, 4),
+                "p_value":    p,
+                "p_adjusted": padj,
+                "significant":bool(sig),
+            })
+
+        summary_rows.append({
+            "phenotype":          pheno_str,
+            "dtype":              dtype,
+            "n_datasets":         K,
+            "n_shared_microbes":  len(microbe_names),
+            "n_significant":      n_sig,
+            "fraction_significant": round(frac, 4),
+            "chi2_range_min":     round(float(np.min(chi2_scores)), 4),
+            "chi2_range_max":     round(float(np.max(chi2_scores)), 4),
+        })
+        print(f"  {pheno_str}: {n_sig}/{len(microbe_names)} significant "
+              f"({frac*100:.1f}%)")
+
+    summary_df    = pd.DataFrame(summary_rows)
+    per_microbe_df = pd.DataFrame(per_microbe_rows)
+
+    summary_df.to_csv(out / "chi2_summary.csv", index=False)
+    per_microbe_df.to_csv(out / "chi2_per_microbe.csv", index=False)
+    print(f"  Saved chi2 stats → {out}")
+
+    return summary_df
 
 
 def run_figure2c_supp(
@@ -1297,6 +1428,7 @@ def run_figure2c_supp(
     """
     Supplementary: one microbiome feature heatmap per phenotype.
     Output files: supp_figure2c_<phenotype>_<dtype>.pdf
+    Also computes and saves chi-square prevalence-homogeneity stats per phenotype.
     Datasets with only one class in target are dropped automatically.
     """
     from evaluation.data_loading import load_microbiome_datasets_with_targets
@@ -1339,6 +1471,13 @@ def run_figure2c_supp(
             print(f"  Saved supp 2C for {pheno_str}")
         except Exception as e:
             print(f"  Error generating supp 2C for {pheno_str}: {e}")
+
+    # Compute and save chi-square prevalence-homogeneity stats
+    print("\n  Computing chi-square prevalence-homogeneity stats...")
+    compute_figure2c_chi2_stats(
+        phenotypes, data_root,
+        output_dir="figures_out/figure_2/global_original",
+    )
 
 
 # ─────────────────────────────────────────────────────────────

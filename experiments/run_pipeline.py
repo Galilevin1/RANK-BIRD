@@ -90,7 +90,7 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["2d_ks_lodo"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
+    "run_figures": ["2"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
      #                   "2" (combined + all supp), "2b_supp","2c_supp","2d_supp","2f_supp" (supp only)
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
@@ -289,9 +289,8 @@ def main():
             papers_df=_df_papers,
             selected_combinations=phenotypes,
             path_1b=FIGURES_BASE / "figure_1" / "1b" / "schematic.png",
-            figure1f_df=_1f_df,
         )
-        fig.savefig(_dir / "figure1_combined.pdf", bbox_inches='tight', dpi=300)
+        fig.savefig(_dir / "figure1_combined.pdf", dpi=300)
         plt.close(fig)
 
     if "1a" in RUN_FIGS:

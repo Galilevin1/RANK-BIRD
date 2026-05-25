@@ -57,14 +57,19 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     else:
         groups_to_plot = df_papers["Group"].unique()
 
-    # Amplicon groups first (bottom), Metagenomics groups last (top visually)
-    groups_to_plot = sorted(groups_to_plot,
-                            key=lambda g: (1 if "Metagenomics" in g else 0, g))
-
     def _fmt_group(g):
         return (g.replace("Delivery_mode_", "DM ")
-                 .replace("Metagenomics", "WGS")
-                 .replace("Amplicon", "16S"))
+                 .replace(" Metagenomics", "")
+                 .replace(" Amplicon", ""))
+
+    # Amplicon (16S) block at bottom, Metagenomics (WGS) block at top.
+    # Within each block: reverse-alphabetical plotting order so that reading
+    # top-to-bottom gives A→Z (bars stack upward, so Z is plotted first = lowest).
+    _dtype_sorted  = sorted(groups_to_plot,
+                            key=lambda g: (1 if "Metagenomics" in g else 0, _fmt_group(g)))
+    _amplicon_grps = [g for g in _dtype_sorted if "Metagenomics" not in g]
+    _wgs_grps      = [g for g in _dtype_sorted if "Metagenomics" in g]
+    groups_to_plot = _amplicon_grps[::-1] + _wgs_grps[::-1]
 
     ignore = {"Phenotype full name", "Phenotype", "Type", "Metadata Mapping", "Dataset", "Notes", "Group"}
     paper_cols = [c for c in df_papers.columns if c not in ignore and pd.api.types.is_numeric_dtype(df_papers[c])]
@@ -240,18 +245,35 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
 
         y_offset += group_gap
 
-    # Group labels
+    # Group labels (black text, no bbox)
     for group, ymid in group_positions:
         ax.text(-0.05, ymid, _fmt_group(group), ha="right", va="center",
-                fontsize=52, fontweight="bold",
-                transform=ax.get_yaxis_transform(),
-                bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgray',
-                          edgecolor='gray', alpha=0.3))
+                fontsize=86, fontweight="bold",
+                color="black",
+                transform=ax.get_yaxis_transform())
+
+    # Dividing line + WGS/16S section labels (matching 1A style)
+    amp_positions = [ymid for g, ymid in group_positions if "Metagenomics" not in g]
+    wgs_positions = [ymid for g, ymid in group_positions if "Metagenomics" in g]
+    if amp_positions and wgs_positions:
+        divide_y = (max(amp_positions) + min(wgs_positions)) / 2
+        ax.axhline(divide_y, color="black", linewidth=3, zorder=10)
+        trans = ax.get_yaxis_transform()
+        ax.text(-0.32, np.mean(wgs_positions), "WGS",
+                transform=trans, fontsize=88, fontweight="bold",
+                va="center", ha="center", clip_on=False,
+                bbox=dict(boxstyle="round,pad=1.0", facecolor="lightblue",
+                          edgecolor="black", linewidth=2.5, alpha=0.8))
+        ax.text(-0.32, np.mean(amp_positions), "16S",
+                transform=trans, fontsize=88, fontweight="bold",
+                va="center", ha="center", clip_on=False,
+                bbox=dict(boxstyle="round,pad=1.0", facecolor="lightcoral",
+                          edgecolor="black", linewidth=2.5, alpha=0.8))
 
     # Aesthetics
     ax.set_yticks([])
-    ax.tick_params(axis="x", labelsize=58)
-    ax.set_xlabel("LODO AUC (Mean ± SE)", fontsize=52, fontweight="bold")
+    ax.tick_params(axis="x", labelsize=90)
+    ax.set_xlabel("LODO AUC (Mean ± SE)", fontsize=86, fontweight="bold")
     ax.set_xlim(0, 1.05)
     if _standalone:
         ax.set_title("Model Performance: LightGBM vs. Published Results\n(Mann-Whitney U Test + FDR Correction)",
@@ -284,8 +306,9 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     else:
         ax.legend(ordered_handles, ordered_labels,
                   title="* = sig. vs LightGBM",
-                  title_fontsize=28, fontsize=26,
-                  bbox_to_anchor=(1.02, 1), loc="upper left",
+                  title_fontsize=78, fontsize=74,
+                  bbox_to_anchor=(-0.15, 1.03), loc="lower left",
+                  ncol=4,
                   frameon=True, framealpha=0.9)
 
     return fig, ax, statistical_results

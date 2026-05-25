@@ -107,6 +107,7 @@ def plot_protocol_heatmap(
     papers_df: pd.DataFrame = None,
     selected_combinations=None,
     ax=None,
+    wgs_16s_x: float = -0.32,
 ):
     # Sort phenotypes: Amplicon first, then Metagenomics, alphabetically within each group
     phenotype_order = sorted(
@@ -146,7 +147,7 @@ def plot_protocol_heatmap(
     pivot = pivot.reindex(columns=[c for c in col_order if c in pivot.columns])
 
     # ── Custom annotation: add * to Papers LODO cells where significant ──
-    annot = pivot.map(lambda v: "" if pd.isna(v) else f"{v:.3f}")
+    annot = pivot.map(lambda v: "" if pd.isna(v) else f"{v:.2f}")
     if "Papers LODO" in pivot.columns:
         for pheno in phenotype_order:
             if pheno in sig_phenos:
@@ -163,18 +164,18 @@ def plot_protocol_heatmap(
         annot=annot,
         fmt="",
         cmap="YlGnBu",
-        vmin=0,
+        vmin=0.5,
         vmax=1,
         cbar=_standalone,
         cbar_kws={"label": "Mean AUC"} if _standalone else {},
-        annot_kws={"size": 60},
+        annot_kws={"size": 92},
         ax=ax,
     )
 
     ax.set_aspect("auto")
     ax.set_ylabel("")
-    ax.set_xlabel("Protocol", fontsize=58, fontweight="bold")
-    ax.set_xticklabels(ax.get_xticklabels(), fontsize=60)
+    ax.set_xlabel("Protocol", fontsize=92, fontweight="bold")
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=92)
 
     # Strip " Amplicon" / " Metagenomics" suffix from y-tick labels
     stripped = [
@@ -182,7 +183,7 @@ def plot_protocol_heatmap(
                     .replace("Delivery_mode_", "DM ")
         for t in ax.get_yticklabels()
     ]
-    ax.set_yticklabels(stripped, fontsize=62, fontweight="bold")
+    ax.set_yticklabels(stripped, fontsize=84, fontweight="bold", rotation=0)
 
     if _standalone:
         ax.figure.axes[-1].yaxis.label.set_size(14)
@@ -192,7 +193,7 @@ def plot_protocol_heatmap(
     n_meta  = sum(1 for p in phenotype_order if "Metagenomics" in p)
     n_total = len(phenotype_order)
     if 0 < n_meta < n_total:
-        ax.axhline(n_meta, color="black", linewidth=10, zorder=5)
+        ax.axhline(n_meta, color="black", linewidth=16, zorder=5)
 
     for y in range(1, pivot.shape[0]):
         if y != n_meta:
@@ -204,14 +205,16 @@ def plot_protocol_heatmap(
         y_mid_meta = n_meta / 2
         y_mid_amp  = n_meta + (n_total - n_meta) * 0.18
 
-        ax.text(-0.18, y_mid_meta, "WGS",
-                transform=trans, fontsize=68, fontweight="bold",
+        ax.text(wgs_16s_x, y_mid_meta, "WGS",
+                transform=trans, fontsize=88, fontweight="bold",
                 va="center", ha="center", rotation=0, clip_on=False,
-                color="steelblue")
-        ax.text(-0.18, y_mid_amp,  "16S",
-                transform=trans, fontsize=68, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=1.0", facecolor="lightblue",
+                          edgecolor="black", linewidth=2.5, alpha=0.8))
+        ax.text(wgs_16s_x, y_mid_amp,  "16S",
+                transform=trans, fontsize=88, fontweight="bold",
                 va="center", ha="center", rotation=0, clip_on=False,
-                color="crimson")
+                bbox=dict(boxstyle="round,pad=1.0", facecolor="lightcoral",
+                          edgecolor="black", linewidth=2.5, alpha=0.8))
 
     if _standalone:
         plt.tight_layout()
