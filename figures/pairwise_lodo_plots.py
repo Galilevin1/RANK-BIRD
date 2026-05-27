@@ -91,7 +91,7 @@ def _plot_shap_grid(ax, full_lodo_shap, dataset_names, rename_features, top_n):
     ax.yaxis.set_label_position("right")
     ax.tick_params(axis="y", pad=50)
     plt.setp(ax.get_xticklabels(), rotation=20, ha="right", fontsize=112)
-    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=92)
+    plt.setp(ax.get_yticklabels(), rotation=0, fontsize=116)
 
 
 def _plot_pairwise_heatmap(ax, pairwise_results, dataset_names):

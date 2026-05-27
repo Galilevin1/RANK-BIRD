@@ -437,8 +437,8 @@ def plot_figure2a(
         annot_kws={'size': 96},
         ax=ax,
     )
-    hm.set_xticklabels(pretty, fontsize=100, rotation=45, ha='right')
-    hm.set_yticklabels(pretty, fontsize=100, rotation=0)
+    hm.set_xticklabels(pretty, fontsize=122, rotation=45, ha='right')
+    hm.set_yticklabels(pretty, fontsize=122, rotation=0)
 
     # Black border on significant lower-triangle cells
     for i in range(n):
@@ -477,6 +477,8 @@ def plot_figure2b(
     show_legend: bool = True,
     suppress_xlabel: bool = False,
     inner_width_ratios: list = None,
+    fontsize_scale: float = 1.0,
+    legend_fontsize_scale: float = 1.0,
 ) -> Tuple[plt.Figure, pd.DataFrame]:
     """
     Left panel  : ROC curves for the zero-percentage predictor (solid, bold).
@@ -487,8 +489,10 @@ def plot_figure2b(
     zero_res = _zeros_pct_roc(microbiome_dfs, target_dfs, dataset_names)
     lodo_res = _lodo_roc(microbiome_dfs, target_dfs, dataset_names)
 
-    tab10     = plt.cm.tab10(np.arange(10))
-    color_map = {name: tab10[i % 10] for i, name in enumerate(dataset_names)}
+    # Colors matching figure 4D palette (box fill = primary, strip = darker secondary)
+    _square   = ["#c49a94", "#c5aee0", "#F4A36A", "#8FD17E",
+                 "#5a2a24", "#5a3a7a", "#b5581e", "#2a7a2a"]
+    color_map = {name: _square[i % len(_square)] for i, name in enumerate(dataset_names)}
 
     _standalone = ax is None
     if _standalone:
@@ -512,19 +516,20 @@ def plot_figure2b(
         fpr_z, tpr_z, _ = zero_res["roc_curves"][i]
         auc_z            = zero_res["auc_scores"][i]
         if len(fpr_z) and not np.isnan(auc_z):
-            ax_roc.plot(fpr_z, tpr_z, color=color_map[name], linewidth=4.0,
+            ax_roc.plot(fpr_z, tpr_z, color=color_map[name], linewidth=14.0,
                         linestyle="-", label=f"{name} (AUC={auc_z:.2f})")
 
     ax_roc.plot([0, 1], [0, 1], "k:", linewidth=2, alpha=0.6, label="Random")
     ax_roc.set_xlim(0, 1);  ax_roc.set_ylim(0, 1.05)
-    ax_roc.set_xlabel("False Positive Rate", fontsize=132, fontweight="bold")
-    ax_roc.set_ylabel("True Positive Rate",  fontsize=132, fontweight="bold")
-    ax_roc.set_title("Zero-% Baseline ROC", fontsize=130, fontweight="bold")
-    ax_roc.tick_params(labelsize=118)
+    ax_roc.set_xlabel("False Positive Rate", fontsize=132*fontsize_scale, fontweight="bold")
+    ax_roc.set_ylabel("True Positive Rate",  fontsize=132*fontsize_scale, fontweight="bold")
+    ax_roc.set_title("Zero-% Baseline ROC", fontsize=130*fontsize_scale, fontweight="bold")
+    ax_roc.tick_params(labelsize=138*fontsize_scale)
     ax_roc.xaxis.set_major_formatter(plt.FuncFormatter(
         lambda x, _: "" if x == 0 else f"{x:.1f}"))
-    ax_roc.legend(loc="lower right", fontsize=90, framealpha=0.9,
-                  title="Dataset (AUC)", title_fontsize=88)
+    ax_roc.legend(loc="lower right", fontsize=90*fontsize_scale*legend_fontsize_scale,
+                  framealpha=0.9,
+                  title="Dataset (AUC)", title_fontsize=88*fontsize_scale*legend_fontsize_scale)
     ax_roc.grid(True, alpha=0.25, linestyle="--")
 
     # ── Right: LODO AUC horizontal bars ─────────────────────
@@ -542,15 +547,15 @@ def plot_figure2b(
         if not np.isnan(auc):
             ax_bar.text(auc + 0.005, bar.get_y() + bar.get_height() / 2,
                         f"{auc:.2f}", va="center", ha="left",
-                        fontsize=100, fontweight="bold")
+                        fontsize=100*fontsize_scale)
     ax_bar.set_yticks([])
-    ax_bar.set_xlabel("LODO AUC", fontsize=132, fontweight="bold")
-    ax_bar.set_title("LightGBM LODO", fontsize=130, fontweight="bold")
+    ax_bar.set_xlabel("LODO AUC", fontsize=132*fontsize_scale, fontweight="bold")
+    ax_bar.set_title("LGBM LODO", fontsize=130*fontsize_scale, fontweight="bold")
     ax_bar.set_xlim(0.5, 1.22)
-    ax_bar.tick_params(axis="x", labelsize=118)
+    ax_bar.tick_params(axis="x", labelsize=138*fontsize_scale)
     ax_bar.xaxis.set_major_formatter(plt.FuncFormatter(
         lambda x, _: "" if x == 0.5 else f"{x:.1f}"))
-    ax_bar.legend(fontsize=90, loc="lower right")
+    ax_bar.legend(fontsize=90*fontsize_scale, loc="lower right")
     ax_bar.grid(True, alpha=0.25, axis="x", linestyle="--")
 
     if not show_legend:
@@ -951,6 +956,7 @@ def compute_ks_lodo_correlation(
 def plot_figure2d_ks_bars(
     data_df: pd.DataFrame,
     ax=None,
+    fontsize_scale: float = 1.0,
 ) -> plt.Figure:
     """
     Horizontal bar chart: fraction of shared taxa with significant inter-dataset
@@ -970,7 +976,7 @@ def plot_figure2d_ks_bars(
 
     data_df = data_df.sort_values("ks_sig_fraction", ascending=True).reset_index(drop=True)
 
-    dtype_colors = {"Metagenomics": "steelblue", "Amplicon": "crimson"}
+    dtype_colors = {"Metagenomics": "lightblue", "Amplicon": "lightcoral"}
     colors = [dtype_colors.get(d, "gray") for d in data_df["dtype"]]
 
     if _standalone:
@@ -983,10 +989,17 @@ def plot_figure2d_ks_bars(
                     color=colors, edgecolor="black", linewidth=1.2, alpha=0.85)
 
     for bar, (_, row) in zip(bars, data_df.iterrows()):
-        ax.text(bar.get_width() + 1.0,
-                bar.get_y() + bar.get_height() / 2,
-                f"{row['ks_sig_fraction']*100:.0f}%",
-                va="center", ha="left", fontsize=124, fontweight="bold")
+        bar_w = bar.get_width()
+        if bar_w > 8:
+            ax.text(bar_w - 1.5,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{row['ks_sig_fraction']*100:.0f}%",
+                    va="center", ha="right", fontsize=124*fontsize_scale, color="black")
+        else:
+            ax.text(bar_w + 1.0,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{row['ks_sig_fraction']*100:.0f}%",
+                    va="center", ha="left", fontsize=124*fontsize_scale)
 
     _dtype_display = {"Metagenomics": "WGS", "Amplicon": "16S"}
     labels = [
@@ -996,13 +1009,13 @@ def plot_figure2d_ks_bars(
         for _, r in data_df.iterrows()
     ]
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(labels, fontsize=124, fontweight="bold")
+    ax.set_yticklabels(labels, fontsize=124*fontsize_scale)
     ax.set_xlabel(
         "% Shared Taxa with Significant\nInter-Dataset Difference (KS, FDR)",
-        fontsize=124, fontweight="bold",
+        fontsize=124*fontsize_scale, fontweight="bold",
     )
     ax.set_xlim(0, 108)
-    ax.tick_params(axis="x", labelsize=120)
+    ax.tick_params(axis="x", labelsize=120*fontsize_scale)
     ax.grid(True, alpha=0.3, axis="x", linestyle="--")
 
     from matplotlib.patches import Patch
@@ -1011,7 +1024,7 @@ def plot_figure2d_ks_bars(
         for d, c in dtype_colors.items()
         if d in data_df["dtype"].values
     ]
-    ax.legend(handles=legend_elements, fontsize=134, loc="lower right")
+    ax.legend(handles=legend_elements, fontsize=134*fontsize_scale, loc="lower right")
 
     if _standalone:
         plt.tight_layout()
@@ -1112,7 +1125,7 @@ def assemble_figure2(
     gs = mgridspec.GridSpec(
         3, 2, figure=fig,
         width_ratios=[2.0, 1.5],
-        height_ratios=[3.0, 2.2, 1.5],
+        height_ratios=[3.2, 2.2, 2.0],
         hspace=0.42, wspace=0.38,
         left=0.07, right=0.97, top=0.96, bottom=0.05,
     )
@@ -1142,7 +1155,7 @@ def assemble_figure2(
     # ── Panel A ───────────────────────────────────────────────
     _, stats_2a = plot_figure2a(csv_path, ax=ax_a)
     ax_a.text(-0.17, 1.0, "A", transform=ax_a.transAxes,
-              fontsize=130, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=172, fontweight="bold", va="top", ha="right", clip_on=False)
     stats_2a.to_csv(subdirs["2a"] / "spearman_correlations.csv", index=False)
 
     # ── Panel B: CD ROC curves ────────────────────────────────
@@ -1153,7 +1166,7 @@ def assemble_figure2(
     else:
         _placeholder(ax_b, "CD data not provided")
     ax_b.text(-0.17, 1.0, "B", transform=ax_b.transAxes,
-              fontsize=130, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=172, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel C: CD microbiome feature heatmap ───────────────
     if cd_microbiome_dfs is not None:
@@ -1163,7 +1176,7 @@ def assemble_figure2(
     else:
         _placeholder(ax_c, "CD data not provided")
     ax_c.text(-0.17, 1.08, "C", transform=ax_c.transAxes,
-              fontsize=130, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=172, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel D: KS fraction bar chart (all phenotypes) ──────
     if figure2d_data is not None:
@@ -1179,7 +1192,7 @@ def assemble_figure2(
     else:
         _placeholder(ax_e, "shap_full_lodo not provided\n(run figure 2F supp first)")
     ax_e.text(-0.17, 1.0, "E", transform=ax_e.transAxes,
-              fontsize=130, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=172, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Extend D right edge to match E's tight bbox (inc. tick labels) ──
     fig.canvas.draw()
@@ -1193,7 +1206,7 @@ def assemble_figure2(
 
     # ── Place D letter using figure coordinates ───────────────
     fig.text(pos_d.x0 - 0.02, pos_d.y1 + 0.005, "D",
-             fontsize=130, fontweight="bold", va="bottom", ha="right", clip_on=False)
+             fontsize=172, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     return fig
 
@@ -1209,6 +1222,7 @@ def plot_figure2c(
     phenotype_name: str = "",
     max_features: int = 50,
     ax=None,
+    fontsize_scale: float = 1.0,
 ) -> plt.Figure:
     """
     Microbiome feature presence/abundance heatmap (samples × top-varying features).
@@ -1293,11 +1307,11 @@ def plot_figure2c(
     for i, name in enumerate(dataset_names):
         y_mid = (boundaries[i] + boundaries[i + 1]) / 2
         ax.text(-0.01, y_mid, name, ha="right", va="center",
-                fontsize=112, fontweight="bold",
+                fontsize=112*fontsize_scale,
                 transform=ax.get_yaxis_transform())
 
     if phenotype_name:
-        ax.set_title(phenotype_name, fontsize=46, fontweight="bold")
+        ax.set_title(phenotype_name, fontsize=46*fontsize_scale, fontweight="bold")
 
     if _standalone:
         plt.tight_layout()
@@ -1556,8 +1570,8 @@ def _draw_wasserstein_heatmap(
         annot_kws={'size': 18},
         mask=np.eye(n, dtype=bool),
     )
-    ax.set_xticklabels(names, rotation=45, ha='right', fontsize=18, fontweight='bold')
-    ax.set_yticklabels(names, rotation=0, fontsize=18, fontweight='bold')
+    ax.set_xticklabels(names, rotation=45, ha='right', fontsize=18)
+    ax.set_yticklabels(names, rotation=0, fontsize=18)
     if show_title:
         ax.set_title(show_title, fontsize=22, fontweight='bold')
 

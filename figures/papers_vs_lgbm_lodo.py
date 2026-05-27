@@ -248,7 +248,7 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     # Group labels (black text, no bbox)
     for group, ymid in group_positions:
         ax.text(-0.05, ymid, _fmt_group(group), ha="right", va="center",
-                fontsize=86, fontweight="bold",
+                fontsize=86,
                 color="black",
                 transform=ax.get_yaxis_transform())
 

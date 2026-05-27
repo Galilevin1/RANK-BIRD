@@ -39,6 +39,7 @@ def plot_figure4d(
     tick_fontsize: int = 32,
     legend_fontsize: int = 30,
     panel_gap: float = 0.015,
+    n_cols: int = 2,
 ) -> plt.Figure:
     """
     Four-panel distribution approach comparison.
@@ -72,18 +73,24 @@ def plot_figure4d(
     n_panels     = 4 if has_combined else 3
 
     _standalone = ax is None
+    n_rows = (n_panels + n_cols - 1) // n_cols   # ceil(n_panels / n_cols)
     if _standalone:
-        fig, _axes = plt.subplots(1, n_panels,
-                                  figsize=(9 * n_panels, 6), sharey=False)
-        axes = list(_axes) if n_panels > 1 else [_axes]
+        fig, _axes = plt.subplots(n_rows, n_cols,
+                                  figsize=(9 * n_cols, 6 * n_rows), sharey=False)
+        axes = list(_axes.flatten())[:n_panels]
     else:
         fig = ax.figure
         ax.set_visible(False)
         bb  = ax.get_position()
         gap = panel_gap
-        pw  = (bb.width - (n_panels - 1) * gap) / n_panels
+        pw  = (bb.width  - (n_cols - 1) * gap) / n_cols
+        ph  = (bb.height - (n_rows - 1) * gap) / n_rows
         axes = [
-            fig.add_axes([bb.x0 + i * (pw + gap), bb.y0, pw, bb.height])
+            fig.add_axes([
+                bb.x0 + (i % n_cols) * (pw + gap),
+                bb.y0 + (n_rows - 1 - i // n_cols) * (ph + gap),
+                pw, ph,
+            ])
             for i in range(n_panels)
         ]
 
@@ -129,13 +136,38 @@ def plot_figure4d(
                     legend_fontsize=legend_fontsize,
                     box_width=0.75, dot_size=6)
 
-    # ylabel only on leftmost
-    for sub_ax in axes[1:]:
+    # ── Tick visibility and shared axis labels ────────────────
+    for i, sub_ax in enumerate(axes):
+        col = i % n_cols
+        row = i // n_cols
         sub_ax.set_ylabel("")
-    # xlabel only on middle panel
-    for sub_ax in axes:
         sub_ax.set_xlabel("")
-    axes[n_panels // 2].set_xlabel("Protocol", fontsize=label_fontsize, fontweight="bold")
+        # Y ticks: all panels, large labels, tight pad
+        sub_ax.tick_params(axis="y", labelsize=tick_fontsize, pad=2)
+        # X ticks: bottom row only, large labels, tight pad
+        if row == n_rows - 1:
+            sub_ax.tick_params(axis="x", labelsize=tick_fontsize, pad=2)
+        else:
+            sub_ax.tick_params(axis="x", bottom=False, labelbottom=False)
+        # Extra breathing room on the categorical x axis
+        xl = sub_ax.get_xlim()
+        sub_ax.set_xlim(xl[0] - 0.3, xl[1] + 0.3)
+
+    # Shared Y label: vertically centred between the left-column panels
+    _left  = [axes[i] for i in range(0, n_panels, n_cols)]
+    _ly    = np.mean([a.get_position().y0 + a.get_position().height / 2 for a in _left])
+    _lx    = min(a.get_position().x0 for a in _left)
+    fig.text(_lx - 0.03, _ly, "AUC",
+             fontsize=label_fontsize, fontweight="bold",
+             ha="right", va="center", rotation=90)
+
+    # Shared X label: horizontally centred between the bottom-row panels
+    _bot   = [axes[i] for i in range(n_panels - n_cols, n_panels)]
+    _bx    = np.mean([a.get_position().x0 + a.get_position().width / 2 for a in _bot])
+    _by    = min(a.get_position().y0 for a in _bot)
+    fig.text(_bx, _by - 0.03, "Protocol",
+             fontsize=label_fontsize, fontweight="bold",
+             ha="center", va="top")
 
     if _standalone:
         plt.tight_layout()
@@ -155,7 +187,7 @@ def assemble_figure4(
     figure2d_data: Optional[pd.DataFrame] = None,
     figure2d_norm_data: Optional[pd.DataFrame] = None,
     data_dir_4d: Optional[Path] = None,
-    figsize: tuple = (160, 100),
+    figsize: tuple = (190, 162),
 ) -> plt.Figure:
     """
     Assemble Figure 4 panels.
@@ -193,35 +225,48 @@ def assemble_figure4(
     # ── Figure layout ──────────────────────────────────────────
     fig = plt.figure(figsize=figsize)
 
-    # Two outer rows: top (A/B/C) | D
+    # Outer: 2 rows (height only; each row has its own independent width layout)
+    #   Row 0: A (narrower) | D (broader)
+    #   Row 1: B (broad)    | C (narrower)
     outer = mgridspec.GridSpec(
         2, 1, figure=fig,
-        height_ratios=[3.5, 1.6],
-        hspace=0.30,
-        left=0.05, right=0.97, top=0.97, bottom=0.04,
+        height_ratios=[1.4, 1.2],
+        hspace=0.38,
+        left=0.05, right=0.97, top=0.84, bottom=0.04,
     )
 
-    # Top: 2 rows × 3 cols  — A (col 0, stacked) | B (col 1, stacked) | C (col 2, tall)
-    gs_top = mgridspec.GridSpecFromSubplotSpec(
-        2, 3, subplot_spec=outer[0],
-        width_ratios=[1.0, 0.7, 1.5],
-        wspace=0.35, hspace=0.25,
+    # Row 0: A (left, narrow) | D (right, broader)
+    gs_row0 = mgridspec.GridSpecFromSubplotSpec(
+        1, 2, subplot_spec=outer[0],
+        width_ratios=[1.0, 1.7], wspace=0.28,
     )
-    ax_a_orig = fig.add_subplot(gs_top[0, 0])
-    ax_a_norm = fig.add_subplot(gs_top[1, 0])
-    ax_b_orig = fig.add_subplot(gs_top[0, 1])
-    ax_b_norm = fig.add_subplot(gs_top[1, 1])
+    # A: left of row 0 → 2 stacked rows (orig | norm)
+    gs_a = mgridspec.GridSpecFromSubplotSpec(
+        2, 1, subplot_spec=gs_row0[0, 0], hspace=0.25,
+    )
+    ax_a_orig = fig.add_subplot(gs_a[0])
+    ax_a_norm = fig.add_subplot(gs_a[1])
+    # D: right of row 0 — same height as A, legend floats above in GridSpec margin
+    ax_d_host = fig.add_subplot(gs_row0[0, 1])
 
-    # C spans both rows of col 2; inner split: wide orig | thin norm
+    # Row 1: B (left, broad) | C (right, narrower)
+    gs_row1 = mgridspec.GridSpecFromSubplotSpec(
+        1, 2, subplot_spec=outer[1],
+        width_ratios=[1.6, 0.9], wspace=0.28,
+    )
+    # B: left of row 1 → 2 stacked rows (orig | norm)
+    gs_b = mgridspec.GridSpecFromSubplotSpec(
+        2, 1, subplot_spec=gs_row1[0, 0], hspace=0.25,
+    )
+    ax_b_orig = fig.add_subplot(gs_b[0])
+    ax_b_norm = fig.add_subplot(gs_b[1])
+    # C: right of row 1 → wide orig | thin norm
     gs_c = mgridspec.GridSpecFromSubplotSpec(
-        1, 2, subplot_spec=gs_top[:, 2],
+        1, 2, subplot_spec=gs_row1[0, 1],
         width_ratios=[5.0, 0.5], wspace=0.06,
     )
     ax_c_orig = fig.add_subplot(gs_c[0, 0])
     ax_c_norm = fig.add_subplot(gs_c[0, 1])
-
-    # D: full-width row
-    ax_d_host = fig.add_subplot(outer[1])
 
     def _placeholder(ax, msg):
         ax.text(0.5, 0.5, msg, ha="center", va="center",
@@ -240,11 +285,11 @@ def assemble_figure4(
             show_legend=True,
             suppress_xlabel=True,
             inner_width_ratios=[2.0, 1.5],
+            fontsize_scale=1.5,
+            legend_fontsize_scale=0.45,
         )
     except Exception as e:
         _placeholder(ax_a_orig, f"4A (original) error:\n{e}")
-    ax_a_orig.text(-0.03, 1.02, "A", transform=ax_a_orig.transAxes,
-                   fontsize=72, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # Bottom: no legend, x labels visible
     try:
@@ -257,6 +302,7 @@ def assemble_figure4(
             show_legend=False,
             suppress_xlabel=False,
             inner_width_ratios=[2.0, 1.5],
+            fontsize_scale=1.5,
         )
     except Exception as e:
         _placeholder(ax_a_norm, f"4A (normalized) error:\n{e}")
@@ -269,11 +315,12 @@ def assemble_figure4(
             dataset_names=list(dataset_names),
             phenotype_name="",
             ax=ax_b_orig,
+            fontsize_scale=1.5,
         )
     except Exception as e:
         _placeholder(ax_b_orig, f"4B (original) error:\n{e}")
     ax_b_orig.text(-0.03, 1.02, "B", transform=ax_b_orig.transAxes,
-                   fontsize=72, fontweight="bold", va="bottom", ha="right", clip_on=False)
+                   fontsize=200, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     try:
         plot_figure2c(
@@ -282,6 +329,7 @@ def assemble_figure4(
             dataset_names=norm_names,
             phenotype_name="",
             ax=ax_b_norm,
+            fontsize_scale=1.5,
         )
     except Exception as e:
         _placeholder(ax_b_norm, f"4B (normalized) error:\n{e}")
@@ -290,8 +338,8 @@ def assemble_figure4(
     _pos_c = ax_c_orig.get_position()
     if figure2d_data is not None and not figure2d_data.empty:
         try:
-            plot_figure2d_ks_bars(figure2d_data, ax=ax_c_orig)
-            ax_c_orig.set_title("Original", fontsize=38, fontweight="bold", pad=8)
+            plot_figure2d_ks_bars(figure2d_data, ax=ax_c_orig, fontsize_scale=1.5)
+            ax_c_orig.set_title("")
         except Exception as e:
             _placeholder(ax_c_orig, f"4C (original) error:\n{e}")
     else:
@@ -299,8 +347,8 @@ def assemble_figure4(
 
     if figure2d_norm_data is not None and not figure2d_norm_data.empty:
         try:
-            plot_figure2d_ks_bars(figure2d_norm_data, ax=ax_c_norm)
-            ax_c_norm.set_title("CIFAR", fontsize=24, fontweight="bold", pad=8)
+            plot_figure2d_ks_bars(figure2d_norm_data, ax=ax_c_norm, fontsize_scale=1.5)
+            ax_c_norm.set_title("")
         except Exception as e:
             _placeholder(ax_c_norm, f"4C (normalized) error:\n{e}")
     else:
@@ -317,7 +365,7 @@ def assemble_figure4(
         lgnd_c.remove()
 
     fig.text(_pos_c.x0 - 0.02, _pos_c.y1 + 0.005, "C",
-             fontsize=72, fontweight="bold", va="bottom", ha="right", clip_on=False)
+             fontsize=200, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel D: distribution approach (big text, shared legend) ─
     _pos_d = ax_d_host.get_position()
@@ -327,9 +375,9 @@ def assemble_figure4(
         try:
             plot_figure4d(
                 base_dir=data_dir_4d, ax=ax_d_host,
-                label_fontsize=96, title_fontsize=88,
-                tick_fontsize=80, legend_fontsize=76,
-                panel_gap=0.005,
+                label_fontsize=160, title_fontsize=168,
+                tick_fontsize=158, legend_fontsize=148,
+                panel_gap=0.030, n_cols=2,
             )
         except Exception as e:
             _placeholder(ax_d_host, f"4D error:\n{e}")
@@ -347,22 +395,30 @@ def assemble_figure4(
     for a in _d_sub_axes:
         lgnd = a.get_legend()
         if lgnd and _legend_handles is None:
-            _legend_handles, _legend_labels = a.get_legend_handles_labels()
+            _legend_handles = lgnd.legend_handles
+            _legend_labels  = [t.get_text() for t in lgnd.get_texts()]
     for a in _d_sub_axes:
         lgnd = a.get_legend()
         if lgnd:
             lgnd.remove()
 
+    _legend_y = 0.93  # shared y for legend row and letters A/D (above GridSpec top=0.84)
+
+    # Letter D at the start of the legend row; A on the same y
+    fig.text(_pos_d.x0 - 0.01, _legend_y, "D",
+             fontsize=200, fontweight="bold", va="center", ha="right", clip_on=False)
+    _pos_a = ax_a_orig.get_position()
+    fig.text(_pos_a.x0 - 0.01, _legend_y, "A",
+             fontsize=200, fontweight="bold", va="center", ha="right", clip_on=False)
+
     if _legend_handles:
+        _n_cols = (len(_legend_handles) + 1) // 2  # 2 rows
         fig.legend(
             _legend_handles, _legend_labels,
-            loc="upper center",
-            bbox_to_anchor=((_pos_d.x0 + _pos_d.x1) / 2, _pos_d.y1 + 0.045),
-            ncol=len(_legend_handles),
-            fontsize=76, framealpha=0.9,
+            loc="upper left",
+            bbox_to_anchor=(_pos_d.x0, _legend_y),
+            ncol=_n_cols,
+            fontsize=168, framealpha=0.9,
         )
-
-    fig.text(_pos_d.x0 - 0.01, _pos_d.y1 + 0.005, "D",
-             fontsize=72, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     return fig

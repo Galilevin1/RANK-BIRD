@@ -168,14 +168,14 @@ def plot_protocol_heatmap(
         vmax=1,
         cbar=_standalone,
         cbar_kws={"label": "Mean AUC"} if _standalone else {},
-        annot_kws={"size": 92},
+        annot_kws={"size": 116},
         ax=ax,
     )
 
     ax.set_aspect("auto")
     ax.set_ylabel("")
-    ax.set_xlabel("Protocol", fontsize=92, fontweight="bold")
-    ax.set_xticklabels(ax.get_xticklabels(), fontsize=92)
+    ax.set_xlabel("Protocol", fontsize=116, fontweight="bold")
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=116)
 
     # Strip " Amplicon" / " Metagenomics" suffix from y-tick labels
     stripped = [
@@ -183,7 +183,7 @@ def plot_protocol_heatmap(
                     .replace("Delivery_mode_", "DM ")
         for t in ax.get_yticklabels()
     ]
-    ax.set_yticklabels(stripped, fontsize=84, fontweight="bold", rotation=0)
+    ax.set_yticklabels(stripped, fontsize=108, rotation=0)
 
     if _standalone:
         ax.figure.axes[-1].yaxis.label.set_size(14)
@@ -206,12 +206,12 @@ def plot_protocol_heatmap(
         y_mid_amp  = n_meta + (n_total - n_meta) * 0.18
 
         ax.text(wgs_16s_x, y_mid_meta, "WGS",
-                transform=trans, fontsize=88, fontweight="bold",
+                transform=trans, fontsize=112, fontweight="bold",
                 va="center", ha="center", rotation=0, clip_on=False,
                 bbox=dict(boxstyle="round,pad=1.0", facecolor="lightblue",
                           edgecolor="black", linewidth=2.5, alpha=0.8))
         ax.text(wgs_16s_x, y_mid_amp,  "16S",
-                transform=trans, fontsize=88, fontweight="bold",
+                transform=trans, fontsize=112, fontweight="bold",
                 va="center", ha="center", rotation=0, clip_on=False,
                 bbox=dict(boxstyle="round,pad=1.0", facecolor="lightcoral",
                           edgecolor="black", linewidth=2.5, alpha=0.8))

@@ -123,7 +123,7 @@ def assemble_figure1(
     plot_figure_1a(ax=ax_a)
     _a_pos = ax_a.get_position()
     fig.text(_a_pos.x0 - 0.22 * _a_pos.width, ax_b.get_position().y1,
-             "A", fontsize=110, fontweight="bold", va="top", ha="right", clip_on=False)
+             "A", fontsize=148, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel B: schematic image ──────────────────────────────────────────────
     ax_b.set_axis_off()
@@ -136,7 +136,7 @@ def assemble_figure1(
                   ha="center", va="center", fontsize=13, color="#555555",
                   transform=ax_b.transAxes)
     ax_b.text(-0.02, 1.0, "B", transform=ax_b.transAxes,
-              fontsize=110, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=148, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel C: papers vs LightGBM LODO bars ────────────────────────────────
     if papers_df is not None:
@@ -150,7 +150,7 @@ def assemble_figure1(
         ax_c.text(0.5, 0.5, "No papers data", ha="center", va="center",
                   transform=ax_c.transAxes, fontsize=12, color="#888888")
     ax_c.text(-0.22, 1.2, "C", transform=ax_c.transAxes,
-              fontsize=110, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=148, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel D: protocol AUC heatmap ─────────────────────────────────────────
     # Align D's WGS/16S boxes with C's: compute the transAxes x for D that
@@ -168,7 +168,7 @@ def assemble_figure1(
         wgs_16s_x=_d_wgs_x,
     )
     ax_d.text(-0.22, 1.06, "D", transform=ax_d.transAxes,
-              fontsize=110, fontweight="bold", va="top", ha="right", clip_on=False)
+              fontsize=148, fontweight="bold", va="top", ha="right", clip_on=False)
 
     # ── Panel E: protocol AUC boxplots ────────────────────────────────────────
     plot_protocol_boxplots(results_df, ax=ax_e)
@@ -176,7 +176,7 @@ def assemble_figure1(
     _b_pos = ax_b.get_position()
     _e_pos = ax_e.get_position()
     fig.text(_b_pos.x0 - 0.005, _e_pos.y1 + 0.015, "E",
-             fontsize=110, fontweight="bold", va="bottom", ha="right",
+             fontsize=148, fontweight="bold", va="bottom", ha="right",
              clip_on=False)
 
     return fig

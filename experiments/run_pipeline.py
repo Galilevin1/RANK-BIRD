@@ -290,7 +290,7 @@ def main():
             selected_combinations=phenotypes,
             path_1b=FIGURES_BASE / "figure_1" / "1b" / "schematic.png",
         )
-        fig.savefig(_dir / "figure1_combined.pdf", dpi=300)
+        fig.savefig(_dir / "figure1.pdf", dpi=300)
         plt.close(fig)
 
     if "1a" in RUN_FIGS:
