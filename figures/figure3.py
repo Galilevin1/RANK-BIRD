@@ -700,7 +700,6 @@ def run_figure3d(
                 microbiome_dfs_by_dtype=mb_by_dtype,
                 target_dfs_by_dtype=tgt_by_dtype,
                 dataset_names_by_dtype=name_by_dtype,
-                normalization_approach=normalization_approach,
             )
             fig.savefig(out_path, dpi=300, bbox_inches="tight")
             plt.close(fig)

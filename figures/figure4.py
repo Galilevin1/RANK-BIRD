@@ -175,6 +175,114 @@ def plot_figure4d(
 
 
 # ─────────────────────────────────────────────────────────────
+# Supplementary: 4A + 4B comparison per phenotype
+# ─────────────────────────────────────────────────────────────
+
+def run_figure4ab_supp(
+    phenotypes: List,
+    data_root: str,
+    figures_dir: str,
+    normalization_approach=None,
+) -> None:
+    """
+    For each phenotype: one figure with 4A (ROC) and 4B (heatmap),
+    original (top row) vs RANK-BIRD normalized (bottom row).
+    Output: supp_figure4ab_<phenotype>_<dtype>.pdf
+    """
+    from evaluation.data_loading import load_microbiome_datasets_with_targets
+    from figures.figure2 import plot_figure2b, plot_figure2c
+    from src.rankbird.normalization.pipeline import apply_normalization_pipeline
+
+    out  = Path(figures_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    data = Path(data_root)
+
+    for phenotype, dtype in phenotypes:
+        pheno_str = f"{phenotype} {dtype}"
+        folder    = data / pheno_str
+        if not folder.exists():
+            print(f"  Skipping {pheno_str}: folder not found")
+            continue
+        try:
+            mb_dfs, tgt_dfs, ds_names = load_microbiome_datasets_with_targets(str(folder))
+        except Exception as e:
+            print(f"  Error loading {pheno_str}: {e}")
+            continue
+
+        filtered = [
+            (mb, tgt, name)
+            for mb, tgt, name in zip(mb_dfs, tgt_dfs, ds_names)
+            if len(np.unique(tgt.values.ravel())) >= 2
+        ]
+        if len(filtered) < 2:
+            print(f"  Skipping {pheno_str}: need ≥2 datasets with both classes")
+            continue
+        mb_dfs, tgt_dfs, ds_names = (list(x) for x in zip(*filtered))
+
+        safe     = pheno_str.replace(" ", "_")
+        out_path = out / f"supp_figure4ab_{safe}.pdf"
+        if out_path.exists():
+            print(f"  Skipping supp 4AB for {pheno_str}: already saved")
+            continue
+
+        try:
+            norm_mb, norm_names = apply_normalization_pipeline(list(mb_dfs), list(ds_names))
+            name2tgt = {n: t for n, t in zip(ds_names, tgt_dfs)}
+            norm_tgt = [name2tgt[n] for n in norm_names if n in name2tgt]
+        except Exception as e:
+            print(f"  Normalization failed for {pheno_str}: {e}")
+            norm_mb, norm_tgt, norm_names = mb_dfs, tgt_dfs, ds_names
+
+        fig, axes = plt.subplots(2, 2, figsize=(28, 20))
+        ax_a_orig, ax_b_orig = axes[0]
+        ax_a_norm, ax_b_norm = axes[1]
+
+        try:
+            plot_figure2b(mb_dfs, tgt_dfs, ds_names,
+                          phenotype_name=f"{pheno_str} — Original", ax=ax_a_orig, show_legend=True,
+                          fontsize_scale=0.20, legend_fontsize_scale=0.65)
+        except Exception as e:
+            ax_a_orig.text(0.5, 0.5, str(e), ha="center", va="center", transform=ax_a_orig.transAxes)
+
+        try:
+            plot_figure2b(norm_mb, norm_tgt, norm_names,
+                          phenotype_name=f"{pheno_str} — CIFAR", ax=ax_a_norm, show_legend=False,
+                          fontsize_scale=0.20)
+        except Exception as e:
+            ax_a_norm.text(0.5, 0.5, str(e), ha="center", va="center", transform=ax_a_norm.transAxes)
+
+        try:
+            plot_figure2c(mb_dfs, tgt_dfs, ds_names, phenotype_name="", ax=ax_b_orig,
+                          fontsize_scale=0.20)
+        except Exception as e:
+            ax_b_orig.text(0.5, 0.5, str(e), ha="center", va="center", transform=ax_b_orig.transAxes)
+
+        try:
+            plot_figure2c(norm_mb, norm_tgt, norm_names, phenotype_name="", ax=ax_b_norm,
+                          fontsize_scale=0.20)
+        except Exception as e:
+            ax_b_norm.text(0.5, 0.5, str(e), ha="center", va="center", transform=ax_b_norm.transAxes)
+
+        ax_a_orig.set_title("")
+        ax_a_norm.set_title("")
+        ax_b_orig.set_title("")
+        ax_b_norm.set_title("")
+
+        plt.tight_layout()
+        fig.subplots_adjust(hspace=0.4)
+        # Post-process: only thin the ROC lines (linewidth=14 in the base function).
+        # All text/legend sizes are set at creation via fontsize_scale so boxes are correct.
+        fig.canvas.draw()
+        for _ax in fig.axes:
+            for _line in _ax.get_lines():
+                if _line.get_linewidth() > 5:
+                    _line.set_linewidth(3.0)
+        fig.savefig(out_path, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Saved supp 4AB for {pheno_str}")
+
+
+# ─────────────────────────────────────────────────────────────
 # Assembled figure 4
 # ─────────────────────────────────────────────────────────────
 

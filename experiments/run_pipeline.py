@@ -19,11 +19,10 @@ from figures.figure2 import (
     plot_figure2a,
     assemble_figure2, compute_figure2d_data, compute_figure2e_data,
     compute_ks_lodo_correlation, compute_ks_summary_stats,
-    run_figure2b_supp, run_figure2c_supp, run_figure2d_supp,
-    run_figure2e_supp, run_figure2f_supp,
+    run_figure2b_supp, run_figure2c_supp, run_figure2e_supp,
 )
 from figures.figure3 import assemble_figure3, run_figure3c, run_figure3d
-from figures.figure4 import assemble_figure4
+from figures.figure4 import assemble_figure4, run_figure4ab_supp
 from figures.figure2e_optional import run_figure2e_optional, plot_figure2e_optional
 from figures.figure5 import plot_figure5
 from experiments.investigate_stability_threshold import (
@@ -90,7 +89,7 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["2"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
+    "run_figures": ["4"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
      #                   "2" (combined + all supp), "2b_supp","2c_supp","2d_supp","2f_supp" (supp only)
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
@@ -175,6 +174,12 @@ def build_figures_dir(base: Path, config: dict, figure: str, subfigure: str = No
 
 FIGURES_BASE = Path("figures_out")
 FIGURES_BASE.mkdir(exist_ok=True)
+
+SUPP_FIGURES_BASE = FIGURES_BASE / "supplementary_figures"
+SUPP_FIGURES_BASE.mkdir(exist_ok=True)
+
+SUPP_TABLES_BASE = FIGURES_BASE / "supplementary_tables"
+SUPP_TABLES_BASE.mkdir(exist_ok=True)
 
 
 def main():
@@ -379,28 +384,22 @@ def main():
         plt.close(fig)
 
     if "2b_supp" in RUN_FIGS:
-        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2b")
+        _supp1_dir = SUPP_FIGURES_BASE / "supp_1"
+        _supp1_dir.mkdir(parents=True, exist_ok=True)
         run_figure2b_supp(
             phenotypes=phenotypes,
             data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
-            figures_dir=str(_dir),
+            figures_dir=str(_supp1_dir),
         )
 
     if "2c_supp" in RUN_FIGS:
-        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2c")
+        _supp2_dir = SUPP_FIGURES_BASE / "supp_2"
+        _supp2_dir.mkdir(parents=True, exist_ok=True)
         run_figure2c_supp(
             phenotypes=phenotypes,
             data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
-            figures_dir=str(_dir),
+            figures_dir=str(_supp2_dir),
             normalization_approach=CONFIG.get("normalization_approach"),
-        )
-
-    if "2d_supp" in RUN_FIGS:
-        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2d")
-        run_figure2d_supp(
-            phenotypes=phenotypes,
-            data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
-            figures_dir=str(_dir),
         )
 
     if "2d_ks_lodo" in RUN_FIGS:
@@ -427,11 +426,12 @@ def main():
         )
 
     if "2f_supp" in RUN_FIGS:
-        _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2f")
-        run_figure2f_supp(
+        _supp3_dir = SUPP_FIGURES_BASE / "supp_3"
+        _supp3_dir.mkdir(parents=True, exist_ok=True)
+        run_figure2e_supp(
             phenotypes=phenotypes,
             data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
-            figures_dir=str(_dir),
+            figures_dir=str(_supp3_dir),
         )
 
     if "2" in RUN_FIGS:
@@ -521,14 +521,19 @@ def main():
         plt.close(fig)
         print("  Saved Figure 2")
 
-        # ── Supplementary: one figure per phenotype ───────────
-        _supp_dir = str(_fig2_dir / "supp")
-        run_figure2b_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir)
-        run_figure2c_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir,
+        # ── Supplementary figures ──────────────────────────────
+        _supp1_dir = SUPP_FIGURES_BASE / "supp_1"
+        _supp1_dir.mkdir(parents=True, exist_ok=True)
+        run_figure2b_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=str(_supp1_dir))
+
+        _supp2_dir = SUPP_FIGURES_BASE / "supp_2"
+        _supp2_dir.mkdir(parents=True, exist_ok=True)
+        run_figure2c_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=str(_supp2_dir),
                           normalization_approach=CONFIG.get("normalization_approach"))
-        run_figure2d_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir)
-        run_figure2e_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir)
-        run_figure2f_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=_supp_dir)
+
+        _supp3_dir = SUPP_FIGURES_BASE / "supp_3"
+        _supp3_dir.mkdir(parents=True, exist_ok=True)
+        run_figure2e_supp(phenotypes=phenotypes, data_root=_data_root, figures_dir=str(_supp3_dir))
 
     if "3b" in RUN_FIGS:
         _3b_results_dir = FIGURES_BASE / "figure_3" / "3b"
@@ -576,6 +581,33 @@ def main():
         fig.savefig(FIG3_DIR / "figure3.pdf", bbox_inches="tight")
         plt.close(fig)
         print("  Saved Figure 3")
+
+        # ── Supplementary figure 5: 3D PCA for all phenotypes ───────
+        _supp5_dir = SUPP_FIGURES_BASE / "supp_5"
+        _supp5_dir.mkdir(parents=True, exist_ok=True)
+        run_figure3d(
+            phenotypes=phenotypes,
+            data_root=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
+            figures_dir=str(_supp5_dir),
+            normalization_approach=CONFIG.get("normalization_approach"),
+        )
+
+        # ── Supplementary figure 4: stability threshold, all levels ──
+        _supp4_dir = SUPP_FIGURES_BASE / "supp_4"
+        _supp4_dir.mkdir(parents=True, exist_ok=True)
+        run_stability_investigation(
+            phenotypes=phenotypes,
+            output_dir=FIGURES_BASE / "figure_3" / "3b",
+            figures_dir=_supp4_dir,
+            plot_only=True,
+            dtype_filter=CONFIG.get("stability_dtype_filter", None),
+            normalization_modes=["filter_only"],
+            plot_mode=CONFIG.get("stability_plot_mode", "combined"),
+            plot_levels=[None, "g", "gs"],
+            cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
+            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
+            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
+        )
 
     if "4" in RUN_FIGS:
         _data_root_4 = PROJECT_ROOT / CONFIG.get("data_folder", "Data")
@@ -638,6 +670,16 @@ def main():
             fig.savefig(FIG4_DIR / "figure4.pdf", bbox_inches="tight")
             plt.close(fig)
             print("  Saved Figure 4")
+
+            # ── Supplementary figure 6: 4A + 4B for all phenotypes ──
+            _supp6_dir = SUPP_FIGURES_BASE / "supp_6"
+            _supp6_dir.mkdir(parents=True, exist_ok=True)
+            run_figure4ab_supp(
+                phenotypes=phenotypes,
+                data_root=str(_data_root_4),
+                figures_dir=str(_supp6_dir),
+                normalization_approach=CONFIG.get("normalization_approach"),
+            )
         else:
             print(f"  Figure 4: no data for representative phenotype {_rep_str}")
 

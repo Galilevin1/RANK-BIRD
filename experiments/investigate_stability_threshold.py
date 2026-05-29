@@ -507,6 +507,7 @@ def run_stability_investigation(
     cross_dtype_normalization: bool = False,
     stability_percentile_global_combined: float = 0.6,
     taxonomy_level_combined=None,
+    figures_dir: Path = None,
 ):
     """
     Runs the full (dtype × level) sweep and saves CSVs + figure(s) per mode.
@@ -530,6 +531,8 @@ def run_stability_investigation(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir = Path(figures_dir) if figures_dir is not None else output_dir
+    figures_dir.mkdir(parents=True, exist_ok=True)
 
     if normalization_modes is None:
         normalization_modes = ["full"]
@@ -761,7 +764,7 @@ def run_stability_investigation(
                     title="Legend",
                     title_fontsize=15,
                 )
-            out_path = output_dir / f"stability_threshold_investigation{mode_suffix}{stat_suffix}.png"
+            out_path = figures_dir / f"stability_threshold_investigation{mode_suffix}{stat_suffix}.png"
             fig.savefig(out_path, dpi=150, bbox_inches="tight")
             plt.close(fig)
             print(f"Saved: {out_path}")

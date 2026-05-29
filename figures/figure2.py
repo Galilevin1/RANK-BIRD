@@ -19,7 +19,7 @@ Supplementary (one PDF per phenotype)
     run_figure2c_supp(phenotypes, data_root, figures_dir, normalization_approach)
     run_figure2d_supp(phenotypes, data_root, figures_dir)
     run_figure2e_supp(phenotypes, data_root, figures_dir)
-    run_figure2f_supp(phenotypes, data_root, figures_dir)
+    run_figure2e_supp(phenotypes, data_root, figures_dir)
 """
 
 import numpy as np
@@ -1223,6 +1223,7 @@ def plot_figure2c(
     max_features: int = 50,
     ax=None,
     fontsize_scale: float = 1.0,
+    title_fontsize_scale: float = None,
 ) -> plt.Figure:
     """
     Microbiome feature presence/abundance heatmap (samples × top-varying features).
@@ -1299,7 +1300,8 @@ def plot_figure2c(
     sns.heatmap(X_z, cmap="RdBu_r", center=0, robust=True,
                 vmin=-3, vmax=3,
                 yticklabels=False, xticklabels=False,
-                cbar=_standalone, ax=ax)
+                cbar=False, ax=ax)
+    ax.set_ylabel("")
 
     for b in boundaries[1:-1]:
         ax.axhline(y=b, color="black", linewidth=3)
@@ -1310,8 +1312,9 @@ def plot_figure2c(
                 fontsize=112*fontsize_scale,
                 transform=ax.get_yaxis_transform())
 
+    _title_fs = (title_fontsize_scale if title_fontsize_scale is not None else fontsize_scale)
     if phenotype_name:
-        ax.set_title(phenotype_name, fontsize=46*fontsize_scale, fontweight="bold")
+        ax.set_title(phenotype_name, fontsize=46*_title_fs, fontweight="bold")
 
     if _standalone:
         plt.tight_layout()
@@ -1479,7 +1482,8 @@ def run_figure2c_supp(
             print(f"  Skipping supp 2C for {pheno_str}: already saved")
             continue
         try:
-            fig = plot_figure2c(mb_dfs, tgt_dfs, ds_names, pheno_str)
+            fig = plot_figure2c(mb_dfs, tgt_dfs, ds_names, pheno_str,
+                                fontsize_scale=0.12, title_fontsize_scale=0.45)
             fig.savefig(out_path, bbox_inches="tight")
             plt.close(fig)
             print(f"  Saved supp 2C for {pheno_str}")
@@ -1652,55 +1656,6 @@ def plot_figure2d_single(
     return fig, w_df
 
 
-def run_figure2d_supp(
-    phenotypes: List[Tuple[str, str]],
-    data_root: str,
-    figures_dir: str,
-) -> None:
-    """
-    Supplementary: save one Hellinger distance heatmap per phenotype.
-    Skips datasets with only one class (control-only or case-only).
-    Output files: supp_figure2d_<phenotype>_<dtype>.pdf
-    """
-    from evaluation.data_loading import load_microbiome_datasets_with_targets
-
-    out  = Path(figures_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
-    for phenotype, dtype in phenotypes:
-        pheno_str = f"{phenotype} {dtype}"
-        folder    = Path(data_root) / pheno_str
-        if not folder.exists():
-            print(f"  Skipping {pheno_str}: folder not found")
-            continue
-        try:
-            mb_dfs, tgt_dfs, ds_names = load_microbiome_datasets_with_targets(str(folder))
-        except Exception as e:
-            print(f"  Error loading {pheno_str}: {e}")
-            continue
-
-        filtered = [
-            (mb, tgt, n)
-            for mb, tgt, n in zip(mb_dfs, tgt_dfs, ds_names)
-            if len(np.unique(tgt.values.ravel())) >= 2
-        ]
-        if len(filtered) < len(ds_names):
-            removed = set(ds_names) - {n for _, _, n in filtered}
-            print(f"  Dropped single-class datasets for {pheno_str}: {sorted(removed)}")
-        if len(filtered) < 2:
-            print(f"  Skipping {pheno_str}: need ≥2 datasets after filtering")
-            continue
-        mb_dfs, _, ds_names = (list(x) for x in zip(*filtered))
-
-        safe     = pheno_str.replace(" ", "_")
-        out_path = out / f"supp_figure2d_{safe}.pdf"
-        if out_path.exists():
-            print(f"  Skipping supp 2D for {pheno_str}: already saved")
-            continue
-        fig, _ = plot_figure2d_single(mb_dfs, ds_names, phenotype_name=pheno_str)
-        fig.savefig(out_path, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  Saved supp 2D for {pheno_str}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2019,38 +1974,11 @@ def run_figure2e_supp(
     phenotypes: List[Tuple[str, str]],
     data_root: str,
     figures_dir: str,
-    cache_dir: str = "figures_out/figure_2/2e",
-) -> None:
-    """
-    Supplementary: one |ΔAUC| vs SHAP-Jaccard scatter per phenotype.
-    Computation is cached — re-runs load from cache automatically.
-    Output files: supp_figure2e_<phenotype>_<dtype>.pdf
-    """
-    out = Path(figures_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    data = compute_figure2e_data(phenotypes, data_root, cache_dir=cache_dir)
-
-    for pheno, pheno_data in data.items():
-        safe     = pheno.replace(" ", "_")
-        out_path = out / f"supp_figure2e_{safe}.pdf"
-        if out_path.exists():
-            print(f"  Skipping supp 2E for {pheno}: already saved")
-            continue
-        fig = plot_figure2e({pheno: pheno_data}, phenotype=pheno)
-        fig.savefig(out_path, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  Saved supp 2E for {pheno}")
-
-
-def run_figure2f_supp(
-    phenotypes: List[Tuple[str, str]],
-    data_root: str,
-    figures_dir: str,
 ) -> None:
     """
     Supplementary 2F: full pairwise-LODO + SHAP analysis figure.
     Datasets with only one class (control-only or case-only) are skipped automatically.
-    One figure per phenotype saved as supp_figure2f_<phenotype>_<dtype>.pdf.
+    One figure per phenotype saved as supp_figure2e_<phenotype>_<dtype>.pdf.
     """
     from evaluation.pairwise_lodo import run_pairwise_lodo_analysis
     from evaluation.data_loading import load_microbiome_datasets_with_targets
@@ -2062,7 +1990,7 @@ def run_figure2f_supp(
     for phenotype, dtype in phenotypes:
         pheno_str = f"{phenotype} {dtype}"
         safe      = pheno_str.replace(" ", "_")
-        out_path  = out / f"supp_figure2f_{safe}.pdf"
+        out_path  = out / f"supp_figure2e_{safe}.pdf"
         if out_path.exists():
             print(f"  Skipping supp 2F for {pheno_str}: already saved")
             continue
@@ -2084,6 +2012,36 @@ def run_figure2f_supp(
                 full_lodo_shap=data["full_lodo_shap"],
                 dataset_names=data["dataset_names"],
             )
+            # Post-process supp only — no changes to pairwise_lodo_plots.py.
+            _ax0, _ax1, _ax2 = fig.axes[0], fig.axes[1], fig.axes[2]
+            # Move panel 1 y labels to left BEFORE canvas.draw() so the left-side
+            # tick Text objects (label1) are instantiated on the first render.
+            _ax0.yaxis.tick_left()
+            _ax0.yaxis.set_label_position("left")
+            _ax0.tick_params(axis="y", pad=5)
+            fig.subplots_adjust(wspace=0.55, left=0.25)
+            fig.canvas.draw()
+            # Panel 1 x-axis: scale DOWN (hardcoded ~130pt)
+            for _item in ([_ax0.xaxis.label] + _ax0.get_xticklabels()):
+                if _item.get_text():
+                    _item.set_fontsize(_item.get_fontsize() * 0.25)
+            # Panel 1 y labels: set to match panel 3 y label size (9pt × 3 = 27pt)
+            plt.setp(_ax0.get_yticklabels(), fontsize=27)
+            # Panels 2+3: hardcoded 8–12pt — scale UP; title: scale UP
+            for _ax in (_ax1, _ax2):
+                for _item in ([_ax.title, _ax.xaxis.label, _ax.yaxis.label] +
+                               _ax.get_xticklabels() + _ax.get_yticklabels()):
+                    if _item.get_text():
+                        _item.set_fontsize(_item.get_fontsize() * 3)
+                for _t in _ax.texts:
+                    _t.set_fontsize(_t.get_fontsize() * 3)
+            for _t in fig.texts:
+                _t.set_fontsize(_t.get_fontsize() * 3)
+            _p1 = _ax1.get_position()
+            _p2 = _ax2.get_position()
+            _ax2.set_position([_p1.x1 + 0.20, _p2.y0, _p2.width, _p2.height])
+            _w, _h = fig.get_size_inches()
+            fig.set_size_inches(_w * 1.45, _h)
             fig.savefig(out_path, bbox_inches="tight")
             plt.close(fig)
             print(f"  Saved supp 2F for {pheno_str}")
