@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from itertools import combinations
 from scipy.stats import mannwhitneyu
 from matplotlib.transforms import blended_transform_factory
 
@@ -13,92 +12,6 @@ def _dtype_sort_key(phenotype: str) -> int:
         return 1
     return 0
 
-
-def _run_protocol_mannwhitney(summary_df: pd.DataFrame) -> pd.DataFrame:
-    """Pairwise Mann-Whitney between protocols using per-phenotype mean AUC."""
-    protocols = summary_df["protocol"].unique().tolist()
-    rows = []
-    for p1, p2 in combinations(protocols, 2):
-        v1 = summary_df[summary_df["protocol"] == p1]["mean_auc"].dropna().values
-        v2 = summary_df[summary_df["protocol"] == p2]["mean_auc"].dropna().values
-        common = min(len(v1), len(v2))
-        if common < 2:
-            continue
-        U, p = mannwhitneyu(v1, v2, alternative="two-sided")
-        rows.append({
-            "protocol_1":   p1,
-            "protocol_2":   p2,
-            "n_phenotypes": common,
-            "mean_1":       float(np.mean(v1)),
-            "mean_2":       float(np.mean(v2)),
-            "mean_diff":    float(np.mean(v1) - np.mean(v2)),
-            "U_statistic":  float(U),
-            "p_value":      float(p),
-            "significant":  p < 0.05,
-        })
-    return pd.DataFrame(rows)
-
-
-def _run_lgbm_vs_papers_per_phenotype(
-    results_df: pd.DataFrame,
-    papers_df: pd.DataFrame,
-    phenotypes,
-    selected_combinations=None,
-) -> tuple:
-    """
-    Per-phenotype Mann-Whitney: LightGBM LODO (per dataset) vs Papers LODO (per dataset).
-    Returns (papers_mean_by_pheno, pheno_stats_df).
-    """
-    # ── prepare papers ─────────────────────────────────────────
-    pdf = papers_df.dropna(subset=["Phenotype", "Type"], how="all").copy()
-    pdf["Phenotype"] = pdf["Phenotype"].astype(str)
-    pdf["Type"]      = pdf["Type"].astype(str)
-    pdf["Group"]     = pdf["Phenotype"] + " " + pdf["Type"]
-    if selected_combinations:
-        keep = {f"{p} {t}" for p, t in selected_combinations}
-        pdf = pdf[pdf["Group"].isin(keep)]
-    ignore = {"Phenotype full name", "Phenotype", "Type",
-              "Metadata Mapping", "Dataset", "Notes", "Group"}
-    paper_cols = [c for c in pdf.columns
-                  if c not in ignore and pd.api.types.is_numeric_dtype(pdf[c])]
-
-    paper_raw_by_pheno = {}
-    for group_name, grp in pdf.groupby("Group"):
-        all_aucs = []
-        for col in paper_cols:
-            all_aucs.extend(pd.to_numeric(grp[col], errors="coerce").dropna().tolist())
-        if all_aucs:
-            paper_raw_by_pheno[group_name] = all_aucs
-
-    papers_mean_by_pheno = {ph: float(np.mean(v)) for ph, v in paper_raw_by_pheno.items()}
-
-    # ── per-phenotype Mann-Whitney ─────────────────────────────
-    rows = []
-    for pheno in phenotypes:
-        lgbm_v  = results_df[
-            (results_df["phenotype"] == pheno) & (results_df["protocol"] == "LODO")
-        ]["auc"].dropna().values
-        paper_v = np.array(paper_raw_by_pheno.get(pheno, []))
-        row = {
-            "phenotype":   pheno,
-            "n_lgbm":      len(lgbm_v),
-            "n_papers":    len(paper_v),
-            "mean_lgbm":   float(np.mean(lgbm_v))  if len(lgbm_v)  else np.nan,
-            "mean_papers": float(np.mean(paper_v)) if len(paper_v) else np.nan,
-            "mean_diff":   np.nan,
-            "U_statistic": np.nan,
-            "p_value":     np.nan,
-            "significant": False,
-        }
-        if len(lgbm_v) >= 2 and len(paper_v) >= 2:
-            U, p = mannwhitneyu(lgbm_v, paper_v, alternative="two-sided")
-            row["mean_diff"]   = float(np.mean(lgbm_v) - np.mean(paper_v))
-            row["U_statistic"] = float(U)
-            row["p_value"]     = float(p)
-            row["significant"] = bool(p < 0.05)
-        rows.append(row)
-
-    return papers_mean_by_pheno, pd.DataFrame(rows)
 
 
 def plot_protocol_heatmap(
@@ -124,34 +37,38 @@ def plot_protocol_heatmap(
     # Rename protocol columns to include "LightGBM" prefix
     pivot = pivot.rename(columns={
         "LODO":                 "LGBM\nLODO",
-        "Internal Validation":  "LGBM\nInternal\nValidation",
-        "Within Learning":      "LGBM\nWithin Learning",
+        "Internal Validation":  "LGBM\nMixed-\nDataset",
+        "Within Learning":      "LGBM\nWithin-\nDataset",
     })
 
-    # ── Add Papers LODO column + per-phenotype stats ───────────
-    pheno_stats_df = pd.DataFrame()
-    sig_phenos = set()
-    if results_df is not None and papers_df is not None:
-        papers_mean, pheno_stats_df = _run_lgbm_vs_papers_per_phenotype(
-            results_df, papers_df, phenotype_order, selected_combinations,
-        )
+    # ── Add Papers LODO column (mean across all paper columns) ──
+    if papers_df is not None:
+        _pdf = papers_df.dropna(subset=["Phenotype", "Type"], how="all").copy()
+        _pdf["Phenotype"] = _pdf["Phenotype"].astype(str)
+        _pdf["Type"]      = _pdf["Type"].astype(str)
+        _pdf["Group"]     = _pdf["Phenotype"] + " " + _pdf["Type"]
+        if selected_combinations:
+            _keep = {f"{p} {t}" for p, t in selected_combinations}
+            _pdf  = _pdf[_pdf["Group"].isin(_keep)]
+        _ignore = {"Phenotype full name", "Phenotype", "Type",
+                   "Metadata Mapping", "Dataset", "Notes", "Group"}
+        _pcols  = [c for c in _pdf.columns
+                   if c not in _ignore and pd.api.types.is_numeric_dtype(_pdf[c])]
+        _pmeans = {}
+        for _grp, _rows in _pdf.groupby("Group"):
+            _aucs = [v for c in _pcols
+                     for v in pd.to_numeric(_rows[c], errors="coerce").dropna().tolist()]
+            if _aucs:
+                _pmeans[_grp] = float(np.mean(_aucs))
         pivot.insert(0, "Papers LODO",
-                     pd.Series({ph: papers_mean.get(ph, np.nan) for ph in phenotype_order}))
-        sig_phenos = set(
-            pheno_stats_df[pheno_stats_df["significant"]]["phenotype"].tolist()
-        )
+                     pd.Series({ph: _pmeans.get(ph, np.nan) for ph in phenotype_order}))
 
     # Enforce column order
     col_order = ["Papers LODO", "LGBM\nLODO",
-                 "LGBM\nInternal\nValidation", "LGBM\nWithin Learning"]
+                 "LGBM\nMixed-\nDataset", "LGBM\nWithin-\nDataset"]
     pivot = pivot.reindex(columns=[c for c in col_order if c in pivot.columns])
 
-    # ── Custom annotation: add * to Papers LODO cells where significant ──
     annot = pivot.map(lambda v: "" if pd.isna(v) else f"{v:.2f}")
-    if "Papers LODO" in pivot.columns:
-        for pheno in phenotype_order:
-            if pheno in sig_phenos:
-                annot.loc[pheno, "Papers LODO"] = annot.loc[pheno, "Papers LODO"] + "*"
 
     _standalone = ax is None
     if _standalone:
@@ -219,6 +136,139 @@ def plot_protocol_heatmap(
     if _standalone:
         plt.tight_layout()
 
-    stats_df = _run_protocol_mannwhitney(summary_df)
+    return fig, ax, pivot.reset_index()
 
-    return fig, ax, pivot.reset_index(), stats_df, pheno_stats_df
+
+def compute_lgbm_protocols_per_phenotype_test(
+    results_df: pd.DataFrame,
+    protocols: list = None,
+) -> pd.DataFrame:
+    """
+    Pairwise Mann-Whitney U tests between LightGBM protocols, per phenotype.
+
+    For each (phenotype × protocol pair): all individual dataset AUC values
+    in that phenotype are compared between the two protocols.
+    Benjamini-Hochberg FDR is applied across all comparisons.
+
+    Returns one row per (phenotype × protocol pair) with:
+    phenotype, protocol_1, protocol_2, n_1, n_2,
+    mean_1, mean_2, mean_diff, U_statistic, p_value, p_value_fdr
+    """
+    from itertools import combinations as _combs
+    from statsmodels.stats.multitest import multipletests
+
+    if protocols is None:
+        protocols = ["LODO", "Internal Validation", "Within Learning"]
+
+    df = results_df.copy()
+    df["auc"] = pd.to_numeric(df["auc"], errors="coerce")
+
+    rows = []
+    for pheno in sorted(df["phenotype"].unique()):
+        sub = df[df["phenotype"] == pheno]
+        for p1, p2 in _combs(protocols, 2):
+            v1 = sub[sub["protocol"] == p1]["auc"].dropna().values
+            v2 = sub[sub["protocol"] == p2]["auc"].dropna().values
+            row = {
+                "phenotype":   pheno,
+                "protocol_1":  p1,
+                "protocol_2":  p2,
+                "n_1":         len(v1),
+                "n_2":         len(v2),
+                "mean_1":      float(np.mean(v1)) if len(v1) else np.nan,
+                "mean_2":      float(np.mean(v2)) if len(v2) else np.nan,
+                "mean_diff":   float(np.mean(v1) - np.mean(v2)) if len(v1) and len(v2) else np.nan,
+                "U_statistic": np.nan,
+                "p_value":     np.nan,
+            }
+            if len(v1) >= 2 and len(v2) >= 2:
+                U, p = mannwhitneyu(v1, v2, alternative="two-sided")
+                row["U_statistic"] = float(U)
+                row["p_value"]     = float(p)
+            rows.append(row)
+
+    result = pd.DataFrame(rows)
+
+    valid = result["p_value"].notna()
+    fdr = np.full(len(result), np.nan)
+    if valid.any():
+        _, fdr_vals, _, _ = multipletests(result.loc[valid, "p_value"].values, method="fdr_bh")
+        fdr[valid.values] = fdr_vals
+    result["p_value_fdr"] = fdr
+
+    return result
+
+
+def compute_lodo_gap_dtype_test(
+    results_df: pd.DataFrame,
+    within_protocol: str = "Within Learning",
+    lodo_protocol: str = "LODO",
+    phenotype_filter: str = "ASD",
+) -> tuple:
+    """
+    Mann-Whitney U test comparing the LODO gap (within AUC − LODO AUC)
+    between WGS (Metagenomics) and 16S (Amplicon) datasets.
+
+    Each individual dataset is one observation:
+      gap = within_protocol AUC  −  LODO AUC  (per dataset)
+
+    Group 1: all WGS  dataset gaps
+    Group 2: all 16S  dataset gaps
+
+    Parameters
+    ----------
+    results_df       : long-form DataFrame with columns
+                       [phenotype, dataset, protocol, auc]
+    within_protocol  : protocol name for the "within" arm
+    lodo_protocol    : protocol name for the LODO arm
+    phenotype_filter : if given, restrict to rows whose phenotype contains
+                       this string (e.g. "ASD" to compare WGS vs 16S within ASD)
+
+    Returns
+    -------
+    per_dataset_df : one row per dataset with phenotype, dataset, dtype,
+                     within_auc, lodo_auc, gap
+    test_df        : one-row summary with U, p-value, group means/medians
+    """
+    results_df = results_df.copy()
+    results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
+    if phenotype_filter:
+        results_df = results_df[results_df["phenotype"].str.contains(phenotype_filter, na=False)]
+
+    within = (results_df[results_df["protocol"] == within_protocol]
+              [["phenotype", "dataset", "auc"]]
+              .rename(columns={"auc": "within_auc"})
+              .dropna(subset=["within_auc"]))
+
+    lodo = (results_df[results_df["protocol"] == lodo_protocol]
+            [["phenotype", "dataset", "auc"]]
+            .rename(columns={"auc": "lodo_auc"})
+            .dropna(subset=["lodo_auc"]))
+
+    merged = within.merge(lodo, on=["phenotype", "dataset"], how="inner")
+    merged["gap"] = merged["within_auc"] - merged["lodo_auc"]
+    merged["dtype"] = merged["phenotype"].apply(
+        lambda p: "Amplicon (16S)" if "Amplicon" in p else "Metagenomics (WGS)"
+    )
+
+    wgs = merged[merged["dtype"] == "Metagenomics (WGS)"]["gap"].values
+    s16 = merged[merged["dtype"] == "Amplicon (16S)"]["gap"].values
+
+    label = f"{phenotype_filter} — " if phenotype_filter else ""
+    row = {
+        "comparison":     f"{label}Metagenomics (WGS) vs Amplicon (16S)",
+        "n_wgs":          len(wgs),
+        "n_16s":          len(s16),
+        "mean_gap_wgs":   float(np.mean(wgs))   if len(wgs) else np.nan,
+        "mean_gap_16s":   float(np.mean(s16))   if len(s16) else np.nan,
+        "median_gap_wgs": float(np.median(wgs)) if len(wgs) else np.nan,
+        "median_gap_16s": float(np.median(s16)) if len(s16) else np.nan,
+        "U_statistic":    np.nan,
+        "p_value":        np.nan,
+    }
+    if len(wgs) >= 2 and len(s16) >= 2:
+        U, p = mannwhitneyu(wgs, s16, alternative="two-sided")
+        row["U_statistic"] = float(U)
+        row["p_value"]     = float(p)
+
+    return merged, pd.DataFrame([row])

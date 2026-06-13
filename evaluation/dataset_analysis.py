@@ -201,8 +201,9 @@ class MicrobiomeAnalysisPipeline:
         in_others_not_in_current = len(other_microbes - current_microbes)
         in_others_not_in_current_pct = (in_others_not_in_current / len(other_microbes)) * 100 if other_microbes else 0
 
-        # Similarity scores
-        similarity_all = self._calculate_similarity(current_df, combined_others)
+        # Similarity / dissimilarity scores
+        similarity_all   = self._calculate_similarity(current_df, combined_others)
+        bray_curtis_all  = self._calculate_bray_curtis(current_df, combined_others)
 
         # Similarity scores for control and test samples if target data is available
         similarity_control = "N/A"
@@ -277,9 +278,25 @@ class MicrobiomeAnalysisPipeline:
             'microbes_unique_test':  round(in_current_not_in_others_pct, 2) if in_current_not_in_others_pct > 0 else np.nan,
             'microbes_unique_train': round(in_others_not_in_current_pct, 2) if in_others_not_in_current_pct > 0 else np.nan,
             'jaccard_index':         round(similarity_all, 4)    if similarity_all    != "N/A" else "N/A",
+            'bray_curtis_lodo':      round(bray_curtis_all, 4)   if bray_curtis_all   != "N/A" else "N/A",
             'jaccard_index_control': round(similarity_control, 4) if similarity_control != "N/A" else "N/A",
             'jaccard_index_case':    round(similarity_test, 4)   if similarity_test   != "N/A" else "N/A",
         }
+
+    def _calculate_bray_curtis(self, df1: pd.DataFrame, df2: pd.DataFrame) -> float:
+        """
+        Bray-Curtis dissimilarity between the mean abundance profiles of two datasets.
+        Uses only common features. Returns dissimilarity in [0, 1].
+        """
+        common_features = list(set(df1.columns) & set(df2.columns))
+        if not common_features:
+            return "N/A"
+        mean1 = df1[common_features].mean(axis=0).values.astype(float)
+        mean2 = df2[common_features].mean(axis=0).values.astype(float)
+        denominator = mean1.sum() + mean2.sum()
+        if denominator == 0:
+            return "N/A"
+        return float(2.0 * np.minimum(mean1, mean2).sum() / denominator)
 
     def _calculate_similarity(self, df1: pd.DataFrame, df2: pd.DataFrame) -> float:
         """

@@ -272,7 +272,7 @@ def plot_protocol_boxplots(results_df: pd.DataFrame, ax=None):
         return ""
 
     METHOD_ORDER = ["LODO", "Internal Validation", "Within Learning"]
-    LABELS       = ["LGBM\nLODO", "LGBM\nInternal\nValidation", "LGBM\nWithin\nLearning"]
+    LABELS       = ["LGBM\nLODO", "LGBM\nMixed-Dataset", "LGBM\nWithin-Dataset"]
     COLORS       = {"LODO": "#D0D0D0", "Internal Validation": "#B8B8B8", "Within Learning": "#A0A0A0"}
 
     plot_df = results_df[results_df["protocol"].isin(METHOD_ORDER)].copy()

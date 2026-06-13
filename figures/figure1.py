@@ -172,11 +172,12 @@ def assemble_figure1(
 
     # ── Panel E: protocol AUC boxplots ────────────────────────────────────────
     plot_protocol_boxplots(results_df, ax=ax_e)
-    # Place "E" at the same figure-x as "B" so E is right below B
+    # E: same row as D (y), same column as B (x) — use figure coordinates
     _b_pos = ax_b.get_position()
-    _e_pos = ax_e.get_position()
-    fig.text(_b_pos.x0 - 0.005, _e_pos.y1 + 0.015, "E",
-             fontsize=148, fontweight="bold", va="bottom", ha="right",
-             clip_on=False)
+    _d_pos = ax_d.get_position()
+    _e_label_x = _b_pos.x0 + (-0.02) * _b_pos.width   # same x as B's label
+    _e_label_y = _d_pos.y0 + 1.06 * _d_pos.height      # same y as D's label
+    fig.text(_e_label_x, _e_label_y, "E",
+             fontsize=148, fontweight="bold", va="top", ha="right", clip_on=False)
 
     return fig

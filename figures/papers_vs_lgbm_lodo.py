@@ -115,7 +115,7 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
 
         summary.append({
             "Group": group,
-            "Paper": "LightGBM LODO",
+            "Paper": "LGBM LODO",
             "Mean": np.mean(aucs),
             "SE": sem(aucs)
         })
@@ -167,11 +167,11 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
 
     # === PLOTTING ===
     papers = sorted(summary_df["Paper"].unique())
-    papers = [p for p in papers if p != "LightGBM LODO"] + ["LightGBM LODO"]
+    papers = [p for p in papers if p != "LGBM LODO"] + ["LGBM LODO"]
 
     colors_palette = sns.color_palette("husl", len(papers) - 1)
     color_map = {p: c for p, c in zip(papers[:-1], colors_palette)}
-    color_map["LightGBM LODO"] = "#2E2E2E"
+    color_map["LGBM LODO"] = "#2E2E2E"
 
     _standalone = ax is None
     if _standalone:
@@ -192,10 +192,10 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
             continue
 
         group_start = y_offset
-        gdf = gdf.sort_values(by="Paper", key=lambda x: x != "LightGBM LODO")
+        gdf = gdf.sort_values(by="Paper", key=lambda x: x != "LGBM LODO")
 
         for i, row in enumerate(gdf.itertuples()):
-            is_lgbm = row.Paper == "LightGBM LODO"
+            is_lgbm = row.Paper == "LGBM LODO"
 
             bar_h = bar_height * 1.3 if is_lgbm else bar_height
             alpha = 1.0 if is_lgbm else 0.85
@@ -276,7 +276,7 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     ax.set_xlabel("LODO AUC (Mean ± SE)", fontsize=86, fontweight="bold")
     ax.set_xlim(0, 1.05)
     if _standalone:
-        ax.set_title("Model Performance: LightGBM vs. Published Results\n(Mann-Whitney U Test + FDR Correction)",
+        ax.set_title("Model Performance: LGBM vs. Published Results\n(Mann-Whitney U Test + FDR Correction)",
                      fontsize=16, fontweight="bold", pad=20)
 
     # Legend
@@ -284,14 +284,14 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     by_label = {label: handle for handle, label in zip(handles, labels)}
 
     ordered_labels = []
-    if "LightGBM LODO" in by_label:
-        ordered_labels.append("LightGBM LODO")
-    ordered_labels.extend([l for l in sorted(by_label.keys()) if l != "LightGBM LODO"])
+    if "LGBM LODO" in by_label:
+        ordered_labels.append("LGBM LODO")
+    ordered_labels.extend([l for l in sorted(by_label.keys()) if l != "LGBM LODO"])
     ordered_handles = [by_label[l] for l in ordered_labels]
 
     if _standalone:
         legend = ax.legend(ordered_handles, ordered_labels,
-                           title="Models/Papers\n(* = sig. vs LightGBM)",
+                           title="Models/Papers\n(* = sig. vs LGBM)",
                            title_fontsize=10, fontsize=9,
                            bbox_to_anchor=(1.02, 1), loc="upper left",
                            frameon=True, fancybox=True, shadow=True)
@@ -305,7 +305,7 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
         plt.tight_layout()
     else:
         ax.legend(ordered_handles, ordered_labels,
-                  title="* = sig. vs LightGBM",
+                  title="* = sig. vs LGBM",
                   title_fontsize=78, fontsize=74,
                   bbox_to_anchor=(-0.15, 1.03), loc="lower left",
                   ncol=4,

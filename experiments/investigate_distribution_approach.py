@@ -307,9 +307,10 @@ def _assign_stars(p: float) -> str:
 
 
 def _build_panels(all_results: dict, dtypes: list) -> dict:
-    """Build panel_name → {approach: results_df} including 'All datasets'."""
+    """Build panel_name → {approach: results_df} including 'All dtypes' and optionally 'Cross dtypes'."""
     panels: dict = {}
-    for dtype in dtypes:
+    base_dtypes = [d for d in dtypes if d != "Combined"]
+    for dtype in base_dtypes:
         auc_by_approach = {}
         for approach in APPROACHES:
             df = all_results.get((dtype, approach), pd.DataFrame())
@@ -323,7 +324,7 @@ def _build_panels(all_results: dict, dtypes: list) -> dict:
 
     all_combined: dict = {}
     for approach in APPROACHES:
-        frames = [f for dtype in dtypes
+        frames = [f for dtype in base_dtypes
                   for f in [all_results.get((dtype, approach), pd.DataFrame())]
                   if not f.empty]
         if frames:
@@ -331,7 +332,17 @@ def _build_panels(all_results: dict, dtypes: list) -> dict:
             merged["auc"] = pd.to_numeric(merged["auc"], errors="coerce")
             all_combined[approach] = merged
     if all_combined:
-        panels["All datasets"] = all_combined
+        panels["All dtypes"] = all_combined
+
+    cross_combined: dict = {}
+    for approach in APPROACHES:
+        df = all_results.get(("Combined", approach), pd.DataFrame())
+        if not df.empty:
+            df = df.copy()
+            df["auc"] = pd.to_numeric(df["auc"], errors="coerce")
+            cross_combined[approach] = df
+    if cross_combined:
+        panels["Cross dtypes"] = cross_combined
 
     return panels
 
@@ -508,22 +519,21 @@ def compute_normalization_comparison(
             except Exception:
                 p_wilcoxon = float("nan")
 
+            _treat_label = APPROACH_LABELS.get(treatment, treatment).replace(" ", "_")
             rows.append({
-                "panel":          panel_name,
-                "protocol":       protocol,
-                "baseline":       APPROACH_LABELS.get(baseline, baseline),
-                "treatment":      APPROACH_LABELS.get(treatment, treatment),
-                "n_datasets":     len(common),
-                "mean_baseline":  round(mean_base,  3),
-                "mean_treatment": round(mean_treat, 3),
-                "delta_mean":     round(delta_mean, 3),
-                "p_ttest":        round(float(p_ttest), 4),
-                "sig_ttest":      _assign_stars(p_ttest),
-                "median_baseline":  round(median_base,  3),
-                "median_treatment": round(median_treat, 3),
-                "delta_median":     round(delta_median, 3),
-                "p_wilcoxon":       round(float(p_wilcoxon), 4),
-                "sig_wilcoxon":     _assign_stars(p_wilcoxon),
+                "panel":        panel_name,
+                "protocol":     protocol,
+                "n_datasets":   len(common),
+                "mean_original":           round(mean_base,  3),
+                f"mean_{_treat_label}":    round(mean_treat, 3),
+                "delta_mean":              round(delta_mean, 3),
+                "p_ttest":                 round(float(p_ttest), 4),
+                "sig_ttest":               _assign_stars(p_ttest),
+                "median_original":         round(median_base,  3),
+                f"median_{_treat_label}":  round(median_treat, 3),
+                "delta_median":            round(delta_median, 3),
+                "p_wilcoxon":              round(float(p_wilcoxon), 4),
+                "sig_wilcoxon":            _assign_stars(p_wilcoxon),
             })
 
     result_df = pd.DataFrame(rows)
@@ -668,8 +678,8 @@ def _draw_panel(
     ax.set_xlim(-0.5, len(protocol_order) - 0.5)
 
     _PROTO_DISPLAY = {
-        "Internal Validation": "Internal\nValidation",
-        "Within Learning":     "Within\nLearning",
+        "Internal Validation": "Mixed-\nDatasets",
+        "Within Learning":     "Within-\nDatasets",
     }
     ax.set_xticks(range(len(protocol_order)))
     ax.set_xticklabels(
@@ -969,6 +979,13 @@ def run_distribution_investigation(
         print(posthoc_df[show_cols].to_string(index=False))
 
     # ── Delta + tests: original vs RANK-BIRD ─────────────────────────────────
+    # Load cross-dtype Combined results if available (adds "Cross dtypes" panel)
+    for approach in APPROACHES:
+        csv_p = output_dir / f"results_combined_{approach}.csv"
+        if csv_p.exists() and ("Combined", approach) not in all_results:
+            df = pd.read_csv(csv_p)
+            df["auc"] = pd.to_numeric(df["auc"], errors="coerce")
+            all_results[("Combined", approach)] = df
     delta_df = compute_normalization_comparison(all_results, dtypes)
     if not delta_df.empty:
         delta_df.to_csv(output_dir / "delta_tests.csv", index=False)

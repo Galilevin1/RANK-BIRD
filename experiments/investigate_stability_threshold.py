@@ -375,6 +375,16 @@ def _plot_sweep_panel(
     if threshold_percentile is not None:
         ax.axvline(threshold_percentile, color="#555555", linestyle="--",
                    linewidth=2.5, alpha=0.75, zorder=1)
+        if count_df is not None and not count_df.empty:
+            closest = count_df.iloc[
+                (count_df["percentile"] - threshold_percentile).abs().argsort().iloc[0]
+            ]
+            ax.text(
+                threshold_percentile + 0.012, 0.04,
+                f"{int(closest['n_kept'])} microbes",
+                fontsize=20, color="#555555", va="bottom", ha="left",
+                transform=ax.get_xaxis_transform(),
+            )
     _ylabel = {"mean": "Mean AUC", "median": "Median AUC", "combined": "Mean / Median AUC"}
     ax.set_xlabel("Stability Percentile", fontsize=32)
     ax.set_xticks([0.2, 0.4, 0.6, 0.8])
@@ -390,26 +400,18 @@ def _plot_sweep_panel(
         ax.set_ylabel("")
         ax.tick_params(axis="y", left=False, labelleft=False)
 
-    # Right: microbe count
+    # Right axis: kept-microbe count line (no per-point annotations)
     ax2 = ax.twinx()
-    ax2.plot(count_df["percentile"], count_df["n_kept"],
-             color="black", linestyle="--", linewidth=4.5,
-             marker="s", markersize=7, label="# kept microbes")
-    ax2.set_ylabel("")  # label dropped per user request
+    if count_df is not None and not count_df.empty:
+        ax2.plot(count_df["percentile"], count_df["n_kept"],
+                 color="black", linestyle="--", linewidth=4.5,
+                 marker="s", markersize=7, label="RM")
     if show_right_yticks:
+        ax2.set_ylabel("RM", fontsize=32, color="black")
         ax2.tick_params(axis="y", labelcolor="black", labelsize=26)
     else:
+        ax2.set_ylabel("")
         ax2.tick_params(axis="y", right=False, labelright=False)
-    _annot_step = max(1, len(count_df) // 4)
-    for i, (_, row) in enumerate(count_df.iterrows()):
-        if i % _annot_step != 0:
-            continue
-        ax2.annotate(
-            f"{int(row['n_kept'])} ({row['pct_kept']:.0f}%)",
-            xy=(row["percentile"], row["n_kept"]),
-            xytext=(0, 6), textcoords="offset points",
-            fontsize=20, ha="center", color="black",
-        )
 
     lines1, labels1 = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
@@ -775,8 +777,9 @@ def run_stability_investigation(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _BEST_THRESHOLDS = {
-    "Metagenomics": 0.25,
-    "Amplicon":     0.40,
+    "Metagenomics": 0.1,
+    "Amplicon":     0.3,
+    "Combined":     0.3,
 }
 
 

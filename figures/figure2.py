@@ -334,6 +334,7 @@ _CORR_COLUMNS = [
     'microbes_unique_test',
     'microbes_unique_train',
     'jaccard_index',
+    'bray_curtis_lodo',
     'leave_one_out_auc',
     'internal_validation_auc',
     'within_dataset_auc',
@@ -347,8 +348,9 @@ _CORR_PRETTY = {
     'microbes_unique_test':   'Microbes\nUnique Test',
     'microbes_unique_train':  'Microbes\nUnique Train',
     'jaccard_index':          'Jaccard\nLODO',
+    'bray_curtis_lodo':       'Bray-Curtis\nLODO',
     'leave_one_out_auc':      'LODO',
-    'internal_validation_auc':'Internal\nValidation AUC',
+    'internal_validation_auc':'Mixed\nDataset AUC',
     'within_dataset_auc':     'Within\nDataset AUC',
     'age_median':             'Age\nMedian',
     'male_percentage':        'Male\n%',
@@ -396,6 +398,8 @@ def plot_figure2a(
     for c in cols:
         num_df[c] = pd.to_numeric(num_df[c], errors='coerce')
 
+    from statsmodels.stats.multitest import multipletests
+
     n = len(cols)
     corr_mat = np.full((n, n), np.nan)
     p_mat    = np.full((n, n), np.nan)
@@ -411,12 +415,23 @@ def plot_figure2a(
                 corr_mat[i, j] = r
                 p_mat[i, j]    = p
 
-    # Annotations: lower triangle = r, upper = p-value
+    # BH FDR correction across all upper-triangle pairs
+    q_mat = np.full((n, n), np.nan)
+    upper_idx = [(i, j) for i in range(n) for j in range(n) if i < j
+                 and not np.isnan(p_mat[i, j])]
+    if upper_idx:
+        raw_ps = [p_mat[i, j] for i, j in upper_idx]
+        _, q_vals, _, _ = multipletests(raw_ps, method="fdr_bh")
+        for (i, j), q in zip(upper_idx, q_vals):
+            q_mat[i, j] = q
+            q_mat[j, i] = q  # mirror for lower-triangle significance check
+
+    # Annotations: lower triangle = r, upper = q-value (FDR corrected)
     annot = np.full((n, n), '', dtype=object)
     for i in range(n):
         for j in range(n):
             if i < j:
-                annot[i, j] = f'p={p_mat[i, j]:.2f}'
+                annot[i, j] = f'q={q_mat[i, j]:.2f}' if not np.isnan(q_mat[i, j]) else ''
             else:
                 annot[i, j] = f'{corr_mat[i, j]:.2f}'
 
@@ -440,10 +455,10 @@ def plot_figure2a(
     hm.set_xticklabels(pretty, fontsize=122, rotation=45, ha='right')
     hm.set_yticklabels(pretty, fontsize=122, rotation=0)
 
-    # Black border on significant lower-triangle cells
+    # Black border on significant lower-triangle cells (q < alpha)
     for i in range(n):
         for j in range(n):
-            if i > j and p_mat[i, j] < alpha:
+            if i > j and not np.isnan(q_mat[i, j]) and q_mat[i, j] < alpha:
                 ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False,
                                            edgecolor='black', lw=3))
 
@@ -459,7 +474,8 @@ def plot_figure2a(
                     "var2_pretty": pretty[j],
                     "spearman_r":  corr_mat[i, j],
                     "p_value":     p_mat[i, j],
-                    "significant": bool(p_mat[i, j] < alpha),
+                    "q_value":     q_mat[i, j],
+                    "significant": bool(not np.isnan(q_mat[i, j]) and q_mat[i, j] < alpha),
                 })
     stats_df = pd.DataFrame(stats_rows)
 
@@ -523,7 +539,7 @@ def plot_figure2b(
     ax_roc.set_xlim(0, 1);  ax_roc.set_ylim(0, 1.05)
     ax_roc.set_xlabel("False Positive Rate", fontsize=132*fontsize_scale, fontweight="bold")
     ax_roc.set_ylabel("True Positive Rate",  fontsize=132*fontsize_scale, fontweight="bold")
-    ax_roc.set_title("Zero-% Baseline ROC", fontsize=130*fontsize_scale, fontweight="bold")
+    ax_roc.set_title("Sparsity-Based Classification", fontsize=130*fontsize_scale, fontweight="bold")
     ax_roc.tick_params(labelsize=138*fontsize_scale)
     ax_roc.xaxis.set_major_formatter(plt.FuncFormatter(
         lambda x, _: "" if x == 0 else f"{x:.1f}"))
@@ -550,8 +566,8 @@ def plot_figure2b(
                         fontsize=100*fontsize_scale)
     ax_bar.set_yticks([])
     ax_bar.set_xlabel("LODO AUC", fontsize=132*fontsize_scale, fontweight="bold")
-    ax_bar.set_title("LGBM LODO", fontsize=130*fontsize_scale, fontweight="bold")
-    ax_bar.set_xlim(0.5, 1.22)
+    ax_bar.set_title("Full Classification", fontsize=130*fontsize_scale, fontweight="bold")
+    ax_bar.set_xlim(0.5, 1.07)
     ax_bar.tick_params(axis="x", labelsize=138*fontsize_scale)
     ax_bar.xaxis.set_major_formatter(plt.FuncFormatter(
         lambda x, _: "" if x == 0.5 else f"{x:.1f}"))
@@ -1099,7 +1115,7 @@ def assemble_figure2(
     cd_phenotype_name: str = "CD",
     shap_full_lodo: Optional[Dict] = None,
     shap_dataset_names: Optional[List[str]] = None,
-    figsize: tuple = (120, 145),
+    figsize: tuple = (140, 145),
 ) -> plt.Figure:
     """
     Assemble Figure 2 panels into one combined figure.
@@ -1124,7 +1140,7 @@ def assemble_figure2(
     fig = plt.figure(figsize=figsize)
     gs = mgridspec.GridSpec(
         3, 2, figure=fig,
-        width_ratios=[2.0, 1.5],
+        width_ratios=[2.5, 1.5],
         height_ratios=[3.2, 2.2, 2.0],
         hspace=0.42, wspace=0.38,
         left=0.07, right=0.97, top=0.96, bottom=0.05,
@@ -1161,7 +1177,8 @@ def assemble_figure2(
     # ── Panel B: CD ROC curves ────────────────────────────────
     if cd_microbiome_dfs is not None:
         _, auc_2b = plot_figure2b(cd_microbiome_dfs, cd_target_dfs, cd_dataset_names,
-                                   phenotype_name=cd_phenotype_name, ax=ax_b)
+                                   phenotype_name=cd_phenotype_name, ax=ax_b,
+                                   inner_width_ratios=[2.1, 1.3])
         auc_2b.to_csv(subdirs["2b"] / f"roc_auc_{cd_phenotype_name}.csv", index=False)
     else:
         _placeholder(ax_b, "CD data not provided")
@@ -1189,6 +1206,9 @@ def assemble_figure2(
         from figures.pairwise_lodo_plots import _plot_shap_grid
         _plot_shap_grid(ax_e, shap_full_lodo, shap_dataset_names,
                         rename_features=True, top_n=10)
+        ax_e.set_ylabel("Top SHAP Taxa Across Datasets",
+                        fontsize=116, fontweight="bold",
+                        rotation=270, va="center", labelpad=60)
     else:
         _placeholder(ax_e, "shap_full_lodo not provided\n(run figure 2F supp first)")
     ax_e.text(-0.17, 1.0, "E", transform=ax_e.transAxes,
@@ -2017,7 +2037,9 @@ def run_figure2e_supp(
             # Move panel 1 y labels to left BEFORE canvas.draw() so the left-side
             # tick Text objects (label1) are instantiated on the first render.
             _ax0.yaxis.tick_left()
-            _ax0.yaxis.set_label_position("left")
+            _ax0.yaxis.set_label_position("right")
+            _ax0.set_ylabel("Top SHAP Taxa Across Datasets", fontsize=27,
+                            labelpad=10, rotation=90, va="center")
             _ax0.tick_params(axis="y", pad=5)
             fig.subplots_adjust(wspace=0.55, left=0.25)
             fig.canvas.draw()

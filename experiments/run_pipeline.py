@@ -8,7 +8,7 @@ from evaluation.statistics import compare_protocols_mann_whitney
 
 import matplotlib.pyplot as plt
 
-from figures.protocol_comparison_heatmap import plot_protocol_heatmap
+from figures.protocol_comparison_heatmap import plot_protocol_heatmap, compute_lgbm_protocols_per_phenotype_test
 from figures.protocol_comparison_boxplots import plot_protocol_boxplots
 from figures.papers_vs_lgbm_lodo import plot_auc_horizontal_bars_mann_whitney
 from figures.phenotype_grid import plot_figure_1a
@@ -21,7 +21,7 @@ from figures.figure2 import (
     compute_ks_lodo_correlation, compute_ks_summary_stats,
     run_figure2b_supp, run_figure2c_supp, run_figure2e_supp,
 )
-from figures.figure3 import assemble_figure3, run_figure3c, run_figure3d
+from figures.figure3 import assemble_figure3, run_figure3c, run_figure3d, run_figure3c_stats_table
 from figures.figure4 import assemble_figure4, run_figure4ab_supp
 from figures.figure2e_optional import run_figure2e_optional, plot_figure2e_optional
 from figures.figure5 import plot_figure5
@@ -89,13 +89,13 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["4"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
+    "run_figures": ["3"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
      #                   "2" (combined + all supp), "2b_supp","2c_supp","2d_supp","2f_supp" (supp only)
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
      #                   "3","4","5"
     "run_investigations": [],  # "stability_threshold", "stability_characterization", "distribution_approach"
-    "investigations_plot_only": False,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
+    "investigations_plot_only": True,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
     "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
     "data_folder": "Data",             # "Data" for pipeline phenotypes, "Data_papers" for papers phenotypes
@@ -135,7 +135,7 @@ CONFIG = {
     # filtering and distribution normalization (learning stays per phenotype).
     # -----------------------
     "cross_dtype_normalization":           False,
-    "stability_percentile_global_combined": 0.3,
+    "stability_percentile_global_combined": 0.2,
     "taxonomy_level_combined":              "gs",
 }
 
@@ -297,6 +297,31 @@ def main():
         )
         fig.savefig(_dir / "figure1.pdf", dpi=300)
         plt.close(fig)
+        # ── Supplementary tables S1 ───────────────────────────
+        _s1_dir = SUPP_TABLES_BASE / "S1"
+        _s1_dir.mkdir(exist_ok=True)
+        # 1C: LGBM vs papers (stats computed inside plot fn, figure discarded)
+        _, _, _stats_1c = plot_auc_horizontal_bars_mann_whitney(
+            df_papers=_df_papers, df_lightGBM=_results_df,
+            selected_combinations=phenotypes, figsize=(12, 16),
+            bar_height=1, fdr_alpha=0.05,
+        )
+        plt.close("all")
+        _stats_1c.to_csv(_s1_dir / "LGBM_vs_papers.csv", index=False)
+        # 1D: heatmap AUC values + per-phenotype protocol comparison
+        _, _, _heatmap_df = plot_protocol_heatmap(
+            _summary_df, results_df=_results_df,
+            papers_df=_df_papers, selected_combinations=phenotypes,
+        )
+        plt.close("all")
+        _heatmap_df.to_csv(_s1_dir / "heatmap_auc.csv", index=False)
+        compute_lgbm_protocols_per_phenotype_test(_results_df).to_csv(
+            _s1_dir / "LGBM_approaches_per_phenotype.csv", index=False, float_format="%.4f"
+        )
+        # 1E: pairwise protocol comparison (stats computed inside plot fn, figure discarded)
+        _, _, _stats_1e = plot_protocol_boxplots(_results_df)
+        plt.close("all")
+        _stats_1e.to_csv(_s1_dir / "LGBM_approaches.csv", index=False)
 
     if "1a" in RUN_FIGS:
         _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1", "1a")
@@ -304,10 +329,12 @@ def main():
         fig.savefig(_dir / "paper_phenotype_grid.png", dpi=300, bbox_inches='tight')
 
     if "1c" in RUN_FIGS:
+        _s1_dir = SUPP_TABLES_BASE / "S1"
+        _s1_dir.mkdir(exist_ok=True)
         _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1", "1c")
         _results_df = pd.read_csv(results_path)
         _df_papers  = build_papers_auc_df(PROJECT_ROOT / CONFIG["papers_csv"])
-        fig, ax, stats = plot_auc_horizontal_bars_mann_whitney(
+        fig, _, stats = plot_auc_horizontal_bars_mann_whitney(
             df_papers=_df_papers,
             df_lightGBM=_results_df,
             selected_combinations=phenotypes,
@@ -316,31 +343,37 @@ def main():
             fdr_alpha=0.05,
         )
         fig.savefig(_dir / "papers_vs_lgbm_lodo.png", dpi=300, bbox_inches='tight')
-        stats.to_csv(_dir / "papers_vs_lgbm_stats.csv", index=False)
+        stats.to_csv(_s1_dir / "LGBM_vs_papers.csv", index=False)
         plt.close(fig)
 
     if "1d" in RUN_FIGS:
+        _s1_dir = SUPP_TABLES_BASE / "S1"
+        _s1_dir.mkdir(exist_ok=True)
         _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1", "1d")
         _summary_df = pd.read_csv(summary_path)
         _results_df = pd.read_csv(results_path)
         _df_papers  = build_papers_auc_df(PROJECT_ROOT / CONFIG["papers_csv"])
-        fig, _, heatmap_df, _, pheno_stats_df = plot_protocol_heatmap(
+        fig, _, heatmap_df = plot_protocol_heatmap(
             _summary_df,
             results_df=_results_df,
             papers_df=_df_papers,
             selected_combinations=phenotypes,
         )
         fig.savefig(_dir / "protocol_heatmap.png", dpi=300)
-        heatmap_df.to_csv(_dir / "heatmap_auc.csv", index=False)
-        pheno_stats_df.to_csv(_dir / "heatmap_lgbm_vs_papers.csv", index=False)
+        heatmap_df.to_csv(_s1_dir / "heatmap_auc.csv", index=False)
         plt.close(fig)
+        _pheno_protocol_stats = compute_lgbm_protocols_per_phenotype_test(_results_df)
+        _pheno_protocol_stats.to_csv(_s1_dir / "LGBM_approaches_per_phenotype.csv",
+                                     index=False, float_format="%.4f")
 
     if "1e" in RUN_FIGS:
+        _s1_dir = SUPP_TABLES_BASE / "S1"
+        _s1_dir.mkdir(exist_ok=True)
         _dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_1", "1e")
         _results_df = pd.read_csv(results_path)
         fig, _, stats_df = plot_protocol_boxplots(_results_df)
         fig.savefig(_dir / "protocol_boxplots.png", dpi=300, bbox_inches="tight")
-        stats_df.to_csv(_dir / "protocol_pairwise_mannwhitney.csv", index=False)
+        stats_df.to_csv(_s1_dir / "LGBM_approaches.csv", index=False)
         plt.close(fig)
 
     if "1f" in RUN_FIGS:
@@ -521,6 +554,75 @@ def main():
         plt.close(fig)
         print("  Saved Figure 2")
 
+        # ── Supplementary table S2: Figure 2A variable descriptions ───────────
+        _s2_dir = SUPP_TABLES_BASE / "S2"
+        _s2_dir.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([
+            {"variable":         "sample_count",
+             "display_name":     "Sample Count",
+             "description":      "Total number of samples (subjects) in the dataset.",
+             "how_calculated":   "Row count of the microbiome abundance matrix."},
+            {"variable":         "feature_count",
+             "display_name":     "Microbes Count",
+             "description":      "Total number of microbial taxa/OTUs measured in the dataset.",
+             "how_calculated":   "Column count of the microbiome abundance matrix."},
+            {"variable":         "microbes_unique_test",
+             "display_name":     "Microbes Unique Test",
+             "description":      "Fraction of microbial features present in the test dataset "
+                                 "that are absent from all training datasets in LODO.",
+             "how_calculated":   "|features_test \\ features_train| / |features_test|."},
+            {"variable":         "microbes_unique_train",
+             "display_name":     "Microbes Unique Train",
+             "description":      "Fraction of microbial features present in the training "
+                                 "datasets that are absent from the test dataset in LODO.",
+             "how_calculated":   "|features_train \\ features_test| / |features_train|."},
+            {"variable":         "jaccard_index",
+             "display_name":     "Jaccard LODO",
+             "description":      "Jaccard similarity of the microbial feature sets between "
+                                 "the test dataset and the union of training datasets in LODO.",
+             "how_calculated":   "|features_test ∩ features_train| / |features_test ∪ features_train|."},
+            {"variable":         "bray_curtis_lodo",
+             "display_name":     "Bray-Curtis LODO",
+             "description":      "Bray-Curtis similarity between the mean microbial "
+                                 "abundance profile of the test dataset and the pooled "
+                                 "training datasets in LODO. Higher values indicate more "
+                                 "similar abundance distributions (0 = completely "
+                                 "different, 1 = identical).",
+             "how_calculated":   "2·Σ min(mean_test_i, mean_train_i) / "
+                                 "(Σ mean_test_i + Σ mean_train_i), computed over "
+                                 "common features only (complement of Bray-Curtis dissimilarity)."},
+            {"variable":         "leave_one_out_auc",
+             "display_name":     "LODO AUC",
+             "description":      "Area Under the ROC Curve from Leave-One-Dataset-Out "
+                                 "cross-validation: model trained on all other datasets, "
+                                 "evaluated on the held-out dataset.",
+             "how_calculated":   "LightGBM trained on pooled remaining datasets; "
+                                 "scikit-learn roc_auc_score on held-out dataset predictions."},
+            {"variable":         "internal_validation_auc",
+             "display_name":     "Mixed Dataset AUC",
+             "description":      "AUC from mixed-dataset (internal) cross-validation: "
+                                 "samples from all datasets are pooled and split by "
+                                 "stratified K-fold.",
+             "how_calculated":   "Stratified K-fold cross-validation on the combined "
+                                 "sample pool across all datasets."},
+            {"variable":         "within_dataset_auc",
+             "display_name":     "Within Dataset AUC",
+             "description":      "AUC from within-dataset cross-validation: training and "
+                                 "testing performed on the same single dataset.",
+             "how_calculated":   "Stratified K-fold cross-validation within each dataset "
+                                 "independently."},
+            {"variable":         "age_median",
+             "display_name":     "Age Median",
+             "description":      "Median age of subjects in the dataset.",
+             "how_calculated":   "Median of reported subject ages from dataset metadata."},
+            {"variable":         "male_percentage",
+             "display_name":     "Male %",
+             "description":      "Percentage of male subjects in the dataset.",
+             "how_calculated":   "(number of male subjects / total subjects) × 100, "
+                                 "from dataset metadata."},
+        ]).to_csv(_s2_dir / "figure2a_variable_descriptions.csv", index=False)
+        print("  Saved S2 variable descriptions table")
+
         # ── Supplementary figures ──────────────────────────────
         _supp1_dir = SUPP_FIGURES_BASE / "supp_1"
         _supp1_dir.mkdir(parents=True, exist_ok=True)
@@ -558,6 +660,10 @@ def main():
             investigation_dir=str(_3c_data_dir),
             figures_dir=str(_3c_out_dir),
         )
+        run_figure3c_stats_table(
+            investigation_dir=str(_3c_data_dir),
+            output_path=str(SUPP_TABLES_BASE / "figure3c_wilcoxon_stats.csv"),
+        )
 
     if "3d" in RUN_FIGS:
         _3d_dir = build_figures_dir(FIGURES_BASE, CONFIG, "figure_3", "3d")
@@ -569,20 +675,83 @@ def main():
         )
 
     if "3" in RUN_FIGS:
+        import shutil as _shutil
+        _3b_dir   = FIGURES_BASE / "figure_3" / "3b"
+        _3c_dir   = FIGURES_BASE / "figure_3" / "3c"
+        _dtype_filter = CONFIG.get("stability_dtype_filter", None)
+        if isinstance(_dtype_filter, list) and all(d is None or str(d) == "None" for d in _dtype_filter):
+            _dtype_filter = None
+
+        # ── 3B: stability threshold — per-dtype ──────────────────────
+        run_stability_investigation(
+            phenotypes=phenotypes,
+            output_dir=_3b_dir,
+            plot_only=CONFIG.get("investigations_plot_only", False),
+            dtype_filter=_dtype_filter,
+            normalization_modes=CONFIG.get("stability_normalization_modes", ["full+filter_only"]),
+            plot_mode=CONFIG.get("stability_plot_mode", "mean"),
+            plot_levels=CONFIG.get("stability_plot_levels", [None]),
+            compute_levels=CONFIG.get("stability_compute_levels", None),
+            cross_dtype_normalization=False,
+            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.3),
+            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
+        )
+
+        # ── 3B: stability threshold — cross-dtype combined ───────────
+        run_stability_investigation(
+            phenotypes=phenotypes,
+            output_dir=_3b_dir,
+            plot_only=CONFIG.get("investigations_plot_only", False),
+            normalization_modes=CONFIG.get("stability_normalization_modes", ["full+filter_only"]),
+            plot_mode=CONFIG.get("stability_plot_mode", "mean"),
+            plot_levels=CONFIG.get("stability_plot_levels", [None]),
+            compute_levels=CONFIG.get("stability_compute_levels", None),
+            cross_dtype_normalization=True,
+            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.3),
+            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
+        )
+
+        # ── 3C: distribution approach ─────────────────────────────────
+        run_distribution_investigation(
+            phenotypes=phenotypes,
+            output_dir=_3c_dir,
+            plot_only=CONFIG.get("investigations_plot_only", False),
+            stability_percentile_metagenomics=CONFIG.get("stability_percentile_global_metagenomics", 0.1),
+            stability_percentile_amplicon=CONFIG.get("stability_percentile_global_amplicon", 0.3),
+            min_size=CONFIG.get("min_samples_per_dataset", 550),
+            taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
+            taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
+            cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
+            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.3),
+            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
+        )
+        _delta_src = _3c_dir / "delta_tests.csv"
+        if _delta_src.exists():
+            _shutil.copy(_delta_src, SUPP_TABLES_BASE / "figure_3C_statistics.csv")
+            print(f"  Saved figure_3C_statistics.csv → {SUPP_TABLES_BASE / 'figure_3C_statistics.csv'}")
+
+        # ── Assemble figure 3 ─────────────────────────────────────────
+        _thresh_3b = {
+            "Metagenomics": CONFIG.get("stability_percentile_global_metagenomics", 0.1),
+            "Amplicon":     CONFIG.get("stability_percentile_global_amplicon",     0.3),
+            "All datasets": CONFIG.get("stability_percentile_global_combined",     0.3),
+            "Combined":     CONFIG.get("stability_percentile_global_combined",     0.3),
+        }
         fig = assemble_figure3(
             path_3a=FIGURES_BASE / "figure_3" / "3a" / "schematic.png",
-            investigation_dir_3b=str(FIGURES_BASE / "figure_3" / "3b"),
-            investigation_dir_3c=str(FIGURES_BASE / "figure_3" / "3c"),
+            investigation_dir_3b=str(_3b_dir),
+            investigation_dir_3c=str(_3c_dir),
             data_root_3d=str(PROJECT_ROOT / CONFIG.get("data_folder", "Data")),
             phenotypes_3d=phenotypes,
             normalization_approach=CONFIG.get("normalization_approach"),
             path_3e=FIGURES_BASE / "figure_3" / "3e" / "panel_e.png",
+            thresholds_3b=_thresh_3b,
         )
         fig.savefig(FIG3_DIR / "figure3.pdf", bbox_inches="tight")
         plt.close(fig)
         print("  Saved Figure 3")
 
-        # ── Supplementary figure 5: 3D PCA for all phenotypes ───────
+        # ── Supplementary figure 5: 3D PCA for all phenotypes ────────
         _supp5_dir = SUPP_FIGURES_BASE / "supp_5"
         _supp5_dir.mkdir(parents=True, exist_ok=True)
         run_figure3d(
@@ -597,15 +766,15 @@ def main():
         _supp4_dir.mkdir(parents=True, exist_ok=True)
         run_stability_investigation(
             phenotypes=phenotypes,
-            output_dir=FIGURES_BASE / "figure_3" / "3b",
+            output_dir=_3b_dir,
             figures_dir=_supp4_dir,
             plot_only=True,
-            dtype_filter=CONFIG.get("stability_dtype_filter", None),
+            dtype_filter=_dtype_filter,
             normalization_modes=["filter_only"],
             plot_mode=CONFIG.get("stability_plot_mode", "combined"),
             plot_levels=[None, "g", "gs"],
-            cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
-            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
+            cross_dtype_normalization=False,
+            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.3),
             taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         )
 
@@ -749,6 +918,12 @@ def main():
             taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         )
         print_auc_summary_table(dist_dir)
+
+        _delta_src = dist_dir / "delta_tests.csv"
+        if _delta_src.exists():
+            import shutil
+            shutil.copy(_delta_src, SUPP_TABLES_BASE / "figure_3C_statistics.csv")
+            print(f"  Saved Figure 3C statistics → {SUPP_TABLES_BASE / 'figure_3C_statistics.csv'}")
 
         # Combined summary figure — produced whenever both per-dtype and
         # cross-dtype result directories exist (regardless of which was just run)

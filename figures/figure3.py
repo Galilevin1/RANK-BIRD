@@ -136,6 +136,7 @@ def plot_figure3b(
     force_single_row: bool = False,
     stacked: bool = False,
     prefer_filter_only: bool = False,
+    thresholds: dict = None,
 ) -> plt.Figure:
     """
     Draw the stability threshold investigation grid directly onto axes.
@@ -188,23 +189,22 @@ def plot_figure3b(
                     break
 
     # ── Load CSVs — cross-dtype Combined ─────────────────────
-    if comb_dir.exists():
-        for level, _ in LEVELS:
-            base = f"combined_{level or 'all'}"
-            cp = comb_dir / f"microbe_counts_{base}.csv"
-            if cp.exists():
-                count_store[(level, "Combined")] = pd.read_csv(cp)
-            op = comb_dir / f"original_auc_{base}.csv"
-            if op.exists():
-                orig_store[(level, "Combined")] = pd.read_csv(op).iloc[0].to_dict()
-            _suffixes = (("_filter_only_raw", "_filter_only", "_full_raw", "_full")
-                         if prefer_filter_only
-                         else ("_full_raw", "_full", "_filter_only_raw", "_filter_only"))
-            for suffix in _suffixes:
-                candidate = comb_dir / f"auc_sweep_{base}{suffix}.csv"
-                if candidate.exists():
-                    raw_store[(level, "Combined")] = pd.read_csv(candidate)
-                    break
+    for level, _ in LEVELS:
+        base = f"combined_{level or 'all'}"
+        cp = inv_dir / f"microbe_counts_{base}.csv"
+        if cp.exists():
+            count_store[(level, "Combined")] = pd.read_csv(cp)
+        op = inv_dir / f"original_auc_{base}.csv"
+        if op.exists():
+            orig_store[(level, "Combined")] = pd.read_csv(op).iloc[0].to_dict()
+        _suffixes = (("_filter_only_raw", "_filter_only", "_full_raw", "_full")
+                     if prefer_filter_only
+                     else ("_full_raw", "_full", "_filter_only_raw", "_filter_only"))
+        for suffix in _suffixes:
+            candidate = inv_dir / f"auc_sweep_{base}{suffix}.csv"
+            if candidate.exists():
+                raw_store[(level, "Combined")] = pd.read_csv(candidate)
+                break
 
     # ── Build panel_data ──────────────────────────────────────
     panel_data = {}
@@ -288,8 +288,8 @@ def plot_figure3b(
         axes = [[fig.add_subplot(gs[r, c]) for c in range(grid_ncols)] for r in range(grid_nrows)]
 
     _DTYPE_DISPLAY = {
-        "Metagenomics": "Metagenomics",
-        "Amplicon":     "Amplicon",
+        "Metagenomics": "WGS",
+        "Amplicon":     "16S",
         "All datasets": "All dtypes",
         "Combined":     "Cross dtypes",
     }
@@ -311,13 +311,14 @@ def plot_figure3b(
             continue
         sweep_df, count_df, orig_auc, fo_df = data
         _title = _DTYPE_DISPLAY.get(display_dtype, display_dtype)
+        _thresh_map = thresholds if thresholds is not None else _BEST_THRESHOLDS
         result = _plot_sweep_panel(
             sub_ax, sweep_df, count_df,
             title=_title,
             original_auc=orig_auc,
             filter_only_df=fo_df,
             plot_mode=plot_mode,
-            threshold_percentile=_BEST_THRESHOLDS.get(display_dtype),
+            threshold_percentile=_thresh_map.get(display_dtype),
             show_left_yticks=(grid_c == 0),
             show_right_yticks=(grid_c == grid_ncols - 1),
         )
@@ -450,7 +451,7 @@ def plot_figure3c(investigation_dir: str, ax=None, stacked: bool = False) -> plt
 
     _panel_kwargs = dict(
         label_fontsize=104, title_fontsize=96,
-        tick_fontsize=88, legend_fontsize=104,
+        tick_fontsize=88, legend_fontsize=80,
         box_width=0.75, dot_size=8,
     )
 
@@ -462,13 +463,16 @@ def plot_figure3c(investigation_dir: str, ax=None, stacked: bool = False) -> plt
             if (dtype, a) in all_results and not all_results[(dtype, a)].empty
         ]
         if frames:
-            _draw_panel(sub_ax, pd.concat(frames, ignore_index=True), title=dtype,
+            _DTYPE_LABEL_3C = {"Metagenomics": "WGS", "Amplicon": "16S"}
+            _draw_panel(sub_ax, pd.concat(frames, ignore_index=True),
+                        title=_DTYPE_LABEL_3C.get(dtype, dtype),
                         **_panel_kwargs)
             lgnd = sub_ax.get_legend()
             if lgnd:
                 lgnd.remove()
         else:
-            sub_ax.set_title(f"{dtype} — no data", fontsize=11)
+            _DTYPE_LABEL_3C = {"Metagenomics": "WGS", "Amplicon": "16S"}
+            sub_ax.set_title(f"{_DTYPE_LABEL_3C.get(dtype, dtype)} — no data", fontsize=11)
 
     # ── All datasets panel (Metagenomics + Amplicon pooled) ───
     combined_df = _make_combined_df(all_results, dtypes)
@@ -532,6 +536,149 @@ def run_figure3c(investigation_dir: str, figures_dir: str) -> None:
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print("  Saved Figure 3C")
+
+
+def run_figure3c_stats_table(
+    investigation_dir: str,
+    output_path: str,
+) -> Optional[pd.DataFrame]:
+    """
+    Wilcoxon signed-rank test comparing Original vs RANK-BIRD AUC.
+
+    Iterates over every protocol × dtype combination:
+      protocols : LODO, Internal Validation, Within Learning
+      dtypes    : Metagenomics, Amplicon, All (pooled), Combined (if available)
+
+    For each cell:
+      - Aggregate per phenotype (mean + median AUC across datasets)
+      - Pair phenotypes present in both approaches
+      - Run scipy.stats.wilcoxon (two-sided)
+    Then apply Benjamini-Hochberg FDR across all rows.
+
+    Columns: dtype, protocol, n_phenotypes,
+             mean_auc_original, mean_auc_rankbird, delta_mean,
+             median_auc_original, median_auc_rankbird, delta_median,
+             wilcoxon_statistic, p_value, p_value_fdr
+    """
+    from scipy.stats import wilcoxon
+    from statsmodels.stats.multitest import multipletests
+
+    inv_dir  = Path(investigation_dir)
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    base_dtypes = ["Metagenomics", "Amplicon"]
+    keep        = ["original", "rankbird"]
+    protocols   = ["LODO", "Internal Validation", "Within Learning"]
+
+    # ── Load per-dtype CSVs ───────────────────────────────────
+    raw: dict = {}
+    for dtype in base_dtypes:
+        for approach in keep:
+            csv_p = inv_dir / f"results_{dtype.lower()}_{approach}.csv"
+            if csv_p.exists():
+                df = pd.read_csv(csv_p)
+                df["auc"] = pd.to_numeric(df["auc"], errors="coerce")
+                raw[(dtype, approach)] = df
+            else:
+                print(f"  [stats] Missing {csv_p.name} — skipping")
+
+    has_cross = all((inv_dir / f"results_combined_{a}.csv").exists() for a in keep)
+    if has_cross:
+        for approach in keep:
+            df = pd.read_csv(inv_dir / f"results_combined_{approach}.csv")
+            df["auc"] = pd.to_numeric(df["auc"], errors="coerce")
+            raw[("Combined", approach)] = df
+
+    def _phenotype_stats(df: pd.DataFrame, proto: str):
+        """Return (mean_per_phenotype, median_per_phenotype) Series for a protocol."""
+        sub = df[df["protocol"] == proto] if "protocol" in df.columns else df
+        grp = sub.groupby("phenotype")["auc"]
+        return grp.mean().dropna(), grp.median().dropna()
+
+    def _build_row(dtype_label: str, proto: str,
+                   orig_df: pd.DataFrame, rb_df: pd.DataFrame) -> dict:
+        orig_mean, orig_med = _phenotype_stats(orig_df, proto)
+        rb_mean,   rb_med   = _phenotype_stats(rb_df,   proto)
+        common = orig_mean.index.intersection(rb_mean.index)
+        n = len(common)
+        base = {"dtype": dtype_label, "protocol": proto, "n_phenotypes": n}
+        if n < 2:
+            return {**base,
+                    "mean_auc_original": float("nan"), "mean_auc_rankbird": float("nan"),
+                    "delta_mean": float("nan"),
+                    "median_auc_original": float("nan"), "median_auc_rankbird": float("nan"),
+                    "delta_median": float("nan"),
+                    "wilcoxon_statistic": float("nan"), "p_value": float("nan")}
+        o_m = orig_mean[common].values
+        r_m = rb_mean[common].values
+        o_med = orig_med.reindex(common).values
+        r_med = rb_med.reindex(common).values
+        diff = r_m - o_m
+        if (diff == 0).all():
+            stat, p = float("nan"), float("nan")
+        else:
+            stat, p = wilcoxon(diff, alternative="two-sided")
+        return {**base,
+                "mean_auc_original":   float(o_m.mean()),
+                "mean_auc_rankbird":   float(r_m.mean()),
+                "delta_mean":          float(r_m.mean() - o_m.mean()),
+                "median_auc_original": float(np.nanmedian(o_med)),
+                "median_auc_rankbird": float(np.nanmedian(r_med)),
+                "delta_median":        float(np.nanmedian(r_med) - np.nanmedian(o_med)),
+                "wilcoxon_statistic":  float(stat),
+                "p_value":             float(p)}
+
+    rows = []
+    for proto in protocols:
+        # Metagenomics and Amplicon
+        for dtype in base_dtypes:
+            if (dtype, "original") in raw and (dtype, "rankbird") in raw:
+                rows.append(_build_row(dtype, proto,
+                                       raw[(dtype, "original")],
+                                       raw[(dtype, "rankbird")]))
+
+        # All pooled
+        orig_frames = [raw[(d, "original")] for d in base_dtypes if (d, "original") in raw]
+        rb_frames   = [raw[(d, "rankbird")] for d in base_dtypes if (d, "rankbird") in raw]
+        if orig_frames and rb_frames:
+            rows.append(_build_row("All", proto,
+                                   pd.concat(orig_frames, ignore_index=True),
+                                   pd.concat(rb_frames,   ignore_index=True)))
+
+        # Combined cross-dtype
+        if has_cross and ("Combined", "original") in raw and ("Combined", "rankbird") in raw:
+            rows.append(_build_row("Combined", proto,
+                                   raw[("Combined", "original")],
+                                   raw[("Combined", "rankbird")]))
+
+    if not rows:
+        print("  [stats] No data found — table not saved")
+        return None
+
+    result_df = pd.DataFrame(rows)
+
+    # ── Benjamini-Hochberg FDR across all rows ────────────────
+    valid_mask = result_df["p_value"].notna()
+    fdr = np.full(len(result_df), float("nan"))
+    if valid_mask.any():
+        _, fdr_vals, _, _ = multipletests(
+            result_df.loc[valid_mask, "p_value"].values,
+            method="fdr_bh",
+        )
+        fdr[valid_mask.values] = fdr_vals
+    result_df["p_value_fdr"] = fdr
+
+    col_order = [
+        "dtype", "protocol", "n_phenotypes",
+        "mean_auc_original", "mean_auc_rankbird", "delta_mean",
+        "median_auc_original", "median_auc_rankbird", "delta_median",
+        "wilcoxon_statistic", "p_value", "p_value_fdr",
+    ]
+    result_df = result_df[col_order]
+    result_df.to_csv(out_path, index=False, float_format="%.4f")
+    print(f"  Saved Figure 3C stats table → {out_path}")
+    return result_df
 
 
 # ─────────────────────────────────────────────────────────────
@@ -627,10 +774,12 @@ def plot_figure3d(
                      transform=axes[1].transAxes, fontsize=11, color="red")
 
     # ── Shared legend ──────────────────────────────────────────
+    _DTYPE_LABEL_3D = {"Metagenomics": "WGS", "Amplicon": "16S"}
     legend_handles = [
         plt.Line2D([0], [0], marker="o", color="w",
                    markerfacecolor=_DTYPE_COLORS.get(d, "#888"),
-                   markeredgecolor="none", markersize=36, label=d)
+                   markeredgecolor="none", markersize=36,
+                   label=_DTYPE_LABEL_3D.get(d, d))
         for d in dtypes_present
     ] + [
         plt.Line2D([0], [0], marker="o", color="w",
@@ -722,6 +871,7 @@ def assemble_figure3(
     phenotype_name_3d: str = "PD",
     path_3e: Optional[Path] = None,
     figsize: tuple = (130, 100),
+    thresholds_3b: dict = None,
 ) -> plt.Figure:
     """
     Assemble Figure 3 panels into one combined figure.
@@ -816,7 +966,8 @@ def assemble_figure3(
                                    plot_levels=[None],
                                    plot_mode="mean",
                                    stacked=True,
-                                   prefer_filter_only=True)
+                                   prefer_filter_only=True,
+                                   thresholds=thresholds_3b)
             _buf  = _io.BytesIO()
             fig_b.savefig(_buf, dpi=150, bbox_inches="tight",
                           facecolor=fig_b.get_facecolor())
