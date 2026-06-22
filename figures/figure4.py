@@ -295,7 +295,7 @@ def assemble_figure4(
     figure2d_data: Optional[pd.DataFrame] = None,
     figure2d_norm_data: Optional[pd.DataFrame] = None,
     data_dir_4d: Optional[Path] = None,
-    figsize: tuple = (190, 162),
+    figsize: tuple = (120, 93),
 ) -> plt.Figure:
     """
     Assemble Figure 4 panels.
@@ -343,24 +343,24 @@ def assemble_figure4(
         left=0.05, right=0.97, top=0.84, bottom=0.04,
     )
 
-    # Row 0: A (left, narrow) | D (right, broader)
+    # Row 0: A (left, broader) | D (right)
     gs_row0 = mgridspec.GridSpecFromSubplotSpec(
         1, 2, subplot_spec=outer[0],
-        width_ratios=[1.0, 1.7], wspace=0.28,
+        width_ratios=[1.5, 1.7], wspace=0.28,
     )
     # A: left of row 0 → 2 stacked rows (orig | norm)
     gs_a = mgridspec.GridSpecFromSubplotSpec(
-        2, 1, subplot_spec=gs_row0[0, 0], hspace=0.25,
+        2, 1, subplot_spec=gs_row0[0, 0], hspace=0.45,
     )
     ax_a_orig = fig.add_subplot(gs_a[0])
     ax_a_norm = fig.add_subplot(gs_a[1])
     # D: right of row 0 — same height as A, legend floats above in GridSpec margin
     ax_d_host = fig.add_subplot(gs_row0[0, 1])
 
-    # Row 1: B (left, broad) | C (right, narrower)
+    # Row 1: B (left) | C (right, broader)
     gs_row1 = mgridspec.GridSpecFromSubplotSpec(
         1, 2, subplot_spec=outer[1],
-        width_ratios=[1.6, 0.9], wspace=0.28,
+        width_ratios=[1.6, 1.3], wspace=0.28,
     )
     # B: left of row 1 → 2 stacked rows (orig | norm)
     gs_b = mgridspec.GridSpecFromSubplotSpec(
@@ -393,7 +393,7 @@ def assemble_figure4(
             show_legend=True,
             suppress_xlabel=True,
             inner_width_ratios=[2.0, 1.5],
-            fontsize_scale=1.5,
+            fontsize_scale=0.75,
             legend_fontsize_scale=0.45,
         )
     except Exception as e:
@@ -410,7 +410,7 @@ def assemble_figure4(
             show_legend=False,
             suppress_xlabel=False,
             inner_width_ratios=[2.0, 1.5],
-            fontsize_scale=1.5,
+            fontsize_scale=0.75,
         )
     except Exception as e:
         _placeholder(ax_a_norm, f"4A (normalized) error:\n{e}")
@@ -423,12 +423,12 @@ def assemble_figure4(
             dataset_names=list(dataset_names),
             phenotype_name="",
             ax=ax_b_orig,
-            fontsize_scale=1.5,
+            fontsize_scale=0.75,
         )
     except Exception as e:
         _placeholder(ax_b_orig, f"4B (original) error:\n{e}")
     ax_b_orig.text(-0.03, 1.02, "B", transform=ax_b_orig.transAxes,
-                   fontsize=200, fontweight="bold", va="bottom", ha="right", clip_on=False)
+                   fontsize=150, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     try:
         plot_figure2c(
@@ -437,7 +437,7 @@ def assemble_figure4(
             dataset_names=norm_names,
             phenotype_name="",
             ax=ax_b_norm,
-            fontsize_scale=1.5,
+            fontsize_scale=0.75,
         )
     except Exception as e:
         _placeholder(ax_b_norm, f"4B (normalized) error:\n{e}")
@@ -446,7 +446,7 @@ def assemble_figure4(
     _pos_c = ax_c_orig.get_position()
     if figure2d_data is not None and not figure2d_data.empty:
         try:
-            plot_figure2d_ks_bars(figure2d_data, ax=ax_c_orig, fontsize_scale=1.5)
+            plot_figure2d_ks_bars(figure2d_data, ax=ax_c_orig, fontsize_scale=0.72)
             ax_c_orig.set_title("")
         except Exception as e:
             _placeholder(ax_c_orig, f"4C (original) error:\n{e}")
@@ -455,7 +455,7 @@ def assemble_figure4(
 
     if figure2d_norm_data is not None and not figure2d_norm_data.empty:
         try:
-            plot_figure2d_ks_bars(figure2d_norm_data, ax=ax_c_norm, fontsize_scale=1.5)
+            plot_figure2d_ks_bars(figure2d_norm_data, ax=ax_c_norm, fontsize_scale=0.72)
             ax_c_norm.set_title("")
         except Exception as e:
             _placeholder(ax_c_norm, f"4C (normalized) error:\n{e}")
@@ -473,7 +473,7 @@ def assemble_figure4(
         lgnd_c.remove()
 
     fig.text(_pos_c.x0 - 0.02, _pos_c.y1 + 0.005, "C",
-             fontsize=200, fontweight="bold", va="bottom", ha="right", clip_on=False)
+             fontsize=150, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel D: distribution approach (big text, shared legend) ─
     _pos_d = ax_d_host.get_position()
@@ -483,8 +483,8 @@ def assemble_figure4(
         try:
             plot_figure4d(
                 base_dir=data_dir_4d, ax=ax_d_host,
-                label_fontsize=160, title_fontsize=168,
-                tick_fontsize=158, legend_fontsize=148,
+                label_fontsize=99, title_fontsize=97,
+                tick_fontsize=103, legend_fontsize=75,
                 panel_gap=0.030, n_cols=2,
             )
         except Exception as e:
@@ -514,10 +514,10 @@ def assemble_figure4(
 
     # Letter D at the start of the legend row; A on the same y
     fig.text(_pos_d.x0 - 0.01, _legend_y, "D",
-             fontsize=200, fontweight="bold", va="center", ha="right", clip_on=False)
+             fontsize=150, fontweight="bold", va="center", ha="right", clip_on=False)
     _pos_a = ax_a_orig.get_position()
     fig.text(_pos_a.x0 - 0.01, _legend_y, "A",
-             fontsize=200, fontweight="bold", va="center", ha="right", clip_on=False)
+             fontsize=150, fontweight="bold", va="center", ha="right", clip_on=False)
 
     if _legend_handles:
         _n_cols = (len(_legend_handles) + 1) // 2  # 2 rows
@@ -526,7 +526,7 @@ def assemble_figure4(
             loc="upper left",
             bbox_to_anchor=(_pos_d.x0, _legend_y),
             ncol=_n_cols,
-            fontsize=168, framealpha=0.9,
+            fontsize=84, framealpha=0.9,
         )
 
     return fig

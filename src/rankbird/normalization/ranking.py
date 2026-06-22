@@ -73,19 +73,16 @@ def relu_normalize(
     threshold: float = RELU_THRESHOLD,
 ) -> pd.DataFrame:
     """
-    Rank-based hard threshold:
-      - top `threshold` fraction by rank → keep original abundance value
-      - bottom (1 − threshold) fraction  → set to 0
+    Rank-based hard threshold: rank each column to [0, 1] to decide which
+    samples to keep, but return the original abundance value (not the rank):
+      - samples with rank >= threshold → keep original abundance
+      - samples with rank < threshold  → set to 0
     """
+    ranked = rank_normalize(X)
     result = X.copy().astype(float)
-    N = len(X)
-    n_keep = max(1, int(np.ceil(N * threshold)))
     for col in X.columns:
-        x = X[col].values
-        sorted_idx = np.argsort(-x)
-        keep_mask = np.zeros(N, dtype=bool)
-        keep_mask[sorted_idx[:n_keep]] = True
-        result[col] = np.where(keep_mask, x, 0.0)
+        r = ranked[col].values
+        result[col] = np.where(r >= threshold, X[col].values, 0.0)
     return result
 
 

@@ -90,8 +90,13 @@ def _umap_scatter(
     targets: np.ndarray,
     dtypes: np.ndarray,
     title: str,
+    dataset_labels: Optional[np.ndarray] = None,
+    dataset_color_map: Optional[dict] = None,
+    label_fontsize: int = 72,
+    title_fontsize: int = 76,
+    tick_fontsize: int = 60,
 ) -> None:
-    """Run t-SNE on X and draw scatter. color=dtype, black border=case samples."""
+    """Run t-SNE on X and draw scatter. Each dataset gets a distinct shade: blue=WGS, red=16S."""
     from sklearn.preprocessing import StandardScaler
     from sklearn.manifold import TSNE
     reducer = TSNE(n_components=2, random_state=42, perplexity=min(30, len(X) - 1))
@@ -100,26 +105,43 @@ def _umap_scatter(
     Xs     = StandardScaler().fit_transform(X.fillna(0))
     coords = reducer.fit_transform(Xs)
 
-    for dtype in sorted(set(dtypes)):
-        color = _DTYPE_COLORS.get(dtype, "#888888")
-        mask_d = dtypes == dtype
-        for tgt in sorted(set(targets)):
-            mask = mask_d & (targets == tgt)
-            if mask.sum() == 0:
-                continue
-            edge  = _CASE_EDGE if int(tgt) == 1 else "none"
-            lw    = 0.7 if int(tgt) == 1 else 0
-            ax.scatter(
-                coords[mask, 0], coords[mask, 1],
-                c=color, marker="o",
-                s=18, alpha=0.65,
-                edgecolors=edge, linewidths=lw,
-            )
+    if dataset_labels is not None and dataset_color_map is not None:
+        for ds in sorted(set(dataset_labels)):
+            color  = dataset_color_map.get(ds, "#888888")
+            mask_d = dataset_labels == ds
+            for tgt in sorted(set(targets)):
+                mask = mask_d & (targets == tgt)
+                if mask.sum() == 0:
+                    continue
+                edge = _CASE_EDGE if int(tgt) == 1 else "none"
+                lw   = 0.7 if int(tgt) == 1 else 0
+                ax.scatter(
+                    coords[mask, 0], coords[mask, 1],
+                    color=color, marker="o",
+                    s=100, alpha=0.65,
+                    edgecolors=edge, linewidths=lw,
+                )
+    else:
+        for dtype in sorted(set(dtypes)):
+            color  = _DTYPE_COLORS.get(dtype, "#888888")
+            mask_d = dtypes == dtype
+            for tgt in sorted(set(targets)):
+                mask = mask_d & (targets == tgt)
+                if mask.sum() == 0:
+                    continue
+                edge = _CASE_EDGE if int(tgt) == 1 else "none"
+                lw   = 0.7 if int(tgt) == 1 else 0
+                ax.scatter(
+                    coords[mask, 0], coords[mask, 1],
+                    c=color, marker="o",
+                    s=100, alpha=0.65,
+                    edgecolors=edge, linewidths=lw,
+                )
 
-    ax.set_xlabel(x_label, fontsize=72, labelpad=4)
-    ax.set_ylabel(y_label, fontsize=72, labelpad=4)
-    ax.set_title(title, fontsize=76, fontweight="bold")
-    ax.tick_params(labelsize=60)
+    ax.set_xlabel(x_label, fontsize=label_fontsize, labelpad=4)
+    ax.set_ylabel(y_label, fontsize=label_fontsize, labelpad=4)
+    ax.set_title(title, fontsize=title_fontsize, fontweight="bold")
+    ax.tick_params(labelsize=tick_fontsize)
     ax.margins(0.05)
 
 
@@ -508,10 +530,17 @@ def plot_figure3c(investigation_dir: str, ax=None, stacked: bool = False) -> plt
             sub_ax.set_xlabel("")
         axes[-1].set_xlabel("Protocol", fontsize=96, fontweight="bold")
     else:
-        # xlabel on panel nearest center; y-axis only on rightmost panel
         for sub_ax in axes:
             sub_ax.set_xlabel("")
-        axes[n_panels // 2].set_xlabel("Protocol", fontsize=118, fontweight="bold")
+        if _standalone:
+            axes[n_panels // 2].set_xlabel("Protocol", fontsize=118, fontweight="bold")
+        else:
+            # Center "Protocol" across the full 3C area using a figure-level text
+            _all_pos = [a.get_position() for a in axes]
+            _cx = (_all_pos[0].x0 + _all_pos[-1].x1) / 2
+            _cy = _all_pos[0].y0 - 0.04
+            fig.text(_cx, _cy, "Protocol", fontsize=118, fontweight="bold",
+                     ha="center", va="top")
         for sub_ax in axes[1:]:
             sub_ax.set_ylabel("")
             sub_ax.tick_params(axis="y", left=False, labelleft=False)
@@ -543,7 +572,7 @@ def run_figure3c_stats_table(
     output_path: str,
 ) -> Optional[pd.DataFrame]:
     """
-    Wilcoxon signed-rank test comparing Original vs RANK-BIRD AUC.
+    Wilcoxon signed-rank test comparing Original vs CIFAR AUC.
 
     Iterates over every protocol × dtype combination:
       protocols : LODO, Internal Validation, Within Learning
@@ -596,6 +625,45 @@ def run_figure3c_stats_table(
         grp = sub.groupby("phenotype")["auc"]
         return grp.mean().dropna(), grp.median().dropna()
 
+    def _anova_row(orig_df: pd.DataFrame, rb_df: pd.DataFrame,
+                   proto: str, common_phenotypes) -> dict:
+        """Two-way ANOVA: auc ~ C(phenotype) + C(approach), Type II.
+        Uses dataset-level AUC values (not per-phenotype means) so that
+        within-cell replication provides the residual error term."""
+        from statsmodels.formula.api import ols
+        from statsmodels.stats.anova import anova_lm
+
+        _nan = {"anova_F_approach": float("nan"), "anova_p_approach": float("nan"),
+                "anova_F_phenotype": float("nan"), "anova_p_phenotype": float("nan"),
+                "anova_df_approach": float("nan"), "anova_df_phenotype": float("nan"),
+                "anova_df_residual": float("nan")}
+        try:
+            has_proto = "protocol" in orig_df.columns
+            sub_o = (orig_df[orig_df["protocol"] == proto] if has_proto else orig_df).copy()
+            sub_r = (rb_df[rb_df["protocol"]   == proto] if has_proto else rb_df).copy()
+            sub_o = sub_o[sub_o["phenotype"].isin(common_phenotypes)][["phenotype", "auc"]].assign(approach="original")
+            sub_r = sub_r[sub_r["phenotype"].isin(common_phenotypes)][["phenotype", "auc"]].assign(approach="CIFAR")
+            adf = pd.concat([sub_o, sub_r], ignore_index=True)
+            adf["auc"] = pd.to_numeric(adf["auc"], errors="coerce")
+            adf = adf.dropna(subset=["auc"])
+            n_pheno = adf["phenotype"].nunique()
+            # Need at least 2 phenotypes, 2 approaches, and residual df > 0
+            if n_pheno < 2 or adf["approach"].nunique() < 2 or len(adf) <= n_pheno + 1:
+                return _nan
+            model = ols("auc ~ C(phenotype) + C(approach)", data=adf).fit()
+            tbl   = anova_lm(model, typ=2)
+            return {
+                "anova_F_approach":   float(tbl.loc["C(approach)",  "F"]),
+                "anova_p_approach":   float(tbl.loc["C(approach)",  "PR(>F)"]),
+                "anova_F_phenotype":  float(tbl.loc["C(phenotype)", "F"]),
+                "anova_p_phenotype":  float(tbl.loc["C(phenotype)", "PR(>F)"]),
+                "anova_df_approach":  float(tbl.loc["C(approach)",  "df"]),
+                "anova_df_phenotype": float(tbl.loc["C(phenotype)", "df"]),
+                "anova_df_residual":  float(tbl.loc["Residual",     "df"]),
+            }
+        except Exception:
+            return _nan
+
     def _build_row(dtype_label: str, proto: str,
                    orig_df: pd.DataFrame, rb_df: pd.DataFrame) -> dict:
         orig_mean, orig_med = _phenotype_stats(orig_df, proto)
@@ -603,13 +671,18 @@ def run_figure3c_stats_table(
         common = orig_mean.index.intersection(rb_mean.index)
         n = len(common)
         base = {"dtype": dtype_label, "protocol": proto, "n_phenotypes": n}
+        _nan_anova = {"anova_F_approach": float("nan"), "anova_p_approach": float("nan"),
+                      "anova_F_phenotype": float("nan"), "anova_p_phenotype": float("nan"),
+                      "anova_df_approach": float("nan"), "anova_df_phenotype": float("nan"),
+                      "anova_df_residual": float("nan")}
         if n < 2:
             return {**base,
-                    "mean_auc_original": float("nan"), "mean_auc_rankbird": float("nan"),
+                    "mean_auc_original": float("nan"), "mean_auc_cifar": float("nan"),
                     "delta_mean": float("nan"),
-                    "median_auc_original": float("nan"), "median_auc_rankbird": float("nan"),
+                    "median_auc_original": float("nan"), "median_auc_cifar": float("nan"),
                     "delta_median": float("nan"),
-                    "wilcoxon_statistic": float("nan"), "p_value": float("nan")}
+                    "wilcoxon_statistic": float("nan"), "p_value": float("nan"),
+                    **_nan_anova}
         o_m = orig_mean[common].values
         r_m = rb_mean[common].values
         o_med = orig_med.reindex(common).values
@@ -619,15 +692,17 @@ def run_figure3c_stats_table(
             stat, p = float("nan"), float("nan")
         else:
             stat, p = wilcoxon(diff, alternative="two-sided")
+        anova = _anova_row(orig_df, rb_df, proto, common)
         return {**base,
                 "mean_auc_original":   float(o_m.mean()),
-                "mean_auc_rankbird":   float(r_m.mean()),
+                "mean_auc_cifar":      float(r_m.mean()),
                 "delta_mean":          float(r_m.mean() - o_m.mean()),
                 "median_auc_original": float(np.nanmedian(o_med)),
-                "median_auc_rankbird": float(np.nanmedian(r_med)),
+                "median_auc_cifar":    float(np.nanmedian(r_med)),
                 "delta_median":        float(np.nanmedian(r_med) - np.nanmedian(o_med)),
                 "wilcoxon_statistic":  float(stat),
-                "p_value":             float(p)}
+                "p_value":             float(p),
+                **anova}
 
     rows = []
     for proto in protocols:
@@ -659,21 +734,26 @@ def run_figure3c_stats_table(
     result_df = pd.DataFrame(rows)
 
     # ── Benjamini-Hochberg FDR across all rows ────────────────
-    valid_mask = result_df["p_value"].notna()
-    fdr = np.full(len(result_df), float("nan"))
-    if valid_mask.any():
-        _, fdr_vals, _, _ = multipletests(
-            result_df.loc[valid_mask, "p_value"].values,
-            method="fdr_bh",
-        )
-        fdr[valid_mask.values] = fdr_vals
-    result_df["p_value_fdr"] = fdr
+    def _apply_fdr(df, col_in, col_out):
+        mask = df[col_in].notna()
+        fdr  = np.full(len(df), float("nan"))
+        if mask.any():
+            _, vals, _, _ = multipletests(df.loc[mask, col_in].values, method="fdr_bh")
+            fdr[mask.values] = vals
+        df[col_out] = fdr
+
+    _apply_fdr(result_df, "p_value",        "p_value_fdr")
+    _apply_fdr(result_df, "anova_p_approach",  "anova_p_approach_fdr")
+    _apply_fdr(result_df, "anova_p_phenotype", "anova_p_phenotype_fdr")
 
     col_order = [
         "dtype", "protocol", "n_phenotypes",
-        "mean_auc_original", "mean_auc_rankbird", "delta_mean",
-        "median_auc_original", "median_auc_rankbird", "delta_median",
+        "mean_auc_original", "mean_auc_cifar", "delta_mean",
+        "median_auc_original", "median_auc_cifar", "delta_median",
         "wilcoxon_statistic", "p_value", "p_value_fdr",
+        "anova_df_approach", "anova_df_phenotype", "anova_df_residual",
+        "anova_F_approach", "anova_p_approach", "anova_p_approach_fdr",
+        "anova_F_phenotype", "anova_p_phenotype", "anova_p_phenotype_fdr",
     ]
     result_df = result_df[col_order]
     result_df.to_csv(out_path, index=False, float_format="%.4f")
@@ -690,17 +770,27 @@ def plot_figure3d(
     microbiome_dfs_by_dtype: Dict[str, List[pd.DataFrame]],
     target_dfs_by_dtype: Dict[str, List[pd.DataFrame]],
     dataset_names_by_dtype: Dict[str, List[str]],
-) -> plt.Figure:
+    ax_left: Optional[plt.Axes] = None,
+    ax_right: Optional[plt.Axes] = None,
+    parent_fig: Optional[plt.Figure] = None,
+    label_fontsize: int = 72,
+    title_fontsize: int = 76,
+    tick_fontsize: int = 60,
+    legend_fontsize: int = 64,
+) -> Optional[plt.Figure]:
     """
     Two-panel UMAP scatter for one phenotype: Raw (left) | RANK-BIRD (right).
-    Always renders both panels. Color = dtype, black border = case (target=1).
+
+    If ax_left / ax_right are provided, draws directly into those axes (no new
+    figure is created) — use this from assemble_figure3 so text is vector, not
+    a rasterised bitmap.  Otherwise creates and returns a standalone figure.
     """
     from src.rankbird.normalization.pipeline import apply_normalization_pipeline
 
     dtypes_present = [d for d in ["Metagenomics", "Amplicon"]
                       if d in microbiome_dfs_by_dtype]
 
-    all_mb, all_tgt, all_names, all_dtype_labels = [], [], [], []
+    all_mb, all_tgt, all_names, all_dtype_labels, all_ds_labels = [], [], [], [], []
     for dtype in dtypes_present:
         for mb, tgt, name in zip(
             microbiome_dfs_by_dtype[dtype],
@@ -711,16 +801,38 @@ def plot_figure3d(
             all_tgt.append(tgt)
             all_names.append(name)
             all_dtype_labels.extend([dtype] * len(mb))
+            all_ds_labels.extend([name] * len(mb))
 
-    def _build_arrays(mb_list, tgt_list, dtype_labels, common_cols):
+    # Build per-dataset color palette: shades of blue for WGS, shades of red for 16S
+    import matplotlib.cm as _cm
+    dataset_color_map: dict = {}
+    for dtype in dtypes_present:
+        datasets = sorted(dataset_names_by_dtype[dtype])
+        n = len(datasets)
+        cmap = _cm.get_cmap("Blues" if dtype == "Metagenomics" else "Reds")
+        for i, ds in enumerate(datasets):
+            dataset_color_map[ds] = cmap(0.4 + 0.5 * i / max(1, n - 1))
+
+    def _build_arrays(mb_list, tgt_list, dtype_labels, common_cols, ds_labels=None):
         X = pd.concat([df[common_cols] for df in mb_list], axis=0, ignore_index=True)
         tgt_arr = np.concatenate([
             t.iloc[:, 0].values if isinstance(t, pd.DataFrame) else t.values
             for t in tgt_list
         ])
+        if ds_labels is not None:
+            return X, tgt_arr, np.array(dtype_labels), np.array(ds_labels)
         return X, tgt_arr, np.array(dtype_labels)
 
-    fig, axes = plt.subplots(1, 2, figsize=(40, 17))
+    _direct = ax_left is not None and ax_right is not None
+    if _direct:
+        fig   = parent_fig
+        axes  = [ax_left, ax_right]
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(40, 17))
+
+    _scatter_kw = dict(label_fontsize=label_fontsize,
+                       title_fontsize=title_fontsize,
+                       tick_fontsize=tick_fontsize)
 
     # ── Left: raw ─────────────────────────────────────────────
     common_raw = all_mb[0].columns
@@ -730,11 +842,13 @@ def plot_figure3d(
     if len(common_raw) == 0:
         axes[0].text(0.5, 0.5, "No common features (raw)",
                      ha="center", va="center", transform=axes[0].transAxes)
-        axes[0].set_title("Raw", fontsize=24, fontweight="bold")
+        axes[0].set_title("Raw", fontsize=title_fontsize, fontweight="bold")
     else:
-        X_raw, tgt_raw, dt_raw = _build_arrays(
-            all_mb, all_tgt, all_dtype_labels, common_raw)
-        _umap_scatter(axes[0], X_raw, tgt_raw, dt_raw, title="Raw")
+        X_raw, tgt_raw, dt_raw, ds_raw = _build_arrays(
+            all_mb, all_tgt, all_dtype_labels, common_raw, all_ds_labels)
+        _umap_scatter(axes[0], X_raw, tgt_raw, dt_raw, title="Raw",
+                      dataset_labels=ds_raw, dataset_color_map=dataset_color_map,
+                      **_scatter_kw)
 
     # ── Right: RANK-BIRD normalized ────────────────────────────
     print(f"  [3D] Normalizing {phenotype_name} for RANK-BIRD panel ...")
@@ -749,9 +863,11 @@ def plot_figure3d(
                       for n, t in zip(dataset_names_by_dtype[d],
                                       target_dfs_by_dtype[d])}
         norm_dtype_labels = []
+        norm_ds_labels    = []
         norm_tgt_list     = []
         for mb_n, name_n in zip(norm_mb, norm_names):
             norm_dtype_labels.extend([name2dtype.get(name_n, "Unknown")] * len(mb_n))
+            norm_ds_labels.extend([name_n] * len(mb_n))
             norm_tgt_list.append(name2tgt[name_n])
 
         common_norm = norm_mb[0].columns
@@ -761,11 +877,13 @@ def plot_figure3d(
         if len(common_norm) == 0:
             axes[1].text(0.5, 0.5, "No common features (normalized)",
                          ha="center", va="center", transform=axes[1].transAxes)
-            axes[1].set_title("RANK-BIRD", fontsize=24, fontweight="bold")
+            axes[1].set_title("RANK-BIRD", fontsize=title_fontsize, fontweight="bold")
         else:
-            X_norm, tgt_norm, dt_norm = _build_arrays(
-                norm_mb, norm_tgt_list, norm_dtype_labels, common_norm)
-            _umap_scatter(axes[1], X_norm, tgt_norm, dt_norm, title="CIFAR")
+            X_norm, tgt_norm, dt_norm, ds_norm = _build_arrays(
+                norm_mb, norm_tgt_list, norm_dtype_labels, common_norm, norm_ds_labels)
+            _umap_scatter(axes[1], X_norm, tgt_norm, dt_norm, title="CIFAR",
+                          dataset_labels=ds_norm, dataset_color_map=dataset_color_map,
+                          **_scatter_kw)
             axes[1].set_ylabel("")
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -789,12 +907,25 @@ def plot_figure3d(
                    markerfacecolor="#888888", markeredgecolor="none",
                    markersize=36, label="Control (no border)"),
     ]
-    plt.tight_layout(rect=[0, 0, 1, 0.88])
-    plt.subplots_adjust(wspace=0.45)
-    fig.legend(handles=legend_handles, loc="lower center",
-               ncol=len(legend_handles), fontsize=64,
-               framealpha=0.9, bbox_to_anchor=(0.5, 0.90))
-    return fig
+
+    if _direct and parent_fig is not None:
+        _pos_l = axes[0].get_position()
+        _pos_r = axes[1].get_position()
+        _cx = (_pos_l.x0 + _pos_r.x1) / 2
+        _ty = max(_pos_l.y1, _pos_r.y1)
+        parent_fig.legend(handles=legend_handles, loc="lower center",
+                          ncol=len(legend_handles), fontsize=legend_fontsize,
+                          framealpha=0.9,
+                          bbox_to_anchor=(_cx, _ty + 0.015),
+                          bbox_transform=parent_fig.transFigure)
+        return None
+    else:
+        plt.tight_layout(rect=[0, 0, 1, 0.88])
+        plt.subplots_adjust(wspace=0.45)
+        fig.legend(handles=legend_handles, loc="lower center",
+                   ncol=len(legend_handles), fontsize=legend_fontsize,
+                   framealpha=0.9, bbox_to_anchor=(0.5, 0.90))
+        return fig
 
 
 def run_figure3d(
@@ -985,7 +1116,7 @@ def assemble_figure3(
                   "Stability investigation\n(run \"3b\" first to generate CSVs)",
                   ha="center", va="center", fontsize=13, color="#555555",
                   transform=ax_b.transAxes)
-    fig.text(_pos_b.x0 - 0.01, _pos_b.y1 + 0.01, "B",
+    fig.text(_pos_b.x0 - 0.01, _pos_a.y1, "B",
              fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
     # ── Panel C: distribution comparison (row 2, full width) ─
@@ -1033,34 +1164,51 @@ def assemble_figure3(
             except Exception as e:
                 print(f"  [3D] Error loading {pheno_str}: {e}")
 
+    # Draw 3D directly into two sub-axes so text stays vector (not a bitmap)
     ax_d.set_axis_off()
+    _d_mx   = 0.04   # horizontal inset margin (figure fraction)
+    _d_my   = 0.03   # top inset margin (figure fraction)
+    # D has x-tick labels + "t-SNE 1" xlabel below its axes box (~0.028 fig frac),
+    # while E only has tick labels (~0.013 fig frac). Raise D by the difference
+    # so both visible bottoms land at the same level as E's tick-label bottom.
+    _d_yb   = 0.015  # bottom raise (figure fraction)
+    _d_x0   = _pos_d.x0 + _d_mx
+    _d_y0   = _pos_d.y0 + _d_yb
+    _d_wt   = _pos_d.width  - 2 * _d_mx
+    _d_ht   = _pos_d.height - _d_my - _d_yb
+    _d_gap  = 0.015
+    _d_w    = (_d_wt - _d_gap) / 2
+    ax_d_left  = fig.add_axes([_d_x0,              _d_y0, _d_w, _d_ht])
+    ax_d_right = fig.add_axes([_d_x0 + _d_w + _d_gap, _d_y0, _d_w, _d_ht])
+
     if mb_by_dtype:
         try:
-            import io as _io
-            fig_d = plot_figure3d(
+            plot_figure3d(
                 phenotype_name=phenotype_name_3d,
                 microbiome_dfs_by_dtype=mb_by_dtype,
                 target_dfs_by_dtype=tgt_by_dtype,
                 dataset_names_by_dtype=name_by_dtype,
+                ax_left=ax_d_left,
+                ax_right=ax_d_right,
+                parent_fig=fig,
+                label_fontsize=96,
+                title_fontsize=100,
+                tick_fontsize=80,
+                legend_fontsize=80,
             )
-            _buf = _io.BytesIO()
-            fig_d.savefig(_buf, dpi=150, bbox_inches="tight",
-                          facecolor=fig_d.get_facecolor())
-            plt.close(fig_d)
-            _buf.seek(0)
-            img_d = mpimg.imread(_buf)
-            ax_d.imshow(img_d, aspect="auto", interpolation="bilinear")
         except Exception as e:
             import traceback; traceback.print_exc()
             print(f"  [3D] Error: {e}")
-            ax_d.text(0.5, 0.5, f"3D error:\n{e}", ha="center", va="center",
-                      transform=ax_d.transAxes, fontsize=10, color="red")
+            ax_d_left.text(0.5, 0.5, f"3D error:\n{e}", ha="center", va="center",
+                           transform=ax_d_left.transAxes, fontsize=10, color="red")
     else:
-        ax_d.set_facecolor("#F0F0F0")
-        ax_d.text(0.5, 0.5,
-                  f"UMAP scatter — {phenotype_name_3d}\n(no data loaded)",
-                  ha="center", va="center", fontsize=13, color="#555555",
-                  transform=ax_d.transAxes)
+        ax_d_left.set_axis_off()
+        ax_d_right.set_axis_off()
+        ax_d_left.set_facecolor("#F0F0F0")
+        ax_d_left.text(0.5, 0.5,
+                       f"UMAP scatter — {phenotype_name_3d}\n(no data loaded)",
+                       ha="center", va="center", fontsize=13, color="#555555",
+                       transform=ax_d_left.transAxes)
     fig.text(_pos_c.x0 - 0.04, _pos_d.y1 + 0.01, "D",
              fontsize=148, fontweight="bold", va="bottom", ha="right", clip_on=False)
 
@@ -1076,10 +1224,10 @@ def assemble_figure3(
     ax_e.bar(_x + _w / 2, [_dropped.get(c, 0) for c in _cats], _w,
              label="CM", color="#ffbb78", edgecolor="black", linewidth=1.2)
     ax_e.set_xticks(_x)
-    ax_e.set_xticklabels(_cats, fontsize=120)
-    ax_e.set_ylabel("Number of taxa", fontsize=124)
-    ax_e.tick_params(axis="y", labelsize=120)
-    ax_e.legend(fontsize=120)
+    ax_e.set_xticklabels([c.capitalize() for c in _cats], fontsize=88)
+    ax_e.set_ylabel("Number of taxa", fontsize=104)
+    ax_e.tick_params(axis="y", labelsize=88)
+    ax_e.legend(fontsize=80)
     ax_e.spines["top"].set_visible(False)
     ax_e.spines["right"].set_visible(False)
     ax_e.text(-0.03, 1.05, "E", transform=ax_e.transAxes,

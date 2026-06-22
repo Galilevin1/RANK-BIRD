@@ -460,7 +460,7 @@ def plot_figure2a(
         for j in range(n):
             if i > j and not np.isnan(q_mat[i, j]) and q_mat[i, j] < alpha:
                 ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=False,
-                                           edgecolor='black', lw=3))
+                                           edgecolor='black', lw=16))
 
     # Build long-format stats table (lower triangle only)
     stats_rows = []
@@ -608,23 +608,33 @@ def run_figure2b_supp(
     Supplementary: full combined figure per phenotype (ROC curves + LODO barplot
     + zero-count distributions), same layout as the original figure 2.
     Datasets with only one class in target are dropped automatically.
-    Output files: supp_figure2b_<phenotype>_<dtype>.pdf
+    Output files:
+      supp_figure2b_<phenotype>_<dtype>.pdf  — one per phenotype
+      roc_auc_<phenotype>.csv               — one per phenotype (dataset, predictor, auc)
+      roc_auc_all_phenotypes.csv            — unified wide table (phenotype, dataset,
+                                              zero_pct_baseline, lodo_lightgbm)
     """
     from evaluation.data_loading import load_microbiome_datasets_with_targets
 
     out = Path(figures_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    per_pheno_csvs = []   # track CSV paths in order for unified file
+
     for phenotype, dtype in phenotypes:
         pheno_str = f"{phenotype} {dtype}"
         folder    = Path(data_root) / pheno_str
+        csv_path  = out / f"roc_auc_{pheno_str}.csv"
+
         if not folder.exists():
             print(f"  Skipping {pheno_str}: folder not found")
+            per_pheno_csvs.append((pheno_str, csv_path))
             continue
         try:
             mb_dfs, tgt_dfs, ds_names = load_microbiome_datasets_with_targets(str(folder))
         except Exception as e:
             print(f"  Error loading {pheno_str}: {e}")
+            per_pheno_csvs.append((pheno_str, csv_path))
             continue
 
         filtered = [
@@ -634,6 +644,7 @@ def run_figure2b_supp(
         ]
         if not filtered:
             print(f"  Skipping {pheno_str}: no datasets with both classes")
+            per_pheno_csvs.append((pheno_str, csv_path))
             continue
         dropped = set(ds_names) - {t[2] for t in filtered}
         if dropped:
@@ -642,18 +653,52 @@ def run_figure2b_supp(
 
         if len(ds_names) < 2:
             print(f"  Skipping {pheno_str}: need ≥2 datasets after filtering")
+            per_pheno_csvs.append((pheno_str, csv_path))
             continue
 
         safe     = pheno_str.replace(" ", "_")
         out_path = out / f"supp_figure2b_{safe}.pdf"
-        if out_path.exists():
+        if csv_path.exists():
             print(f"  Skipping supp 2B for {pheno_str}: already saved")
+        else:
+            print(f"  Building supp 2B for {pheno_str}")
+            fig, auc_df = plot_figure2b(mb_dfs, tgt_dfs, ds_names, phenotype_name=pheno_str)
+            fig.savefig(out_path, bbox_inches="tight")
+            plt.close(fig)
+            auc_df.to_csv(csv_path, index=False)
+            print(f"  Saved supp 2B for {pheno_str}")
+
+        per_pheno_csvs.append((pheno_str, csv_path))
+
+    # ── Build unified wide table across all phenotypes ────────────────────────
+    all_rows = []
+    for pheno_str, csv_path in per_pheno_csvs:
+        if not csv_path.exists():
             continue
-        print(f"  Building supp 2B for {pheno_str}")
-        fig = _make_figure2(mb_dfs, tgt_dfs, ds_names, pheno_str)
-        fig.savefig(out_path, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  Saved supp 2B for {pheno_str}")
+        try:
+            df = pd.read_csv(csv_path)
+            df.insert(0, "phenotype", pheno_str)
+            all_rows.append(df)
+        except Exception:
+            pass
+
+    if all_rows:
+        long_df  = pd.concat(all_rows, ignore_index=True)
+        wide_df  = long_df.pivot_table(
+            index=["phenotype", "dataset"],
+            columns="predictor",
+            values="auc",
+            aggfunc="first",
+        ).reset_index()
+        wide_df.columns.name = None
+        col_order = ["phenotype", "dataset"] + [
+            c for c in ["zero_pct_baseline", "lodo_lightgbm"]
+            if c in wide_df.columns
+        ]
+        wide_df = wide_df[col_order]
+        unified_path = out / "roc_auc_all_phenotypes.csv"
+        wide_df.to_csv(unified_path, index=False)
+        print(f"  Saved unified AUC table → {unified_path}  ({len(wide_df)} rows)")
 
 
 def compute_figure2d_data(
@@ -1246,10 +1291,10 @@ def plot_figure2c(
     title_fontsize_scale: float = None,
 ) -> plt.Figure:
     """
-    Microbiome feature presence/abundance heatmap (samples × top-varying features).
+    Microbiome feature presence/abundance heatmap (samples × most prevalent features).
 
     Datasets are stacked vertically with separator lines. Features are the
-    top-`max_features` by cross-dataset variance among common microbes.
+    top-`max_features` by prevalence (fraction of samples with non-zero abundance) among common microbes.
     Datasets with only one class in target are dropped before plotting.
     Embeds into an existing axes when ax is provided.
     """
@@ -1295,10 +1340,10 @@ def plot_figure2c(
     pct_sig = 100 * len(sig_fdr) / len(common)
     print(f"  KS (FDR): {len(sig_fdr)}/{len(common)} significant ({pct_sig:.1f}%)")
 
-    # Top features by variance
+    # Top features by prevalence (fraction of samples where microbe is non-zero)
     if len(common) > max_features:
         all_data = pd.concat([df[common] for df in microbiome_dfs], axis=0)
-        common = all_data.var().sort_values(ascending=False).head(max_features).index
+        common = (all_data > 0).mean().sort_values(ascending=False).head(max_features).index
 
     # Z-score combined matrix
     aligned = [df[common] for df in microbiome_dfs]
@@ -1996,7 +2041,7 @@ def run_figure2e_supp(
     figures_dir: str,
 ) -> None:
     """
-    Supplementary 2F: full pairwise-LODO + SHAP analysis figure.
+    Supplementary 2E: full pairwise-LODO + SHAP analysis figure.
     Datasets with only one class (control-only or case-only) are skipped automatically.
     One figure per phenotype saved as supp_figure2e_<phenotype>_<dtype>.pdf.
     """
@@ -2061,9 +2106,9 @@ def run_figure2e_supp(
                 _t.set_fontsize(_t.get_fontsize() * 3)
             _p1 = _ax1.get_position()
             _p2 = _ax2.get_position()
-            _ax2.set_position([_p1.x1 + 0.20, _p2.y0, _p2.width, _p2.height])
+            _ax2.set_position([_p1.x1 + 0.22, _p2.y0, _p2.width, _p2.height])
             _w, _h = fig.get_size_inches()
-            fig.set_size_inches(_w * 1.45, _h)
+            fig.set_size_inches(_w * 1.50, _h)
             fig.savefig(out_path, bbox_inches="tight")
             plt.close(fig)
             print(f"  Saved supp 2F for {pheno_str}")

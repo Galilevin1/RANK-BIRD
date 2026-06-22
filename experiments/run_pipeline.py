@@ -35,6 +35,7 @@ from experiments.investigate_distribution_approach import (
 from evaluation.data_loading import build_papers_auc_df, load_microbiome_datasets_with_targets
 from evaluation.dataset_analysis import run_dataset_analysis
 from evaluation.dataset_quality import run_quality_report
+from evaluation.build_dataset_table import build_dataset_table
 
 from pathlib import Path
 
@@ -89,14 +90,15 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["3"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
-     #                   "2" (combined + all supp), "2b_supp","2c_supp","2d_supp","2f_supp" (supp only)
+    "run_figures": ["3c"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
+     #                   "2" (combined + all supp), "2b_supp","2c_supp","2d_supp","2e_supp" (supp only)
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
      #                   "3","4","5"
     "run_investigations": [],  # "stability_threshold", "stability_characterization", "distribution_approach"
     "investigations_plot_only": True,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
+    "run_dataset_table": False,          # build per-dataset supplementary table (AUCs, demographics, sparsity)
     "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
     "data_folder": "Data",             # "Data" for pipeline phenotypes, "Data_papers" for papers phenotypes
     "preprocessing_scope": "global",   # "local" or "global"
@@ -208,6 +210,15 @@ def main():
             data_root=PROJECT_ROOT / "Data",
             load_fn=load_microbiome_datasets_with_targets,
             output_path=RESULTS_DIR / "dataset_quality.csv",
+        )
+
+    if CONFIG.get("run_dataset_table"):
+        build_dataset_table(
+            phenotypes_pipeline=phenotypes_pipeline,
+            phenotypes_papers=phenotypes_papers,
+            output_path=SUPP_TABLES_BASE / "dataset_overview.csv",
+            data_root=PROJECT_ROOT / CONFIG.get("data_folder", "Data"),
+            project_root=PROJECT_ROOT,
         )
 
     # # ================================
@@ -458,7 +469,7 @@ def main():
             lodo_cache_path=str(_dir / "lodo_aucs_per_dataset.csv"),
         )
 
-    if "2f_supp" in RUN_FIGS:
+    if "2e_supp" in RUN_FIGS:
         _supp3_dir = SUPP_FIGURES_BASE / "supp_3"
         _supp3_dir.mkdir(parents=True, exist_ok=True)
         run_figure2e_supp(
@@ -662,7 +673,7 @@ def main():
         )
         run_figure3c_stats_table(
             investigation_dir=str(_3c_data_dir),
-            output_path=str(SUPP_TABLES_BASE / "figure3c_wilcoxon_stats.csv"),
+            output_path=str(FIGURES_BASE / "figure3c_stats.csv"),
         )
 
     if "3d" in RUN_FIGS:
@@ -677,7 +688,7 @@ def main():
     if "3" in RUN_FIGS:
         import shutil as _shutil
         _3b_dir   = FIGURES_BASE / "figure_3" / "3b"
-        _3c_dir   = FIGURES_BASE / "figure_3" / "3c"
+        _3c_dir   = PROJECT_ROOT / "investigations" / "distribution_approach"
         _dtype_filter = CONFIG.get("stability_dtype_filter", None)
         if isinstance(_dtype_filter, list) and all(d is None or str(d) == "None" for d in _dtype_filter):
             _dtype_filter = None
@@ -711,20 +722,7 @@ def main():
             taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         )
 
-        # ── 3C: distribution approach ─────────────────────────────────
-        run_distribution_investigation(
-            phenotypes=phenotypes,
-            output_dir=_3c_dir,
-            plot_only=CONFIG.get("investigations_plot_only", False),
-            stability_percentile_metagenomics=CONFIG.get("stability_percentile_global_metagenomics", 0.1),
-            stability_percentile_amplicon=CONFIG.get("stability_percentile_global_amplicon", 0.3),
-            min_size=CONFIG.get("min_samples_per_dataset", 550),
-            taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
-            taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
-            cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
-            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.3),
-            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
-        )
+        # ── 3C: read from investigation folder ───────────────────────
         _delta_src = _3c_dir / "delta_tests.csv"
         if _delta_src.exists():
             _shutil.copy(_delta_src, SUPP_TABLES_BASE / "figure_3C_statistics.csv")
@@ -806,13 +804,14 @@ def main():
             except Exception as _e:
                 print(f"  Error loading {_rep_str}: {_e}")
 
-        # Panel 4C: KS fraction data — original and normalized (cached)
+        # Panel 4C: KS fraction data — original reuses figure 2D cache (same computation)
         _fig4_dir = FIGURES_BASE / "figure_4"
         _fig4_dir.mkdir(parents=True, exist_ok=True)
+        _2d_cache = build_figures_dir(FIGURES_BASE, CONFIG, "figure_2", "2d") / "ks_fractions.csv"
         _fig2d_data = compute_figure2d_data(
             phenotypes=phenotypes,
             data_root=str(_data_root_4),
-            cache_path=str(_fig4_dir / "4c_ks_fractions.csv"),
+            cache_path=str(_2d_cache),
         )
         _fig2d_norm_data = compute_figure2d_data(
             phenotypes=phenotypes,
@@ -821,9 +820,8 @@ def main():
             normalization_approach=CONFIG.get("normalization_approach"),
         )
 
-        # Panel 4D: place all distribution CSVs in figures_out/figure_4/4d/
-        _fig4d_dir = _fig4_dir / "4d"
-        _fig4d_dir.mkdir(parents=True, exist_ok=True)
+        # Panel 4D: reads from shared distribution_approach investigation folder
+        _fig4d_dir = PROJECT_ROOT / "investigations" / "distribution_approach"
 
         if _rep_mb:
             fig = assemble_figure4(
@@ -901,8 +899,7 @@ def main():
         )
 
     if "distribution_approach" in CONFIG["run_investigations"]:
-        _combined_suffix = "_combined" if CONFIG.get("cross_dtype_normalization") else ""
-        dist_dir = PROJECT_ROOT / "investigations" / f"distribution_approach{_combined_suffix}"
+        dist_dir = PROJECT_ROOT / "investigations" / "distribution_approach"
         print(f"  [distribution_approach] output dir: {dist_dir.resolve()}")
         run_distribution_investigation(
             phenotypes=phenotypes,
@@ -910,11 +907,10 @@ def main():
             plot_only=CONFIG.get("investigations_plot_only", False),
             stability_percentile_metagenomics=CONFIG.get("stability_percentile_global_metagenomics", 0.25),
             stability_percentile_amplicon=CONFIG.get("stability_percentile_global_amplicon", 0.40),
+            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
             min_size=CONFIG.get("min_samples_per_dataset", 550),
             taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
             taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
-            cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
-            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
             taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         )
         print_auc_summary_table(dist_dir)

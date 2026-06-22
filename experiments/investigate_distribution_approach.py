@@ -74,9 +74,9 @@ APPROACH_LABELS = {
     "original":          "Original",
     "original_filtered": "Filtering",
     "rankbird":          "CIFAR",
-    "ranking":           "Ranking",
-    "ranking_sig":       "Ranking + Sigmoid",
-    "ranking_relu":      "Ranking + Relu",
+    "ranking":           "Rank-Only",
+    "ranking_sig":       "Rank+Sigmoid",
+    "ranking_relu":      "Rank+Relu",
 }
 
 APPROACH_COLORS = {
@@ -418,35 +418,49 @@ def run_statistical_tests(
 
             for a1, a2 in pairs:
                 try:
-                    t_stat, p_raw = ttest_rel(aligned[a1], aligned[a2])
+                    t_stat, p_raw_t = ttest_rel(aligned[a1], aligned[a2])
                 except Exception:
                     continue
-                p_bonf = min(float(p_raw) * n_tests, 1.0)
-                sig    = p_bonf < alpha
+                try:
+                    diffs = aligned[a1] - aligned[a2]
+                    w_stat, p_raw_w = wilcoxon(diffs, alternative="two-sided")
+                except Exception:
+                    w_stat, p_raw_w = float("nan"), float("nan")
+                p_bonf_t = min(float(p_raw_t) * n_tests, 1.0)
+                p_bonf_w = min(float(p_raw_w) * n_tests, 1.0)
                 posthoc_rows.append({
-                    "panel":               panel_name,
-                    "protocol":            protocol,
-                    "approach_1":          a1,
-                    "approach_2":          a2,
-                    "n_pairs":             len(common),
-                    "mean_1":              float(aligned[a1].mean()),
-                    "mean_2":              float(aligned[a2].mean()),
-                    "mean_diff":           float(aligned[a1].mean() - aligned[a2].mean()),
-                    "t_statistic":         float(t_stat),
-                    "p_value_raw":         float(p_raw),
-                    "p_value_bonferroni":  p_bonf,
-                    "significant":         sig,
-                    "stars":               _assign_stars(p_bonf),
+                    "panel":                 panel_name,
+                    "protocol":              protocol,
+                    "approach_1":            a1,
+                    "approach_2":            a2,
+                    "n_pairs":               len(common),
+                    "mean_1":                float(aligned[a1].mean()),
+                    "mean_2":                float(aligned[a2].mean()),
+                    "mean_diff":             float(aligned[a1].mean() - aligned[a2].mean()),
+                    "t_statistic":           float(t_stat),
+                    "p_value_raw":           float(p_raw_t),
+                    "p_value_bonferroni":    p_bonf_t,
+                    "significant":           p_bonf_t < alpha,
+                    "stars":                 _assign_stars(p_bonf_t),
+                    "w_statistic":           float(w_stat),
+                    "p_wilcoxon_raw":        float(p_raw_w),
+                    "p_wilcoxon_bonferroni": p_bonf_w,
+                    "significant_wilcoxon":  p_bonf_w < alpha,
+                    "stars_wilcoxon":        _assign_stars(p_bonf_w),
                 })
 
     posthoc_df = pd.DataFrame(posthoc_rows)
 
     # ── Apply BH FDR correction across all pairwise tests ────────────────────
-    if not posthoc_df.empty and "p_value_raw" in posthoc_df.columns:
-        p_raw_vals = posthoc_df["p_value_raw"].values.astype(float)
-        p_fdr = _fdr_bh(p_raw_vals)
-        posthoc_df["p_value_fdr"] = [round(float(v), 4) for v in p_fdr]
-        posthoc_df["stars_fdr"]   = [_assign_stars(v) for v in p_fdr]
+    if not posthoc_df.empty:
+        if "p_value_raw" in posthoc_df.columns:
+            p_fdr_t = _fdr_bh(posthoc_df["p_value_raw"].values.astype(float))
+            posthoc_df["p_value_fdr"]   = [round(float(v), 4) for v in p_fdr_t]
+            posthoc_df["stars_fdr"]     = [_assign_stars(v) for v in p_fdr_t]
+        if "p_wilcoxon_raw" in posthoc_df.columns:
+            p_fdr_w = _fdr_bh(posthoc_df["p_wilcoxon_raw"].values.astype(float))
+            posthoc_df["p_wilcoxon_fdr"]     = [round(float(v), 4) for v in p_fdr_w]
+            posthoc_df["stars_wilcoxon_fdr"] = [_assign_stars(v) for v in p_fdr_w]
 
     return {
         "anova":   pd.DataFrame(anova_rows),
@@ -860,44 +874,42 @@ def run_distribution_investigation(
     plot_only: bool = False,
     stability_percentile_metagenomics: float = STABILITY_PERCENTILE["Metagenomics"],
     stability_percentile_amplicon: float      = STABILITY_PERCENTILE["Amplicon"],
+    stability_percentile_global_combined: float = 0.6,
     min_size: int = MIN_SAMPLES_PER_DATASET,
     sigmoid_k: float = SIGMOID_K,
     sigmoid_center: float = SIGMOID_CENTER,
     relu_threshold: float = RELU_THRESHOLD,
     taxonomy_level_metagenomics=None,
     taxonomy_level_amplicon=None,
-    cross_dtype_normalization: bool = False,
-    stability_percentile_global_combined: float = 0.6,
     taxonomy_level_combined=None,
 ):
     """
     Compare distribution-adjustment approaches on all phenotypes/dtypes.
 
+    Always computes Metagenomics, Amplicon, and Combined (cross-dtype), producing
+    four panels: Metagenomics, Amplicon, All dtypes (merged), and Cross dtypes.
+
     Parameters
     ----------
     phenotypes  : list of (phenotype, dtype) tuples
     output_dir  : directory for CSVs and figure
-    plot_only   : if True, skip computation and reload existing CSVs
-    cross_dtype_normalization : if True, pool 16S + shotgun together for normalization.
+    plot_only   : if True, load existing CSVs and skip missing ones
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if cross_dtype_normalization:
-        dtypes = ["Combined"]
-        stability_percentile_by_dtype = {"Combined": stability_percentile_global_combined}
-        tax_level = taxonomy_level_combined if str(taxonomy_level_combined) != "None" else None
-        taxonomy_level_by_dtype = {"Combined": tax_level}
-    else:
-        dtypes = ["Metagenomics", "Amplicon"]
-        stability_percentile_by_dtype = {
-            "Metagenomics": stability_percentile_metagenomics,
-            "Amplicon":     stability_percentile_amplicon,
-        }
-        taxonomy_level_by_dtype = {
-            "Metagenomics": taxonomy_level_metagenomics,
-            "Amplicon":     taxonomy_level_amplicon,
-        }
+    dtypes = ["Metagenomics", "Amplicon", "Combined"]
+    _tax_combined = taxonomy_level_combined if str(taxonomy_level_combined) != "None" else None
+    stability_percentile_by_dtype = {
+        "Metagenomics": stability_percentile_metagenomics,
+        "Amplicon":     stability_percentile_amplicon,
+        "Combined":     stability_percentile_global_combined,
+    }
+    taxonomy_level_by_dtype = {
+        "Metagenomics": taxonomy_level_metagenomics,
+        "Amplicon":     taxonomy_level_amplicon,
+        "Combined":     _tax_combined,
+    }
 
     # Identify single-class datasets once — excluded from all results
     single_class_names = _get_single_class_datasets(phenotypes)
@@ -956,7 +968,7 @@ def run_distribution_investigation(
             all_results[(dtype, approach)] = results_df
 
     # ── Statistical tests ─────────────────────────────────────────────────────
-    print("\nRunning statistical tests (ANOVA + pairwise paired t-test / Bonferroni) ...")
+    print("\nRunning statistical tests (ANOVA + pairwise paired t-test + Wilcoxon / Bonferroni + FDR) ...")
     stats_dict = run_statistical_tests(all_results, dtypes)
 
     anova_df   = stats_dict.get("anova",   pd.DataFrame())
@@ -975,17 +987,13 @@ def run_distribution_investigation(
                      "p_value_bonferroni", "stars"]
         if "p_value_fdr" in posthoc_df.columns:
             show_cols += ["p_value_fdr", "stars_fdr"]
-        print(f"\nPost-hoc (Bonferroni + BH-FDR corrected paired t-test):")
+        if "p_wilcoxon_raw" in posthoc_df.columns:
+            show_cols += ["p_wilcoxon_raw", "p_wilcoxon_bonferroni", "stars_wilcoxon",
+                          "p_wilcoxon_fdr", "stars_wilcoxon_fdr"]
+        print(f"\nPost-hoc (Bonferroni + BH-FDR corrected paired t-test + Wilcoxon):")
         print(posthoc_df[show_cols].to_string(index=False))
 
-    # ── Delta + tests: original vs RANK-BIRD ─────────────────────────────────
-    # Load cross-dtype Combined results if available (adds "Cross dtypes" panel)
-    for approach in APPROACHES:
-        csv_p = output_dir / f"results_combined_{approach}.csv"
-        if csv_p.exists() and ("Combined", approach) not in all_results:
-            df = pd.read_csv(csv_p)
-            df["auc"] = pd.to_numeric(df["auc"], errors="coerce")
-            all_results[("Combined", approach)] = df
+    # ── Delta + tests: original vs each approach ──────────────────────────────
     delta_df = compute_normalization_comparison(all_results, dtypes)
     if not delta_df.empty:
         delta_df.to_csv(output_dir / "delta_tests.csv", index=False)
@@ -1094,18 +1102,27 @@ def print_auc_summary_table(output_dir: Path, approaches=("original", "rankbird"
         print(sep2)
         print(hdr)
         print(sep2)
+        # detect dynamic column names (mean_original + mean_<label>)
+        mean_orig_col   = "mean_original"
+        median_orig_col = "median_original"
+        mean_treat_col   = next((c for c in delta.columns if c.startswith("mean_")   and c != mean_orig_col),   None)
+        median_treat_col = next((c for c in delta.columns if c.startswith("median_") and c != median_orig_col), None)
         prev = None
         for _, r in delta.iterrows():
             if r["panel"] != prev:
                 if prev is not None:
                     print()
                 prev = r["panel"]
+            mean_o   = r[mean_orig_col]   if mean_orig_col   in r.index else float("nan")
+            mean_t   = r[mean_treat_col]  if mean_treat_col  else float("nan")
+            med_o    = r[median_orig_col] if median_orig_col in r.index else float("nan")
+            med_t    = r[median_treat_col] if median_treat_col else float("nan")
             print(f"{r['panel']:<{cw['panel']}}  {r['protocol']:<{cw['protocol']}}"
                   f"  {int(r['n_datasets']):>{cw['n']}}"
-                  f"  {r['mean_baseline']:>{cw['mb']}.3f}  {r['mean_treatment']:>{cw['mt']}.3f}"
+                  f"  {mean_o:>{cw['mb']}.3f}  {mean_t:>{cw['mt']}.3f}"
                   f"  {r['delta_mean']:>+{cw['dm']}.3f}  {r['p_ttest']:>{cw['pt']}.4f}"
                   f"  {str(r['sig_ttest']):<{cw['st']}}"
-                  f"  {r['median_baseline']:>{cw['mdb']}.3f}  {r['median_treatment']:>{cw['mdt']}.3f}"
+                  f"  {med_o:>{cw['mdb']}.3f}  {med_t:>{cw['mdt']}.3f}"
                   f"  {r['delta_median']:>+{cw['dmed']}.3f}  {r['p_wilcoxon']:>{cw['pw']}.4f}"
                   f"  {str(r['sig_wilcoxon']):<{cw['sw']}}")
         print(sep2 + "\n")

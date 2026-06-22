@@ -257,7 +257,7 @@ def plot_auc_horizontal_bars_mann_whitney(df_papers, df_lightGBM,
     wgs_positions = [ymid for g, ymid in group_positions if "Metagenomics" in g]
     if amp_positions and wgs_positions:
         divide_y = (max(amp_positions) + min(wgs_positions)) / 2
-        ax.axhline(divide_y, color="black", linewidth=3, zorder=10)
+        ax.axhline(divide_y, color="black", linewidth=15, zorder=10)
         trans = ax.get_yaxis_transform()
         ax.text(-0.32, np.mean(wgs_positions), "WGS",
                 transform=trans, fontsize=88, fontweight="bold",
