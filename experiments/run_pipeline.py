@@ -90,13 +90,16 @@ CONFIG = {
     "run_compute": False,      # run heavy protocol training
     "run_aggregate": False,    # recompute summary
     "run_stats": False,
-    "run_figures": ["3c"], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
+    "run_figures": [], # "1" (combined), "1a","1c","1d","1e","1f" (individual panels)
      #                   "2" (combined + all supp), "2b_supp","2c_supp","2d_supp","2e_supp" (supp only)
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
      #                   "3","4","5"
-    "run_investigations": [],  # "stability_threshold", "stability_characterization", "distribution_approach"
-    "investigations_plot_only": True,   # For  "stability_threshold" and "distribution_approach" invastigations # True = reload CSVs, False = recompute
+    "run_investigations": ["distribution_approach_average"],
+    #                     "distribution_approach"         — original order, positional tie-breaking
+    #                     "distribution_approach_ordered" — shuffle fully-ordered datasets first
+    #                     "distribution_approach_average" — average rank for ties (order-invariant)
+    "investigations_plot_only": False,   # True = reload existing CSVs; False = recompute
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
     "run_dataset_table": False,          # build per-dataset supplementary table (AUCs, demographics, sparsity)
     "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
@@ -898,23 +901,47 @@ def main():
             taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         )
 
+    _dist_common = dict(
+        phenotypes=phenotypes,
+        plot_only=CONFIG.get("investigations_plot_only", False),
+        stability_percentile_metagenomics=CONFIG.get("stability_percentile_global_metagenomics", 0.25),
+        stability_percentile_amplicon=CONFIG.get("stability_percentile_global_amplicon", 0.40),
+        stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
+        min_size=CONFIG.get("min_samples_per_dataset", 550),
+        taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
+        taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
+        taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
+    )
+
     if "distribution_approach" in CONFIG["run_investigations"]:
-        dist_dir = PROJECT_ROOT / "investigations" / "distribution_approach"
+        # Regular: original sample order, positional tie-breaking
+        dist_dir = FIGURES_BASE / "distribution_approach"
         print(f"  [distribution_approach] output dir: {dist_dir.resolve()}")
-        run_distribution_investigation(
-            phenotypes=phenotypes,
-            output_dir=dist_dir,
-            plot_only=CONFIG.get("investigations_plot_only", False),
-            stability_percentile_metagenomics=CONFIG.get("stability_percentile_global_metagenomics", 0.25),
-            stability_percentile_amplicon=CONFIG.get("stability_percentile_global_amplicon", 0.40),
-            stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
-            min_size=CONFIG.get("min_samples_per_dataset", 550),
-            taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
-            taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
-            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
-        )
+        run_distribution_investigation(output_dir=dist_dir,
+                                       shuffle_ordered=False, rank_tie_method="first",
+                                       **_dist_common)
         print_auc_summary_table(dist_dir)
 
+    if "distribution_approach_ordered" in CONFIG["run_investigations"]:
+        # Ordered: fully-ordered datasets are shuffled before ranking
+        dist_dir = FIGURES_BASE / "distribution_approach_ordered"
+        print(f"  [distribution_approach_ordered] output dir: {dist_dir.resolve()}")
+        run_distribution_investigation(output_dir=dist_dir,
+                                       shuffle_ordered=True, rank_tie_method="first",
+                                       **_dist_common)
+        print_auc_summary_table(dist_dir)
+
+    if "distribution_approach_average" in CONFIG["run_investigations"]:
+        # Average: average rank for ties — identical values always map identically
+        dist_dir = FIGURES_BASE / "distribution_approach_average"
+        print(f"  [distribution_approach_average] output dir: {dist_dir.resolve()}")
+        run_distribution_investigation(output_dir=dist_dir,
+                                       shuffle_ordered=False, rank_tie_method="average",
+                                       **_dist_common)
+        print_auc_summary_table(dist_dir)
+
+    if any(m in CONFIG["run_investigations"] for m in
+           ["distribution_approach", "distribution_approach_ordered", "distribution_approach_average"]):
         _delta_src = dist_dir / "delta_tests.csv"
         if _delta_src.exists():
             import shutil

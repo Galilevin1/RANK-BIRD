@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from collections import defaultdict
@@ -14,6 +15,60 @@ from src.rankbird.normalization.ranking import (
 from src.rankbird.representation.multi_datasets_SPDR import apply_bias_SPDR
 from evaluation.data_loading import load_microbiome_datasets_with_targets
 from evaluation.learning_protocols import lodo_protocol, internal_validation_protocol, within_dataset_protocol
+
+
+def _detect_and_shuffle_ordered(
+    microbiome_dfs: list,
+    target_dfs: list,
+    dataset_names: list,
+    random_state: int = 42,
+    apply_shuffle: bool = True,
+    verbose: bool = False,
+) -> tuple:
+    """
+    Detect datasets where class labels are fully ordered (all 0s then 1s, or
+    all 1s then 0s). If apply_shuffle=True, shuffle those datasets so that
+    samples and their corresponding targets are reordered together.
+
+    Set verbose=True to print a summary (suppressed by default to avoid
+    repeating the same message for every approach × dtype combination).
+    Returns (microbiome_dfs, target_dfs) — possibly modified in-place copies.
+    """
+    rng = np.random.default_rng(random_state)
+    ordered_info = []   # list of {"dataset": name, "first_class": 0_or_1}
+    new_microbiome, new_targets = [], []
+
+    for df, y, name in zip(microbiome_dfs, target_dfs, dataset_names):
+        tags = y["Tag"].values
+        is_sorted_asc  = np.array_equal(tags, np.sort(tags))
+        is_sorted_desc = np.array_equal(tags, np.sort(tags)[::-1])
+        is_ordered = (is_sorted_asc or is_sorted_desc) and len(np.unique(tags)) > 1
+
+        if is_ordered:
+            # is_sorted_asc  → controls (0) come first
+            # is_sorted_desc → cases   (1) come first
+            ordered_info.append({"dataset": name, "first_class": 0 if is_sorted_asc else 1})
+
+        if is_ordered and apply_shuffle:
+            perm = rng.permutation(df.index)
+            new_microbiome.append(df.loc[perm])
+            new_targets.append(y.loc[perm])
+        else:
+            new_microbiome.append(df)
+            new_targets.append(y)
+
+    if verbose:
+        action = "shuffled" if apply_shuffle else "not shuffled"
+        if ordered_info:
+            print(
+                f"\n[ORDER-CHECK] {len(ordered_info)} fully-ordered dataset(s) ({action}): "
+                f"{[d['dataset'] for d in ordered_info]}"
+            )
+        else:
+            print(f"\n[ORDER-CHECK] No fully-ordered datasets found.")
+
+    return new_microbiome, new_targets, ordered_info
+
 
 def _run_protocols_on_group(microbiome_dfs, target_dfs, dataset_names, phenotype_str):
     records = []
@@ -55,6 +110,9 @@ def _run_global_for_dtype(
     decompose_rank=30,
     taxonomy_level=None,
     data_root: str = "Data",
+    shuffle_ordered: bool = False,
+    random_state: int = 42,
+    rank_tie_method: str = "first",
 ):
     """
     normalization_approach options
@@ -91,6 +149,14 @@ def _run_global_for_dtype(
             dataset_to_phenotype[name] = phenotype_str
 
     # ----------------------------------
+    # 1b. Detect (and optionally shuffle) fully-ordered datasets
+    # ----------------------------------
+    all_microbiome, all_targets, _ = _detect_and_shuffle_ordered(
+        all_microbiome, all_targets, all_dataset_names,
+        random_state=random_state, apply_shuffle=shuffle_ordered,
+    )
+
+    # ----------------------------------
     # 2. GLOBAL preprocessing (once)
     # ----------------------------------
 
@@ -112,10 +178,17 @@ def _run_global_for_dtype(
             stability_percentile_global=stability_percentile_global,
             z_thresh=z_thresh,
             taxonomy_level=taxonomy_level,
+            rank_tie_method=rank_tie_method,
         )
 
     elif normalization_approach in _RANKING_NORM_FNS:
-        norm_fn = _RANKING_NORM_FNS[normalization_approach]
+        _base_norm_fn = _RANKING_NORM_FNS[normalization_approach]
+        from functools import partial as _partial
+        norm_fn = (
+            _partial(_base_norm_fn, tie_method=rank_tie_method)
+            if rank_tie_method != "first"
+            else _base_norm_fn
+        )
         all_microbiome, all_dataset_names = apply_ranking_pipeline(
             all_microbiome,
             all_dataset_names,

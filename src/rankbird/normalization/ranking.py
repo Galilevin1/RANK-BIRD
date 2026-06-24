@@ -17,6 +17,7 @@ apply_ranking_pipeline — full ranking variant pipeline:
 import numpy as np
 import pandas as pd
 from scipy.special import expit
+from scipy.stats import rankdata
 
 from .stability import union_microbes, nonzero_percent_by_dataset, auto_stability_filter
 from .combine import oversample_to_min_size
@@ -32,10 +33,15 @@ RELU_THRESHOLD = 0.5    # fraction to keep (0.5 → top 50 % kept)
 
 # ── Column-wise normalization functions ───────────────────────────────────────
 
-def rank_normalize(X: pd.DataFrame) -> pd.DataFrame:
+def rank_normalize(X: pd.DataFrame, tie_method: str = "first") -> pd.DataFrame:
     """
     For each microbe column rank all rows descending and map to [0, 1]:
         highest value → 1.0,  lowest value → 0.0.
+
+    tie_method : "first"   — ties broken by position (original behaviour)
+                 "average" — tied values receive the average of their ranks,
+                             so identical values (e.g. zeros) always map to
+                             the same output regardless of row order.
     """
     result = X.copy().astype(float)
     N = len(X)
@@ -43,10 +49,14 @@ def rank_normalize(X: pd.DataFrame) -> pd.DataFrame:
         return result
     for col in X.columns:
         x = X[col].values
-        sorted_idx = np.argsort(-x)
-        ranks = np.empty(N, dtype=float)
-        ranks[sorted_idx] = np.arange(N, dtype=float)
-        result[col] = 1.0 - ranks / (N - 1)
+        if tie_method == "average":
+            r = rankdata(-x, method="average")      # 1-based descending
+            result[col] = 1.0 - (r - 1) / (N - 1)
+        else:
+            sorted_idx = np.argsort(-x)
+            ranks = np.empty(N, dtype=float)
+            ranks[sorted_idx] = np.arange(N, dtype=float)
+            result[col] = 1.0 - ranks / (N - 1)
     return result
 
 

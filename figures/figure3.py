@@ -572,24 +572,23 @@ def run_figure3c_stats_table(
     output_path: str,
 ) -> Optional[pd.DataFrame]:
     """
-    Wilcoxon signed-rank test comparing Original vs CIFAR AUC.
+    One-sided paired t-test comparing Original vs CIFAR AUC (H1: CIFAR > Original).
 
     Iterates over every protocol × dtype combination:
       protocols : LODO, Internal Validation, Within Learning
       dtypes    : Metagenomics, Amplicon, All (pooled), Combined (if available)
 
     For each cell:
-      - Aggregate per phenotype (mean + median AUC across datasets)
+      - Aggregate per phenotype (mean AUC across datasets)
       - Pair phenotypes present in both approaches
-      - Run scipy.stats.wilcoxon (two-sided)
+      - Run scipy.stats.ttest_rel(cifar, original, alternative="greater")
     Then apply Benjamini-Hochberg FDR across all rows.
 
     Columns: dtype, protocol, n_phenotypes,
-             mean_auc_original, mean_auc_rankbird, delta_mean,
-             median_auc_original, median_auc_rankbird, delta_median,
-             wilcoxon_statistic, p_value, p_value_fdr
+             mean_auc_original, mean_auc_cifar, delta_mean,
+             t_statistic, p_value, p_value_fdr
     """
-    from scipy.stats import wilcoxon
+    from scipy.stats import ttest_rel
     from statsmodels.stats.multitest import multipletests
 
     inv_dir  = Path(investigation_dir)
@@ -619,101 +618,47 @@ def run_figure3c_stats_table(
             df["auc"] = pd.to_numeric(df["auc"], errors="coerce")
             raw[("Combined", approach)] = df
 
-    def _phenotype_stats(df: pd.DataFrame, proto: str):
-        """Return (mean_per_phenotype, median_per_phenotype) Series for a protocol."""
+    def _dataset_aucs(df: pd.DataFrame, proto: str) -> pd.Series:
+        """Return AUC Series indexed by dataset name for the given protocol."""
         sub = df[df["protocol"] == proto] if "protocol" in df.columns else df
-        grp = sub.groupby("phenotype")["auc"]
-        return grp.mean().dropna(), grp.median().dropna()
-
-    def _anova_row(orig_df: pd.DataFrame, rb_df: pd.DataFrame,
-                   proto: str, common_phenotypes) -> dict:
-        """Two-way ANOVA: auc ~ C(phenotype) + C(approach), Type II.
-        Uses dataset-level AUC values (not per-phenotype means) so that
-        within-cell replication provides the residual error term."""
-        from statsmodels.formula.api import ols
-        from statsmodels.stats.anova import anova_lm
-
-        _nan = {"anova_F_approach": float("nan"), "anova_p_approach": float("nan"),
-                "anova_F_phenotype": float("nan"), "anova_p_phenotype": float("nan"),
-                "anova_df_approach": float("nan"), "anova_df_phenotype": float("nan"),
-                "anova_df_residual": float("nan")}
-        try:
-            has_proto = "protocol" in orig_df.columns
-            sub_o = (orig_df[orig_df["protocol"] == proto] if has_proto else orig_df).copy()
-            sub_r = (rb_df[rb_df["protocol"]   == proto] if has_proto else rb_df).copy()
-            sub_o = sub_o[sub_o["phenotype"].isin(common_phenotypes)][["phenotype", "auc"]].assign(approach="original")
-            sub_r = sub_r[sub_r["phenotype"].isin(common_phenotypes)][["phenotype", "auc"]].assign(approach="CIFAR")
-            adf = pd.concat([sub_o, sub_r], ignore_index=True)
-            adf["auc"] = pd.to_numeric(adf["auc"], errors="coerce")
-            adf = adf.dropna(subset=["auc"])
-            n_pheno = adf["phenotype"].nunique()
-            # Need at least 2 phenotypes, 2 approaches, and residual df > 0
-            if n_pheno < 2 or adf["approach"].nunique() < 2 or len(adf) <= n_pheno + 1:
-                return _nan
-            model = ols("auc ~ C(phenotype) + C(approach)", data=adf).fit()
-            tbl   = anova_lm(model, typ=2)
-            return {
-                "anova_F_approach":   float(tbl.loc["C(approach)",  "F"]),
-                "anova_p_approach":   float(tbl.loc["C(approach)",  "PR(>F)"]),
-                "anova_F_phenotype":  float(tbl.loc["C(phenotype)", "F"]),
-                "anova_p_phenotype":  float(tbl.loc["C(phenotype)", "PR(>F)"]),
-                "anova_df_approach":  float(tbl.loc["C(approach)",  "df"]),
-                "anova_df_phenotype": float(tbl.loc["C(phenotype)", "df"]),
-                "anova_df_residual":  float(tbl.loc["Residual",     "df"]),
-            }
-        except Exception:
-            return _nan
+        sub = sub.dropna(subset=["auc"])
+        return sub.set_index("dataset")["auc"]
 
     def _build_row(dtype_label: str, proto: str,
                    orig_df: pd.DataFrame, rb_df: pd.DataFrame) -> dict:
-        orig_mean, orig_med = _phenotype_stats(orig_df, proto)
-        rb_mean,   rb_med   = _phenotype_stats(rb_df,   proto)
-        common = orig_mean.index.intersection(rb_mean.index)
-        n = len(common)
-        base = {"dtype": dtype_label, "protocol": proto, "n_phenotypes": n}
-        _nan_anova = {"anova_F_approach": float("nan"), "anova_p_approach": float("nan"),
-                      "anova_F_phenotype": float("nan"), "anova_p_phenotype": float("nan"),
-                      "anova_df_approach": float("nan"), "anova_df_phenotype": float("nan"),
-                      "anova_df_residual": float("nan")}
+        orig_aucs = _dataset_aucs(orig_df, proto)
+        rb_aucs   = _dataset_aucs(rb_df,   proto)
+        common    = orig_aucs.index.intersection(rb_aucs.index)
+        n         = len(common)
+        base      = {"dtype": dtype_label, "protocol": proto, "n_datasets": n}
         if n < 2:
             return {**base,
                     "mean_auc_original": float("nan"), "mean_auc_cifar": float("nan"),
                     "delta_mean": float("nan"),
                     "median_auc_original": float("nan"), "median_auc_cifar": float("nan"),
                     "delta_median": float("nan"),
-                    "wilcoxon_statistic": float("nan"), "p_value": float("nan"),
-                    **_nan_anova}
-        o_m = orig_mean[common].values
-        r_m = rb_mean[common].values
-        o_med = orig_med.reindex(common).values
-        r_med = rb_med.reindex(common).values
-        diff = r_m - o_m
-        if (diff == 0).all():
-            stat, p = float("nan"), float("nan")
-        else:
-            stat, p = wilcoxon(diff, alternative="two-sided")
-        anova = _anova_row(orig_df, rb_df, proto, common)
+                    "t_statistic": float("nan"), "p_value": float("nan")}
+        o = orig_aucs[common].values
+        r = rb_aucs[common].values
+        t, p = ttest_rel(r, o, alternative="greater")
         return {**base,
-                "mean_auc_original":   float(o_m.mean()),
-                "mean_auc_cifar":      float(r_m.mean()),
-                "delta_mean":          float(r_m.mean() - o_m.mean()),
-                "median_auc_original": float(np.nanmedian(o_med)),
-                "median_auc_cifar":    float(np.nanmedian(r_med)),
-                "delta_median":        float(np.nanmedian(r_med) - np.nanmedian(o_med)),
-                "wilcoxon_statistic":  float(stat),
-                "p_value":             float(p),
-                **anova}
+                "mean_auc_original":   float(o.mean()),
+                "mean_auc_cifar":      float(r.mean()),
+                "delta_mean":          float(r.mean() - o.mean()),
+                "median_auc_original": float(np.nanmedian(o)),
+                "median_auc_cifar":    float(np.nanmedian(r)),
+                "delta_median":        float(np.nanmedian(r) - np.nanmedian(o)),
+                "t_statistic":         float(t),
+                "p_value":             float(p)}
 
     rows = []
     for proto in protocols:
-        # Metagenomics and Amplicon
         for dtype in base_dtypes:
             if (dtype, "original") in raw and (dtype, "rankbird") in raw:
                 rows.append(_build_row(dtype, proto,
                                        raw[(dtype, "original")],
                                        raw[(dtype, "rankbird")]))
 
-        # All pooled
         orig_frames = [raw[(d, "original")] for d in base_dtypes if (d, "original") in raw]
         rb_frames   = [raw[(d, "rankbird")] for d in base_dtypes if (d, "rankbird") in raw]
         if orig_frames and rb_frames:
@@ -721,7 +666,6 @@ def run_figure3c_stats_table(
                                    pd.concat(orig_frames, ignore_index=True),
                                    pd.concat(rb_frames,   ignore_index=True)))
 
-        # Combined cross-dtype
         if has_cross and ("Combined", "original") in raw and ("Combined", "rankbird") in raw:
             rows.append(_build_row("Combined", proto,
                                    raw[("Combined", "original")],
@@ -734,29 +678,21 @@ def run_figure3c_stats_table(
     result_df = pd.DataFrame(rows)
 
     # ── Benjamini-Hochberg FDR across all rows ────────────────
-    def _apply_fdr(df, col_in, col_out):
-        mask = df[col_in].notna()
-        fdr  = np.full(len(df), float("nan"))
-        if mask.any():
-            _, vals, _, _ = multipletests(df.loc[mask, col_in].values, method="fdr_bh")
-            fdr[mask.values] = vals
-        df[col_out] = fdr
-
-    _apply_fdr(result_df, "p_value",        "p_value_fdr")
-    _apply_fdr(result_df, "anova_p_approach",  "anova_p_approach_fdr")
-    _apply_fdr(result_df, "anova_p_phenotype", "anova_p_phenotype_fdr")
+    mask = result_df["p_value"].notna()
+    fdr  = np.full(len(result_df), float("nan"))
+    if mask.any():
+        _, vals, _, _ = multipletests(result_df.loc[mask, "p_value"].values, method="fdr_bh")
+        fdr[mask.values] = vals
+    result_df["p_value_fdr"] = fdr
 
     col_order = [
-        "dtype", "protocol", "n_phenotypes",
+        "dtype", "protocol", "n_datasets",
         "mean_auc_original", "mean_auc_cifar", "delta_mean",
         "median_auc_original", "median_auc_cifar", "delta_median",
-        "wilcoxon_statistic", "p_value", "p_value_fdr",
-        "anova_df_approach", "anova_df_phenotype", "anova_df_residual",
-        "anova_F_approach", "anova_p_approach", "anova_p_approach_fdr",
-        "anova_F_phenotype", "anova_p_phenotype", "anova_p_phenotype_fdr",
+        "t_statistic", "p_value", "p_value_fdr",
     ]
     result_df = result_df[col_order]
-    result_df.to_csv(out_path, index=False, float_format="%.4f")
+    result_df.to_csv(out_path, index=False, float_format="%.4g")
     print(f"  Saved Figure 3C stats table → {out_path}")
     return result_df
 

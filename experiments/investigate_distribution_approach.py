@@ -59,7 +59,7 @@ from src.rankbird.normalization.ranking import (
 )
 from evaluation.data_loading import load_microbiome_datasets_with_targets
 from experiments.run_protocols_global_processing import (
-    _run_protocols_on_group, _run_global_for_dtype,
+    _run_protocols_on_group, _run_global_for_dtype, _detect_and_shuffle_ordered,
 )
 
 
@@ -124,6 +124,8 @@ def _run_approach_for_dtype(
     relu_threshold: float = RELU_THRESHOLD,
     random_state: int = 42,
     taxonomy_level=None,
+    shuffle_ordered: bool = False,
+    rank_tie_method: str = "first",
 ) -> pd.DataFrame:
     """
     Load all datasets for `dtype`, apply `approach`, run all protocols.
@@ -146,12 +148,21 @@ def _run_approach_for_dtype(
     if not all_microbiome:
         return pd.DataFrame()
 
+    # ── Detect (and optionally shuffle) fully-ordered datasets ───────────────
+    all_microbiome, all_targets, _ = _detect_and_shuffle_ordered(
+        all_microbiome, all_targets, all_names,
+        random_state=random_state, apply_shuffle=shuffle_ordered,
+    )
+
     name_to_target = dict(zip(all_names, all_targets))
 
     # ── Apply normalization approach ──────────────────────────────────────────
     if approach == "original":
         return _run_global_for_dtype(phenotypes, normalization_approach=None,
-                                     taxonomy_level=taxonomy_level)
+                                     taxonomy_level=taxonomy_level,
+                                     shuffle_ordered=shuffle_ordered,
+                                     random_state=random_state,
+                                     rank_tie_method=rank_tie_method)
 
     elif approach == "original_filtered":
         all_microbiome = filter_to_level(all_microbiome, taxonomy_level)
@@ -169,20 +180,25 @@ def _run_approach_for_dtype(
             min_samples_per_dataset=min_size,
             stability_percentile_global=stability_percentile,
             taxonomy_level=taxonomy_level,
+            rank_tie_method=rank_tie_method,
         )
 
     elif approach == "ranking":
+        from functools import partial as _partial
+        _norm = _partial(rank_normalize, tie_method=rank_tie_method)
         all_microbiome, all_names = apply_ranking_pipeline(
             all_microbiome, all_names,
             stability_percentile=stability_percentile,
-            norm_fn=rank_normalize,
+            norm_fn=_norm,
             min_size=min_size,
             random_state=random_state,
             taxonomy_level=taxonomy_level,
         )
 
     elif approach == "ranking_sig":
-        norm_fn = lambda X: sigmoid_normalize(X, k=sigmoid_k, center=sigmoid_center)
+        from functools import partial as _partial
+        _base = _partial(sigmoid_normalize, k=sigmoid_k, center=sigmoid_center)
+        norm_fn = lambda X: _base(rank_normalize(X, tie_method=rank_tie_method))
         all_microbiome, all_names = apply_ranking_pipeline(
             all_microbiome, all_names,
             stability_percentile=stability_percentile,
@@ -193,7 +209,9 @@ def _run_approach_for_dtype(
         )
 
     elif approach == "ranking_relu":
-        norm_fn = lambda X: relu_normalize(X, threshold=relu_threshold)
+        norm_fn = lambda X: relu_normalize(
+            rank_normalize(X, tie_method=rank_tie_method), threshold=relu_threshold
+        )
         all_microbiome, all_names = apply_ranking_pipeline(
             all_microbiome, all_names,
             stability_percentile=stability_percentile,
@@ -882,6 +900,8 @@ def run_distribution_investigation(
     taxonomy_level_metagenomics=None,
     taxonomy_level_amplicon=None,
     taxonomy_level_combined=None,
+    shuffle_ordered: bool = False,
+    rank_tie_method: str = "first",
 ):
     """
     Compare distribution-adjustment approaches on all phenotypes/dtypes.
@@ -914,6 +934,36 @@ def run_distribution_investigation(
     # Identify single-class datasets once — excluded from all results
     single_class_names = _get_single_class_datasets(phenotypes)
 
+    # ── One-time upfront order-check across all datasets ─────────────────────
+    if not plot_only:
+        _all_micro, _all_tgt, _all_names, _all_pheno = [], [], [], []
+        for phenotype, dtype in phenotypes:
+            folder = DATA_ROOT / f"{phenotype} {dtype}"
+            if not folder.exists():
+                continue
+            try:
+                dfs, tgts, names = load_microbiome_datasets_with_targets(folder)
+                _all_micro.extend(dfs); _all_tgt.extend(tgts); _all_names.extend(names)
+                _all_pheno.extend([f"{phenotype} {dtype}"] * len(names))
+            except Exception:
+                pass
+        _, _, _ordered_info = _detect_and_shuffle_ordered(
+            _all_micro, _all_tgt, _all_names,
+            apply_shuffle=shuffle_ordered, verbose=True,
+        )
+        _pheno_for_name = dict(zip(_all_names, _all_pheno))
+        pd.DataFrame([
+            {
+                "dataset":     d["dataset"],
+                "phenotype":   _pheno_for_name.get(d["dataset"], ""),
+                "first_class": d["first_class"],
+                "first_label": "control" if d["first_class"] == 0 else "case",
+                "was_shuffled": shuffle_ordered,
+            }
+            for d in _ordered_info
+        ]).to_csv(output_dir / "ordered_datasets.csv", index=False)
+        print(f"  [ORDER-CHECK] saved → {output_dir / 'ordered_datasets.csv'}")
+
     all_results: dict = {}    # {(dtype, approach): full results_df}
 
     for dtype in dtypes:
@@ -944,6 +994,8 @@ def run_distribution_investigation(
                         min_samples_per_dataset=min_size,
                         stability_percentile_global=stability_percentile_by_dtype[dtype],
                         taxonomy_level=taxonomy_level_by_dtype[dtype],
+                        shuffle_ordered=shuffle_ordered,
+                        rank_tie_method=rank_tie_method,
                     )
                 else:
                     results_df = _run_approach_for_dtype(
@@ -956,6 +1008,8 @@ def run_distribution_investigation(
                         sigmoid_center=sigmoid_center,
                         relu_threshold=relu_threshold,
                         taxonomy_level=taxonomy_level_by_dtype[dtype],
+                        shuffle_ordered=shuffle_ordered,
+                        rank_tie_method=rank_tie_method,
                     )
                 # Filter single-class datasets before saving
                 results_df = _drop_single_class(results_df, single_class_names)

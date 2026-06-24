@@ -22,6 +22,7 @@ def apply_normalization_pipeline(
     z_thresh=3.0,
     random_state=42,
     taxonomy_level=None,   # None = all, "g" = genus only, "s" = genus+species
+    rank_tie_method: str = "first",
 ):
     # ----------------------------
     # STEP 0 — taxonomy level filter
@@ -74,7 +75,7 @@ def apply_normalization_pipeline(
         df_orig.columns = [orig2safe[c] for c in df_orig.columns]
         X_orig = df_orig[kept_safe].copy()
 
-        X_norm = rank_map_normalize_dataset(X_orig, global_sorted_dict)
+        X_norm = rank_map_normalize_dataset(X_orig, global_sorted_dict, tie_method=rank_tie_method)
 
         # restore taxa names
         X_norm.columns = [safe2orig[c] for c in X_norm.columns]
