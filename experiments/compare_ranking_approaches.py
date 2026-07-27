@@ -41,21 +41,58 @@ _common = dict(
     taxonomy_level_combined=CONFIG["taxonomy_level_combined"],
 )
 
+# lambda1 = L1 regularization strength (1/C). None = disabled.
+# lambda2 = L2 regularization strength (1/C). None = disabled.
+# Both None = no regularization.
 MODES = {
     "regular": dict(
         output_dir=FIGURES_OUT / "distribution_approach",
         shuffle_ordered=False,
         rank_tie_method="first",
+        lambda1=None,
+        lambda2=None,
     ),
     "ordered": dict(
         output_dir=FIGURES_OUT / "distribution_approach_ordered",
         shuffle_ordered=True,
         rank_tie_method="first",
+        lambda1=None,
+        lambda2=None,
     ),
     "average": dict(
         output_dir=FIGURES_OUT / "distribution_approach_average",
         shuffle_ordered=False,
         rank_tie_method="average",
+        lambda1=None,
+        lambda2=None,
+    ),
+    "l1": dict(
+        output_dir=FIGURES_OUT / "distribution_approach_l1",
+        shuffle_ordered=False,
+        rank_tie_method="first",
+        lambda1=100,    # C = 0.01 — strong sparsity for high-dimensional microbiome
+        lambda2=None,
+    ),
+    "l2": dict(
+        output_dir=FIGURES_OUT / "distribution_approach_l2",
+        shuffle_ordered=False,
+        rank_tie_method="first",
+        lambda1=None,
+        lambda2=10,     # C = 0.1 — moderate shrinkage
+    ),
+    "ordered_l1": dict(
+        output_dir=FIGURES_OUT / "distribution_approach_ordered_l1",
+        shuffle_ordered=True,
+        rank_tie_method="first",
+        lambda1=100,
+        lambda2=None,
+    ),
+    "ordered_l2": dict(
+        output_dir=FIGURES_OUT / "distribution_approach_ordered_l2",
+        shuffle_ordered=True,
+        rank_tie_method="first",
+        lambda1=None,
+        lambda2=10,
     ),
 }
 

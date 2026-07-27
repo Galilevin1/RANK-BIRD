@@ -95,7 +95,7 @@ CONFIG = {
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
      #                   "3","4","5"
-    "run_investigations": ["distribution_approach_average"],
+    "run_investigations": ["distribution_approach_ordered"],
     #                     "distribution_approach"         — original order, positional tie-breaking
     #                     "distribution_approach_ordered" — shuffle fully-ordered datasets first
     #                     "distribution_approach_average" — average rank for ties (order-invariant)

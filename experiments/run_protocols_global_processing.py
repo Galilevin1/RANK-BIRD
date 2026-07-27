@@ -70,22 +70,23 @@ def _detect_and_shuffle_ordered(
     return new_microbiome, new_targets, ordered_info
 
 
-def _run_protocols_on_group(microbiome_dfs, target_dfs, dataset_names, phenotype_str):
+def _run_protocols_on_group(microbiome_dfs, target_dfs, dataset_names, phenotype_str, lambda1=None, lambda2=None):
     records = []
 
     results = {
-        "LODO": lodo_protocol(microbiome_dfs, target_dfs, dataset_names),
-        "Internal Validation": internal_validation_protocol(microbiome_dfs, target_dfs, dataset_names),
-        "Within Learning": within_dataset_protocol(microbiome_dfs, target_dfs, dataset_names),
+        "LODO":                 lodo_protocol(microbiome_dfs, target_dfs, dataset_names, lambda1=lambda1, lambda2=lambda2),
+        "Internal Validation":  internal_validation_protocol(microbiome_dfs, target_dfs, dataset_names, lambda1=lambda1, lambda2=lambda2),
+        "Within Learning":      within_dataset_protocol(microbiome_dfs, target_dfs, dataset_names, lambda1=lambda1, lambda2=lambda2),
     }
 
     for protocol, df in results.items():
         for _, row in df.iterrows():
             records.append({
-                "phenotype": phenotype_str,
-                "dataset": row["test_dataset"],
-                "protocol": protocol,
-                "auc": row["auc"],
+                "phenotype":  phenotype_str,
+                "dataset":    row["test_dataset"],
+                "protocol":   protocol,
+                "auc":        row["auc"],
+                "train_auc":  row.get("train_auc", float("nan")),
             })
 
     return pd.DataFrame(records)
@@ -113,6 +114,8 @@ def _run_global_for_dtype(
     shuffle_ordered: bool = False,
     random_state: int = 42,
     rank_tie_method: str = "first",
+    lambda1: float = None,
+    lambda2: float = None,
 ):
     """
     normalization_approach options
@@ -224,7 +227,9 @@ def _run_global_for_dtype(
             microbiome_grp,
             target_grp,
             names_grp,
-            phenotype_str
+            phenotype_str,
+            lambda1=lambda1,
+            lambda2=lambda2,
         )
 
         records.append(df_grp)
