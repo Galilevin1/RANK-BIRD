@@ -126,6 +126,8 @@ def _run_approach_for_dtype(
     taxonomy_level=None,
     shuffle_ordered: bool = False,
     rank_tie_method: str = "first",
+    use_optuna: bool = False,
+    n_trials: int = 30,
 ) -> pd.DataFrame:
     """
     Load all datasets for `dtype`, apply `approach`, run all protocols.
@@ -197,8 +199,8 @@ def _run_approach_for_dtype(
 
     elif approach == "ranking_sig":
         from functools import partial as _partial
-        _base = _partial(sigmoid_normalize, k=sigmoid_k, center=sigmoid_center)
-        norm_fn = lambda X: _base(rank_normalize(X, tie_method=rank_tie_method))
+        norm_fn = _partial(sigmoid_normalize, k=sigmoid_k, center=sigmoid_center,
+                           tie_method=rank_tie_method)
         all_microbiome, all_names = apply_ranking_pipeline(
             all_microbiome, all_names,
             stability_percentile=stability_percentile,
@@ -209,9 +211,9 @@ def _run_approach_for_dtype(
         )
 
     elif approach == "ranking_relu":
-        norm_fn = lambda X: relu_normalize(
-            rank_normalize(X, tie_method=rank_tie_method), threshold=relu_threshold
-        )
+        from functools import partial as _partial
+        norm_fn = _partial(relu_normalize, threshold=relu_threshold,
+                           tie_method=rank_tie_method)
         all_microbiome, all_names = apply_ranking_pipeline(
             all_microbiome, all_names,
             stability_percentile=stability_percentile,
@@ -224,6 +226,7 @@ def _run_approach_for_dtype(
     else:
         raise ValueError(f"Unknown approach: {approach!r}")
 
+    n_features = all_microbiome[0].shape[1] if all_microbiome else 0
     aligned_targets = [name_to_target[n] for n in all_names if n in name_to_target]
 
     # ── Run protocols per phenotype ───────────────────────────────────────────
@@ -240,9 +243,11 @@ def _run_approach_for_dtype(
             [aligned_targets[i]  for i in idx],
             [all_names[i]        for i in idx],
             phenotype_str,
+            use_optuna=use_optuna,
+            n_trials=n_trials,
         ))
 
-    return pd.concat(records, ignore_index=True) if records else pd.DataFrame()
+    return (pd.concat(records, ignore_index=True) if records else pd.DataFrame()), n_features
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -789,6 +794,345 @@ def _plot_comparison(
     print(f"Saved: {output_path}")
 
 
+def _compute_delta_results(all_results: dict, dtypes: list) -> dict:
+    """
+    For each (dtype, approach) where approach != 'original', subtract the
+    original AUC from each matching (dataset, protocol) row.
+    Returns a dict with the same keys but delta_auc values.
+    """
+    delta = {}
+    for dtype in dtypes:
+        orig = all_results.get((dtype, "original"), pd.DataFrame())
+        if orig.empty:
+            continue
+        orig_lookup = orig.set_index(["dataset", "protocol"])["auc"]
+
+        for approach in APPROACHES:
+            if approach == "original":
+                continue
+            df = all_results.get((dtype, approach), pd.DataFrame())
+            if df.empty:
+                continue
+            df = df.copy()
+            df["auc"] = df.apply(
+                lambda r: r["auc"] - orig_lookup.get((r["dataset"], r["protocol"]), float("nan")),
+                axis=1,
+            )
+            delta[(dtype, approach)] = df
+    return delta
+
+
+def _draw_delta_panel(
+    ax,
+    data: pd.DataFrame,
+    title: str,
+    label_fontsize: int = 14,
+    title_fontsize: int = 14,
+    tick_fontsize: int = 11,
+    legend_fontsize: int = 11,
+    box_width: float = 0.7,
+    dot_size: float = 4,
+):
+    """Draw one delta-AUC panel (AUC - original) onto ax."""
+    import matplotlib.patches as _mp
+    data = data.copy()
+    data["auc"] = pd.to_numeric(data["auc"], errors="coerce")
+    protocol_order     = [p for p in PROTOCOLS if p in data["protocol"].unique()]
+    present_approaches = [a for a in APPROACHES if a != "original" and a in data["approach"].unique()]
+
+    sns.boxplot(
+        data=data,
+        x="protocol", y="auc",
+        hue="approach",
+        order=protocol_order,
+        hue_order=present_approaches,
+        palette={a: _BOX_PALETTE[a] for a in present_approaches},
+        width=box_width,
+        fliersize=0,
+        linewidth=1.4,
+        medianprops=dict(color="#DC143C", linewidth=2.5),
+        ax=ax,
+    )
+    sns.stripplot(
+        data=data,
+        x="protocol", y="auc",
+        hue="approach",
+        order=protocol_order,
+        hue_order=present_approaches,
+        palette={a: _STRIP_PALETTE[a] for a in present_approaches},
+        dodge=True,
+        alpha=0.5, size=dot_size, jitter=True,
+        legend=False,
+        ax=ax,
+    )
+
+    ax.axhline(0, color="gray", linestyle="--", linewidth=1.8, alpha=0.8)
+
+    hue_offsets = {
+        a: (box_width / len(present_approaches)) * (i - (len(present_approaches) - 1) / 2)
+        for i, a in enumerate(present_approaches)
+    }
+    for x_pos, protocol in enumerate(protocol_order):
+        for approach in present_approaches:
+            grp = data[(data["protocol"] == protocol) &
+                       (data["approach"] == approach)]["auc"].dropna()
+            if grp.empty:
+                continue
+            ax.scatter(
+                x_pos + hue_offsets[approach], grp.mean(),
+                marker="D", s=35, color="white", edgecolors="black",
+                linewidths=1.4, zorder=5,
+            )
+
+    ax.set_xlim(-0.5, len(protocol_order) - 0.5)
+    _PROTO_DISPLAY = {
+        "Internal Validation": "Mixed-\nDatasets",
+        "Within Learning":     "Within-\nDatasets",
+    }
+    ax.set_xticks(range(len(protocol_order)))
+    ax.set_xticklabels(
+        [_PROTO_DISPLAY.get(p, p) for p in protocol_order],
+        fontsize=tick_fontsize, rotation=0,
+    )
+    ax.set_xlabel("Protocol", fontsize=label_fontsize, fontweight="bold")
+    ax.set_ylabel("ΔAUC (vs Original)", fontsize=label_fontsize, fontweight="bold")
+    if title:
+        ax.set_title(title, fontsize=title_fontsize, fontweight="bold", pad=10)
+    ax.tick_params(axis="y", labelsize=tick_fontsize)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    legend_handles = [
+        _mp.Patch(facecolor=_BOX_PALETTE[a], edgecolor="black", linewidth=0.8,
+                  label=APPROACH_LABELS.get(a, a))
+        for a in present_approaches
+    ]
+    ax.legend(handles=legend_handles, fontsize=legend_fontsize, framealpha=0.9,
+              loc="lower right")
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.2)
+
+
+def _plot_delta_comparison(
+    all_results: dict,
+    dtypes: list,
+    output_path: Path,
+    sigmoid_k: float,
+    sigmoid_center: float,
+    relu_threshold: float,
+):
+    """
+    Same layout as _plot_comparison but y-axis is ΔAUC (each approach minus original).
+    'original' is dropped; the zero line marks the original performance.
+    """
+    delta = _compute_delta_results(all_results, dtypes)
+    if not delta:
+        print("  [delta plot] no delta data — skipping.")
+        return
+
+    panels = dtypes + ["All datasets"]
+    fig, axes = plt.subplots(1, len(panels), figsize=(9 * len(panels), 6), sharey=False)
+    if len(panels) == 1:
+        axes = [axes]
+
+    for ax, dtype in zip(axes, dtypes):
+        frames = [
+            delta[(dtype, a)].assign(approach=a)
+            for a in APPROACHES
+            if (dtype, a) in delta and not delta[(dtype, a)].empty
+        ]
+        if not frames:
+            ax.set_title(f"{dtype} — no data", fontsize=11)
+            continue
+        _draw_delta_panel(ax, pd.concat(frames, ignore_index=True), title=dtype)
+
+    all_frames = [
+        delta[(dtype, a)].assign(approach=a)
+        for dtype in dtypes
+        for a in APPROACHES
+        if (dtype, a) in delta and not delta[(dtype, a)].empty
+    ]
+    if all_frames:
+        _draw_delta_panel(axes[-1], pd.concat(all_frames, ignore_index=True), title="All datasets")
+    else:
+        axes[-1].set_title("All datasets — no data", fontsize=11)
+
+    param_str = (
+        f"sigmoid k={sigmoid_k}, center={sigmoid_center} | "
+        f"relu threshold={relu_threshold}"
+    )
+    fig.suptitle(
+        f"Distribution Approach — ΔAUC vs Original\n({param_str})",
+        fontsize=13, fontweight="bold",
+    )
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {output_path}")
+
+
+def generate_delta_plot(output_dir: Path) -> None:
+    """
+    Load existing results_*.csv files from output_dir and generate the delta
+    plot. Use this to add a delta plot to any folder that already has results
+    (e.g. distribution_approach_trial with LightGBM results).
+    """
+    output_dir = Path(output_dir)
+    all_results: dict = {}
+
+    for dtype in ["Metagenomics", "Amplicon", "Combined"]:
+        for approach in APPROACHES:
+            p = output_dir / f"results_{dtype.lower()}_{approach}.csv"
+            if p.exists():
+                all_results[(dtype, approach)] = pd.read_csv(p)
+
+    present_dtypes = [d for d in ["Metagenomics", "Amplicon", "Combined"]
+                      if any((d, a) in all_results for a in APPROACHES)]
+    if not all_results:
+        print(f"  [generate_delta_plot] no results found in {output_dir}")
+        return
+
+    _plot_delta_comparison(
+        all_results=all_results,
+        dtypes=present_dtypes,
+        output_path=output_dir / "distribution_approach_delta.png",
+        sigmoid_k=SIGMOID_K,
+        sigmoid_center=SIGMOID_CENTER,
+        relu_threshold=RELU_THRESHOLD,
+    )
+    _plot_train_test_delta(
+        all_results=all_results,
+        dtypes=present_dtypes,
+        output_path=output_dir / "distribution_approach_train_test_delta.png",
+    )
+
+
+def _plot_train_test_delta(
+    all_results: dict,
+    dtypes: list,
+    output_path: Path,
+):
+    """
+    Plot train − test AUC delta for all approaches (including original).
+    Boxplot shows distribution + median (red line); diamond marker shows mean.
+    One column per dtype + All datasets.
+    """
+    import matplotlib.patches as _mp
+
+    panels = dtypes + ["All datasets"]
+    n_panels = len(panels)
+
+    fig, axes = plt.subplots(1, n_panels, figsize=(7 * n_panels, 5), squeeze=False)
+
+    for col_idx, panel in enumerate(panels):
+        ax = axes[0][col_idx]
+
+        if panel == "All datasets":
+            frames = [
+                all_results[(dtype, a)].assign(approach=a)
+                for dtype in dtypes for a in APPROACHES
+                if not all_results.get((dtype, a), pd.DataFrame()).empty
+            ]
+        else:
+            frames = [
+                all_results[(panel, a)].assign(approach=a)
+                for a in APPROACHES
+                if not all_results.get((panel, a), pd.DataFrame()).empty
+            ]
+        if not frames:
+            ax.set_visible(False)
+            continue
+
+        data = pd.concat(frames, ignore_index=True)
+        if "train_auc" not in data.columns or "auc" not in data.columns:
+            ax.set_visible(False)
+            continue
+
+        data["delta"] = pd.to_numeric(data["train_auc"], errors="coerce") \
+                      - pd.to_numeric(data["auc"],       errors="coerce")
+
+        protocol_order     = [p for p in PROTOCOLS if p in data["protocol"].unique()]
+        present_approaches = [a for a in APPROACHES if a in data["approach"].unique()]
+
+        # Boxplot — box line = median
+        sns.boxplot(
+            data=data,
+            x="protocol", y="delta",
+            hue="approach",
+            order=protocol_order,
+            hue_order=present_approaches,
+            palette={a: _BOX_PALETTE[a] for a in present_approaches},
+            width=0.7,
+            fliersize=0,
+            linewidth=1.2,
+            medianprops=dict(color="#DC143C", linewidth=2.5),
+            ax=ax,
+        )
+        sns.stripplot(
+            data=data,
+            x="protocol", y="delta",
+            hue="approach",
+            order=protocol_order,
+            hue_order=present_approaches,
+            palette={a: _STRIP_PALETTE[a] for a in present_approaches},
+            dodge=True, alpha=0.4, size=3, jitter=True,
+            legend=False, ax=ax,
+        )
+
+        # Mean markers — white diamond with black border (same style as comparison plot)
+        box_width = 0.7
+        hue_offsets = {
+            a: (box_width / len(present_approaches)) * (i - (len(present_approaches) - 1) / 2)
+            for i, a in enumerate(present_approaches)
+        }
+        for x_pos, protocol in enumerate(protocol_order):
+            for approach in present_approaches:
+                grp = data[(data["protocol"] == protocol) &
+                           (data["approach"] == approach)]["delta"].dropna()
+                if grp.empty:
+                    continue
+                ax.scatter(
+                    x_pos + hue_offsets[approach], grp.mean(),
+                    marker="D", s=35, color="white", edgecolors="black",
+                    linewidths=1.4, zorder=5,
+                )
+
+        ax.axhline(0, color="gray", linestyle="--", linewidth=1.5, alpha=0.7)
+        ax.set_title(panel, fontsize=12, fontweight="bold", pad=8)
+        ax.set_xlabel("Protocol", fontsize=11, fontweight="bold")
+        ax.set_ylabel("ΔAUC (train − test)" if col_idx == 0 else "",
+                      fontsize=10, fontweight="bold")
+        ax.tick_params(axis="x", labelsize=9, rotation=15)
+        ax.tick_params(axis="y", labelsize=9)
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+        if col_idx == n_panels - 1:
+            approach_handles = [
+                _mp.Patch(facecolor=_BOX_PALETTE[a], edgecolor="black",
+                          linewidth=0.8, label=APPROACH_LABELS.get(a, a))
+                for a in present_approaches
+            ]
+            stat_handles = [
+                plt.Line2D([0], [0], color="#DC143C", linewidth=2.5, label="Median"),
+                plt.Line2D([0], [0], marker="D", color="white", linewidth=0,
+                           markersize=7, markeredgecolor="black",
+                           markeredgewidth=1.4, label="Mean"),
+            ]
+            ax.legend(handles=approach_handles + stat_handles,
+                      fontsize=8, framealpha=0.9, loc="upper right",
+                      title="Approach / Stat")
+        else:
+            legend = ax.get_legend()
+            if legend:
+                legend.remove()
+
+    fig.suptitle("Train − Test AUC Delta by Approach\n(positive = overfitting)",
+                 fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {output_path}")
+
+
 def make_distribution_summary_figure(
     base_dir: Path,
     combined_dir: Path,
@@ -902,6 +1246,8 @@ def run_distribution_investigation(
     taxonomy_level_combined=None,
     shuffle_ordered: bool = False,
     rank_tie_method: str = "first",
+    use_optuna: bool = False,
+    n_trials: int = 30,
 ):
     """
     Compare distribution-adjustment approaches on all phenotypes/dtypes.
@@ -964,6 +1310,77 @@ def run_distribution_investigation(
         ]).to_csv(output_dir / "ordered_datasets.csv", index=False)
         print(f"  [ORDER-CHECK] saved → {output_dir / 'ordered_datasets.csv'}")
 
+    # ── Feature count pre-pass (fast, no ML, always runs) ────────────────────
+    feature_count_records: list = []
+    for dtype in dtypes:
+        pheno_subset_fc = phenotypes if dtype == "Combined" \
+                          else [(p, t) for p, t in phenotypes if t == dtype]
+        if not pheno_subset_fc:
+            continue
+
+        # Load microbiome data only (discard targets)
+        _dfs, _names = [], []
+        for phenotype, t in pheno_subset_fc:
+            folder = DATA_ROOT / f"{phenotype} {t}"
+            if not folder.exists():
+                continue
+            try:
+                dfs, _, names = load_microbiome_datasets_with_targets(folder)
+                _dfs.extend(dfs); _names.extend(names)
+            except Exception:
+                pass
+        if not _dfs:
+            continue
+
+        # Apply taxonomy filter (same as all approaches)
+        _tax = taxonomy_level_by_dtype[dtype]
+        _filtered = filter_to_level(_dfs, _tax)
+
+        # original: union of all columns
+        _union_n = len(set().union(*[set(df.columns) for df in _filtered]))
+
+        # filtered approaches: stability filter on the union
+        _all_microbes = union_microbes(_filtered)
+        _nz = nonzero_percent_by_dataset(_filtered, _names, _all_microbes)
+        _kept = auto_stability_filter(_nz, percentile=stability_percentile_by_dtype[dtype])
+        _kept_n = len(_kept)
+
+        for approach in APPROACHES:
+            if approach == "original":
+                n_feat, ctype = _union_n, "union (varies per fold)"
+            else:
+                # rankbird uses its own pipeline but same stability threshold as proxy
+                n_feat, ctype = _kept_n, "aligned (same for all folds)"
+            feature_count_records.append({
+                "approach":   approach,
+                "dtype":      dtype,
+                "threshold":  stability_percentile_by_dtype[dtype],
+                "n_features": n_feat,
+                "count_type": ctype,
+            })
+
+    # "All datasets" rows: sum Metagenomics + Amplicon (separate pools)
+    _fc_df = pd.DataFrame(feature_count_records)
+    if not _fc_df.empty:
+        for approach in APPROACHES:
+            sub = _fc_df[(_fc_df["dtype"] != "Combined") &
+                         (_fc_df["approach"] == approach)]
+            if sub.empty:
+                continue
+            ctype = "union (varies per fold)" if approach == "original" \
+                    else "sum of separate dtype pools"
+            feature_count_records.append({
+                "approach":   approach,
+                "dtype":      "All datasets",
+                "threshold":  "mixed",
+                "n_features": int(sub["n_features"].sum()),
+                "count_type": ctype,
+            })
+        feat_df = pd.DataFrame(feature_count_records)
+        feat_df.to_csv(output_dir / "feature_counts.csv", index=False)
+        print(f"\nSaved: {output_dir / 'feature_counts.csv'}")
+        print(feat_df.to_string(index=False))
+
     all_results: dict = {}    # {(dtype, approach): full results_df}
 
     for dtype in dtypes:
@@ -988,7 +1405,7 @@ def run_distribution_investigation(
                 if dtype == "Combined":
                     # Route directly to _run_global_for_dtype which handles the full
                     # pooled normalization + per-phenotype learning in one shot.
-                    results_df = _run_global_for_dtype(
+                    results_df, _ = _run_global_for_dtype(
                         pheno_subset,
                         normalization_approach=_APPROACH_TO_NORM[approach],
                         min_samples_per_dataset=min_size,
@@ -996,9 +1413,11 @@ def run_distribution_investigation(
                         taxonomy_level=taxonomy_level_by_dtype[dtype],
                         shuffle_ordered=shuffle_ordered,
                         rank_tie_method=rank_tie_method,
+                        use_optuna=use_optuna,
+                        n_trials=n_trials,
                     )
                 else:
-                    results_df = _run_approach_for_dtype(
+                    results_df, _ = _run_approach_for_dtype(
                         phenotypes=pheno_subset,
                         dtype=dtype,
                         approach=approach,
@@ -1010,6 +1429,8 @@ def run_distribution_investigation(
                         taxonomy_level=taxonomy_level_by_dtype[dtype],
                         shuffle_ordered=shuffle_ordered,
                         rank_tie_method=rank_tie_method,
+                        use_optuna=use_optuna,
+                        n_trials=n_trials,
                     )
                 # Filter single-class datasets before saving
                 results_df = _drop_single_class(results_df, single_class_names)
@@ -1061,6 +1482,19 @@ def run_distribution_investigation(
         sigmoid_k=sigmoid_k,
         sigmoid_center=sigmoid_center,
         relu_threshold=relu_threshold,
+    )
+    _plot_delta_comparison(
+        all_results=all_results,
+        dtypes=dtypes,
+        output_path=output_dir / "distribution_approach_delta.png",
+        sigmoid_k=sigmoid_k,
+        sigmoid_center=sigmoid_center,
+        relu_threshold=relu_threshold,
+    )
+    _plot_train_test_delta(
+        all_results=all_results,
+        dtypes=dtypes,
+        output_path=output_dir / "distribution_approach_train_test_delta.png",
     )
 
 

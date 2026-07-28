@@ -3,10 +3,63 @@ import pandas as pd
 import shap
 from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score, f1_score
 import lightgbm as lgb
+import optuna
+
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+_LGBM_FIXED = {
+    'objective':    'binary',
+    'metric':       'auc',
+    'boosting_type':'gbdt',
+    'verbose':      -1,
+}
+
+
+def _suggest_params(trial, space: str) -> dict:
+    if space == "within":
+        return {
+            'num_leaves':        trial.suggest_int  ('num_leaves',        10,   80),
+            'max_depth':         trial.suggest_int  ('max_depth',         3,    8),
+            'learning_rate':     trial.suggest_float('learning_rate',     0.01, 0.3,  log=True),
+            'min_child_samples': trial.suggest_int  ('min_child_samples', 10,   80),
+            'min_child_weight':  trial.suggest_float('min_child_weight',  1.0,  100.0, log=True),
+            'min_split_gain':    trial.suggest_float('min_split_gain',    0.0,  5.0),
+            'feature_fraction':  trial.suggest_float('feature_fraction',  0.4,  1.0),
+            'bagging_fraction':  trial.suggest_float('bagging_fraction',  0.5,  1.0),
+            'bagging_freq':      trial.suggest_int  ('bagging_freq',      1,    10),
+            'lambda_l1':         trial.suggest_float('lambda_l1',         1e-3, 100.0, log=True),
+            'lambda_l2':         trial.suggest_float('lambda_l2',         1e-3, 100.0, log=True),
+        }
+    else:  # "default" — lodo / mixed datasets
+        return {
+            'num_leaves':        trial.suggest_int  ('num_leaves',        20,   200),
+            'max_depth':         trial.suggest_int  ('max_depth',         3,    12),
+            'learning_rate':     trial.suggest_float('learning_rate',     0.01, 0.2,  log=True),
+            'min_child_samples': trial.suggest_int  ('min_child_samples', 5,    100),
+            'min_child_weight':  trial.suggest_float('min_child_weight',  1e-3, 50.0,  log=True),
+            'min_split_gain':    trial.suggest_float('min_split_gain',    0.0,  2.0),
+            'feature_fraction':  trial.suggest_float('feature_fraction',  0.5,  1.0),
+            'bagging_fraction':  trial.suggest_float('bagging_fraction',  0.5,  1.0),
+            'bagging_freq':      trial.suggest_int  ('bagging_freq',      1,    10),
+            'lambda_l1':         trial.suggest_float('lambda_l1',         1e-8, 100.0, log=True),
+            'lambda_l2':         trial.suggest_float('lambda_l2',         1e-8, 100.0, log=True),
+        }
+
+
+def _compute_metrics(y_true, proba) -> dict:
+    pred = (proba > 0.5).astype(int)
+    return {
+        'auc':       roc_auc_score(y_true, proba),
+        'accuracy':  accuracy_score(y_true, pred),
+        'precision': precision_score(y_true, pred, zero_division=0),
+        'recall':    recall_score(y_true, pred, zero_division=0),
+        'f1':        f1_score(y_true, pred, zero_division=0),
+    }
+
 
 def train_lightgbm(X_train: pd.DataFrame, y_train: pd.DataFrame,
                    X_test: pd.DataFrame, y_test: pd.DataFrame) -> dict:
-    """Train LightGBM model and return metrics."""
+    """Train LightGBM model and return test + train metrics."""
     params = {
         'objective': 'binary',
         'metric': 'auc',
@@ -26,18 +79,63 @@ def train_lightgbm(X_train: pd.DataFrame, y_train: pd.DataFrame,
     model = lgb.train(params, train_data, valid_sets=[valid_data],
                       num_boost_round=1000, callbacks=[lgb.early_stopping(100), lgb.log_evaluation(0)])
 
-    y_pred_proba = model.predict(X_test, num_iteration=model.best_iteration)
-    y_pred = (y_pred_proba > 0.5).astype(int)
+    train_m = _compute_metrics(y_train.values.ravel(),
+                               model.predict(X_train, num_iteration=model.best_iteration))
+    test_m  = _compute_metrics(y_test.values.ravel(),
+                               model.predict(X_test,  num_iteration=model.best_iteration))
 
-    metrics = {
-        'auc': roc_auc_score(y_test, y_pred_proba),
-        'accuracy': accuracy_score(y_test, y_pred),
-        'precision': precision_score(y_test, y_pred, zero_division=0),
-        'recall': recall_score(y_test, y_pred, zero_division=0),
-        'f1': f1_score(y_test, y_pred, zero_division=0)
+    return {
+        **test_m,
+        **{f"train_{k}": v for k, v in train_m.items()},
     }
 
-    return metrics
+
+def train_lightgbm_optuna(
+    X_train: pd.DataFrame, y_train: pd.DataFrame,
+    X_val:   pd.DataFrame, y_val:   pd.DataFrame,
+    X_test:  pd.DataFrame, y_test:  pd.DataFrame,
+    n_trials: int = 30,
+    param_space: str = "default",
+    random_state: int = 42,
+) -> dict:
+    """Train LightGBM with Optuna hyperparameter search.
+
+    Optimises on val, never touches test during search. Final model
+    is re-trained with the best params (train only, val for early stopping).
+
+    param_space : "default" for lodo/mixed, "within" for within-dataset.
+    """
+    y_train_arr = y_train.values.ravel()
+    y_val_arr   = y_val.values.ravel()
+    y_test_arr  = y_test.values.ravel()
+
+    def objective(trial):
+        params = {**_LGBM_FIXED, 'random_state': random_state, **_suggest_params(trial, param_space)}
+        train_ds = lgb.Dataset(X_train, label=y_train_arr)
+        val_ds   = lgb.Dataset(X_val,   label=y_val_arr, reference=train_ds)
+        model = lgb.train(
+            params, train_ds, valid_sets=[val_ds],
+            num_boost_round=1000,
+            callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)],
+        )
+        return roc_auc_score(y_val_arr, model.predict(X_val, num_iteration=model.best_iteration))
+
+    sampler = optuna.samplers.TPESampler(seed=random_state)
+    study   = optuna.create_study(direction='maximize', sampler=sampler)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    best_params = {**_LGBM_FIXED, 'random_state': random_state, **study.best_params}
+    train_ds = lgb.Dataset(X_train, label=y_train_arr)
+    val_ds   = lgb.Dataset(X_val,   label=y_val_arr, reference=train_ds)
+    model = lgb.train(
+        best_params, train_ds, valid_sets=[val_ds],
+        num_boost_round=1000,
+        callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)],
+    )
+
+    test_m  = _compute_metrics(y_test_arr,  model.predict(X_test,  num_iteration=model.best_iteration))
+    train_m = _compute_metrics(y_train_arr, model.predict(X_train, num_iteration=model.best_iteration))
+    return {**test_m, **{f"train_{k}": v for k, v in train_m.items()}}
 
 
 def train_lightgbm_with_shap(X_train: pd.DataFrame, y_train: pd.DataFrame,

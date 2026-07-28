@@ -2,7 +2,7 @@ import pandas as pd
 from typing import List, Tuple, Dict
 from sklearn.model_selection import train_test_split
 from .data_loading import combine_datasets
-from .lgbm_model import train_lightgbm
+from .lgbm_model import train_lightgbm, train_lightgbm_optuna
 
 def lodo_protocol(microbiome_dfs: List[pd.DataFrame], target_dfs: List[pd.DataFrame],
                         dataset_names: List[str]) -> pd.DataFrame:
@@ -100,6 +100,137 @@ def within_dataset_protocol(microbiome_dfs: List[pd.DataFrame], target_dfs: List
             **metrics
         }
         results.append(result)
+        print(f"  AUC: {metrics['auc']:.4f}")
+
+    return pd.DataFrame(results)
+
+
+# ── Optuna-tuned variants ──────────────────────────────────────────────────────
+
+def lodo_protocol_optuna(
+    microbiome_dfs: List[pd.DataFrame],
+    target_dfs:     List[pd.DataFrame],
+    dataset_names:  List[str],
+    n_trials: int = 30,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """LODO with Optuna tuning.
+
+    For each test dataset i: val = dataset (i+1) % N, train = all others.
+    Optuna optimises on val; final model is evaluated on test.
+    Falls back to fixed-param LODO when N < 3.
+    """
+    print("\n=== LODO (Optuna) ===")
+    n = len(dataset_names)
+    results = []
+
+    for test_idx in range(n):
+        if n < 3:
+            train_indices = [i for i in range(n) if i != test_idx]
+            X_train, y_train = combine_datasets(microbiome_dfs, target_dfs, train_indices)
+            X_test,  y_test  = microbiome_dfs[test_idx], target_dfs[test_idx]
+            common = X_train.columns.intersection(X_test.columns)
+            metrics = train_lightgbm(X_train[common], y_train, X_test[common], y_test)
+        else:
+            val_idx       = (test_idx + 1) % n
+            train_indices = [i for i in range(n) if i != test_idx and i != val_idx]
+
+            X_train, y_train = combine_datasets(microbiome_dfs, target_dfs, train_indices)
+            X_val,   y_val   = microbiome_dfs[val_idx],  target_dfs[val_idx]
+            X_test,  y_test  = microbiome_dfs[test_idx], target_dfs[test_idx]
+
+            common = (X_train.columns
+                      .intersection(X_val.columns)
+                      .intersection(X_test.columns))
+            X_train, X_val, X_test = X_train[common], X_val[common], X_test[common]
+
+            print(f"  train={[dataset_names[i] for i in train_indices]}  "
+                  f"val={dataset_names[val_idx]}  test={dataset_names[test_idx]}")
+            metrics = train_lightgbm_optuna(
+                X_train, y_train, X_val, y_val, X_test, y_test,
+                n_trials=n_trials, param_space="default", random_state=random_state,
+            )
+
+        results.append({'test_dataset': dataset_names[test_idx], **metrics})
+        print(f"  AUC: {metrics['auc']:.4f}")
+
+    return pd.DataFrame(results)
+
+
+def internal_validation_protocol_optuna(
+    microbiome_dfs: List[pd.DataFrame],
+    target_dfs:     List[pd.DataFrame],
+    dataset_names:  List[str],
+    n_trials: int = 30,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Mixed-datasets internal validation with Optuna tuning.
+
+    For each LODO context i: pool the other N-1 datasets → 60/20/20
+    (train/val/test). Optuna optimises on val; evaluate on test.
+    """
+    print("\n=== Internal Validation (Optuna) ===")
+    results = []
+
+    for test_idx in range(len(dataset_names)):
+        pool_indices = [i for i in range(len(dataset_names)) if i != test_idx]
+        X_pool, y_pool = combine_datasets(microbiome_dfs, target_dfs, pool_indices)
+
+        X_tv, X_test, y_tv, y_test = train_test_split(
+            X_pool, y_pool, test_size=0.20, random_state=random_state, stratify=y_pool,
+        )
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_tv, y_tv, test_size=0.25, random_state=random_state, stratify=y_tv,
+        )
+
+        print(f"  Mixed validation (context={dataset_names[test_idx]})")
+        metrics = train_lightgbm_optuna(
+            X_train, y_train, X_val, y_val, X_test, y_test,
+            n_trials=n_trials, param_space="default", random_state=random_state,
+        )
+
+        results.append({'test_dataset': dataset_names[test_idx], **metrics})
+        print(f"  AUC: {metrics['auc']:.4f}")
+
+    return pd.DataFrame(results)
+
+
+def within_dataset_protocol_optuna(
+    microbiome_dfs: List[pd.DataFrame],
+    target_dfs:     List[pd.DataFrame],
+    dataset_names:  List[str],
+    n_trials: int = 30,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Within-dataset learning with Optuna tuning.
+
+    Splits each dataset 60/20/20 (train/val/test). Uses a more regularised
+    parameter space suited to small datasets.
+    """
+    print("\n=== Within-Dataset Learning (Optuna) ===")
+    results = []
+
+    for idx, name in enumerate(dataset_names):
+        X, y = microbiome_dfs[idx], target_dfs[idx]
+
+        if len(y.value_counts()) < 2:
+            print(f"  Skipping {name} — only one class present")
+            continue
+
+        X_tv, X_test, y_tv, y_test = train_test_split(
+            X, y, test_size=0.20, random_state=random_state, stratify=y,
+        )
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_tv, y_tv, test_size=0.25, random_state=random_state, stratify=y_tv,
+        )
+
+        print(f"  {name}")
+        metrics = train_lightgbm_optuna(
+            X_train, y_train, X_val, y_val, X_test, y_test,
+            n_trials=n_trials, param_space="within", random_state=random_state,
+        )
+
+        results.append({'test_dataset': name, **metrics})
         print(f"  AUC: {metrics['auc']:.4f}")
 
     return pd.DataFrame(results)

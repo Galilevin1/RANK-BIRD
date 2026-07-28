@@ -95,10 +95,12 @@ CONFIG = {
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
      #                   "3","4","5"
-    "run_investigations": ["distribution_approach_average"],
-    #                     "distribution_approach"         — original order, positional tie-breaking
-    #                     "distribution_approach_ordered" — shuffle fully-ordered datasets first
-    #                     "distribution_approach_average" — average rank for ties (order-invariant)
+    "use_optuna": True,   # True = Optuna tuning per protocol; False = fixed params
+    "n_trials":   30,     # Optuna trials per LGBM fit (ignored when use_optuna=False)
+    "run_investigations": ["distribution_approach_ordered_average"],
+    #                     "distribution_approach"                 — original order, positional tie-breaking
+    #                     "distribution_approach_ordered"         — shuffle fully-ordered datasets, positional tie-breaking
+    #                     "distribution_approach_ordered_average" — shuffle fully-ordered datasets, average tie-breaking
     "investigations_plot_only": False,   # True = reload existing CSVs; False = recompute
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
     "run_dataset_table": False,          # build per-dataset supplementary table (AUCs, demographics, sparsity)
@@ -127,9 +129,9 @@ CONFIG = {
     # -----------------------
     "min_samples_per_dataset": 550,
     "z_thresh": 3.0,
-    "stability_percentile_local": 0.3,
-    "stability_percentile_global_metagenomics": 0.1,
-    "stability_percentile_global_amplicon":     0.3,
+    "stability_percentile_local": 0.15,
+    "stability_percentile_global_metagenomics": 0.05,
+    "stability_percentile_global_amplicon":     0.15,
     "taxonomy_level_metagenomics": "gs",    # None = all, "g" = genus only, "gs" = genus+species
     "taxonomy_level_amplicon":     "gs",
     "decompose_method": "PCA",
@@ -140,7 +142,7 @@ CONFIG = {
     # filtering and distribution normalization (learning stays per phenotype).
     # -----------------------
     "cross_dtype_normalization":           False,
-    "stability_percentile_global_combined": 0.2,
+    "stability_percentile_global_combined": 0.1,
     "taxonomy_level_combined":              "gs",
 }
 
@@ -242,7 +244,7 @@ def main():
             results_df = pd.read_csv(results_path)
         else:
             print("Running protocol benchmark...")
-            results_df = runner(
+            raw = runner(
                 phenotypes=phenotypes,
                 normalization_approach=CONFIG.get("normalization_approach"),
                 apply_decompose=CONFIG["decomposition"],
@@ -259,7 +261,10 @@ def main():
                 stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
                 taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
                 data_root=CONFIG.get("data_folder", "Data"),
+                use_optuna=CONFIG.get("use_optuna", False),
+                n_trials=CONFIG.get("n_trials", 30),
             )
+            results_df = raw[0] if isinstance(raw, tuple) else raw
             results_df.to_csv(results_path, index=False)
 
 
@@ -911,6 +916,8 @@ def main():
         taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
         taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
         taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
+        use_optuna=CONFIG.get("use_optuna", False),
+        n_trials=CONFIG.get("n_trials", 30),
     )
 
     if "distribution_approach" in CONFIG["run_investigations"]:
@@ -931,17 +938,17 @@ def main():
                                        **_dist_common)
         print_auc_summary_table(dist_dir)
 
-    if "distribution_approach_average" in CONFIG["run_investigations"]:
-        # Average: average rank for ties — identical values always map identically
-        dist_dir = FIGURES_BASE / "distribution_approach_average"
-        print(f"  [distribution_approach_average] output dir: {dist_dir.resolve()}")
+    if "distribution_approach_ordered_average" in CONFIG["run_investigations"]:
+        # Ordered+Average: shuffle fully-ordered datasets, then use average tie-breaking
+        dist_dir = FIGURES_BASE / "distribution_approach_ordered_average"
+        print(f"  [distribution_approach_ordered_average] output dir: {dist_dir.resolve()}")
         run_distribution_investigation(output_dir=dist_dir,
-                                       shuffle_ordered=False, rank_tie_method="average",
+                                       shuffle_ordered=True, rank_tie_method="average",
                                        **_dist_common)
         print_auc_summary_table(dist_dir)
 
     if any(m in CONFIG["run_investigations"] for m in
-           ["distribution_approach", "distribution_approach_ordered", "distribution_approach_average"]):
+           ["distribution_approach", "distribution_approach_ordered", "distribution_approach_ordered_average"]):
         _delta_src = dist_dir / "delta_tests.csv"
         if _delta_src.exists():
             import shutil

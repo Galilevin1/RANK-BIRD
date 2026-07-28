@@ -14,7 +14,10 @@ from src.rankbird.normalization.ranking import (
 )
 from src.rankbird.representation.multi_datasets_SPDR import apply_bias_SPDR
 from evaluation.data_loading import load_microbiome_datasets_with_targets
-from evaluation.learning_protocols import lodo_protocol, internal_validation_protocol, within_dataset_protocol
+from evaluation.learning_protocols import (
+    lodo_protocol, internal_validation_protocol, within_dataset_protocol,
+    lodo_protocol_optuna, internal_validation_protocol_optuna, within_dataset_protocol_optuna,
+)
 
 
 def _detect_and_shuffle_ordered(
@@ -70,23 +73,41 @@ def _detect_and_shuffle_ordered(
     return new_microbiome, new_targets, ordered_info
 
 
-def _run_protocols_on_group(microbiome_dfs, target_dfs, dataset_names, phenotype_str):
+def _run_protocols_on_group(
+    microbiome_dfs, target_dfs, dataset_names, phenotype_str,
+    use_optuna: bool = False,
+    n_trials: int = 30,
+):
     records = []
 
-    results = {
-        "LODO": lodo_protocol(microbiome_dfs, target_dfs, dataset_names),
-        "Internal Validation": internal_validation_protocol(microbiome_dfs, target_dfs, dataset_names),
-        "Within Learning": within_dataset_protocol(microbiome_dfs, target_dfs, dataset_names),
-    }
+    if use_optuna:
+        results = {
+            "LODO": lodo_protocol_optuna(
+                microbiome_dfs, target_dfs, dataset_names, n_trials=n_trials),
+            "Internal Validation": internal_validation_protocol_optuna(
+                microbiome_dfs, target_dfs, dataset_names, n_trials=n_trials),
+            "Within Learning": within_dataset_protocol_optuna(
+                microbiome_dfs, target_dfs, dataset_names, n_trials=n_trials),
+        }
+    else:
+        results = {
+            "LODO": lodo_protocol(microbiome_dfs, target_dfs, dataset_names),
+            "Internal Validation": internal_validation_protocol(microbiome_dfs, target_dfs, dataset_names),
+            "Within Learning": within_dataset_protocol(microbiome_dfs, target_dfs, dataset_names),
+        }
 
+    _METRICS = ["auc", "accuracy", "precision", "recall", "f1"]
     for protocol, df in results.items():
         for _, row in df.iterrows():
-            records.append({
+            rec = {
                 "phenotype": phenotype_str,
-                "dataset": row["test_dataset"],
-                "protocol": protocol,
-                "auc": row["auc"],
-            })
+                "dataset":   row["test_dataset"],
+                "protocol":  protocol,
+            }
+            for m in _METRICS:
+                rec[m]             = row.get(m,           float("nan"))
+                rec[f"train_{m}"]  = row.get(f"train_{m}", float("nan"))
+            records.append(rec)
 
     return pd.DataFrame(records)
 
@@ -113,6 +134,8 @@ def _run_global_for_dtype(
     shuffle_ordered: bool = False,
     random_state: int = 42,
     rank_tie_method: str = "first",
+    use_optuna: bool = False,
+    n_trials: int = 30,
 ):
     """
     normalization_approach options
@@ -184,11 +207,7 @@ def _run_global_for_dtype(
     elif normalization_approach in _RANKING_NORM_FNS:
         _base_norm_fn = _RANKING_NORM_FNS[normalization_approach]
         from functools import partial as _partial
-        norm_fn = (
-            _partial(_base_norm_fn, tie_method=rank_tie_method)
-            if rank_tie_method != "first"
-            else _base_norm_fn
-        )
+        norm_fn = _partial(_base_norm_fn, tie_method=rank_tie_method)
         all_microbiome, all_dataset_names = apply_ranking_pipeline(
             all_microbiome,
             all_dataset_names,
@@ -204,6 +223,13 @@ def _run_global_for_dtype(
 
     if apply_decompose:
         all_microbiome, _, _ = apply_bias_SPDR(all_microbiome, decompose_method, rank=decompose_rank)
+
+    if normalization_approach is None:
+        # No alignment across datasets — report union of all feature columns
+        n_features = len(set().union(*[set(df.columns) for df in all_microbiome])) if all_microbiome else 0
+    else:
+        # All datasets reindexed to same columns after filtering
+        n_features = all_microbiome[0].shape[1] if all_microbiome else 0
 
     # ----------------------------------
     # 3. Split BACK by phenotype
@@ -224,12 +250,14 @@ def _run_global_for_dtype(
             microbiome_grp,
             target_grp,
             names_grp,
-            phenotype_str
+            phenotype_str,
+            use_optuna=use_optuna,
+            n_trials=n_trials,
         )
 
         records.append(df_grp)
 
-    return pd.concat(records, ignore_index=True)
+    return pd.concat(records, ignore_index=True), n_features
 
 
 def run_protocol_benchmark_global_preprocessing(
@@ -249,6 +277,8 @@ def run_protocol_benchmark_global_preprocessing(
     stability_percentile_global_combined: float = 0.6,
     taxonomy_level_combined=None,
     data_root: str = "Data",
+    use_optuna: bool = False,
+    n_trials: int = 30,
 ):
     if cross_dtype_normalization:
         # Pool ALL datasets (both dtypes) into one normalization pass
@@ -266,6 +296,8 @@ def run_protocol_benchmark_global_preprocessing(
             decompose_rank=decompose_rank,
             taxonomy_level=tax_level,
             data_root=data_root,
+            use_optuna=use_optuna,
+            n_trials=n_trials,
         )
 
     # Default: normalize each dtype separately
@@ -274,6 +306,7 @@ def run_protocol_benchmark_global_preprocessing(
         phenotypes_by_dtype[dtype].append((phenotype, dtype))
 
     all_records = []
+    feature_counts = {}
 
     stability_percentile_by_dtype = {
         "Amplicon":     stability_percentile_global_amplicon,
@@ -287,7 +320,7 @@ def run_protocol_benchmark_global_preprocessing(
     for dtype, phenotype_list in phenotypes_by_dtype.items():
         print(f"\n[Global preprocessing] dtype={dtype}  approach={normalization_approach}")
 
-        records_dtype = _run_global_for_dtype(
+        records_dtype, n_feat = _run_global_for_dtype(
             phenotype_list,
             normalization_approach=normalization_approach,
             apply_decompose=apply_decompose,
@@ -299,11 +332,14 @@ def run_protocol_benchmark_global_preprocessing(
             decompose_rank=decompose_rank,
             taxonomy_level=taxonomy_level_by_dtype.get(dtype),
             data_root=data_root,
+            use_optuna=use_optuna,
+            n_trials=n_trials,
         )
 
         all_records.append(records_dtype)
+        feature_counts[dtype] = n_feat
 
     if len(all_records) == 0:
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
 
-    return pd.concat(all_records, ignore_index=True)
+    return pd.concat(all_records, ignore_index=True), feature_counts

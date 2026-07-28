@@ -147,7 +147,7 @@ def run_stability_sweep(  # noqa: E302
 
         norm_approach = "filter_only" if filter_only else normalization_approach
         if level is None:
-            results_df = _run_global_for_dtype(
+            results_df, _ = _run_global_for_dtype(
                 pheno_subset,
                 normalization_approach=norm_approach,
                 stability_percentile_global=pct,
@@ -286,7 +286,7 @@ def get_original_mean_auc(
         return {}
 
     if level is None:
-        results_df = _run_global_for_dtype(
+        results_df, _ = _run_global_for_dtype(
             pheno_subset, normalization_approach=None
         )
     else:

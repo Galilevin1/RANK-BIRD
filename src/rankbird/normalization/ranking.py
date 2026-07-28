@@ -64,13 +64,14 @@ def sigmoid_normalize(
     X: pd.DataFrame,
     k: float = SIGMOID_K,
     center: float = SIGMOID_CENTER,
+    tie_method: str = "first",
 ) -> pd.DataFrame:
     """
     Column ranking (→ [0, 1]) followed by sigmoid:
         value = σ(k · (r − center))
     Produces soft present/absent-like values.
     """
-    ranked = rank_normalize(X)
+    ranked = rank_normalize(X, tie_method=tie_method)
     result = ranked.copy()
     for col in ranked.columns:
         r = ranked[col].values
@@ -81,6 +82,7 @@ def sigmoid_normalize(
 def relu_normalize(
     X: pd.DataFrame,
     threshold: float = RELU_THRESHOLD,
+    tie_method: str = "first",
 ) -> pd.DataFrame:
     """
     Rank-based hard threshold: rank each column to [0, 1] to decide which
@@ -88,7 +90,7 @@ def relu_normalize(
       - samples with rank >= threshold → keep original abundance
       - samples with rank < threshold  → set to 0
     """
-    ranked = rank_normalize(X)
+    ranked = rank_normalize(X, tie_method=tie_method)
     result = X.copy().astype(float)
     for col in X.columns:
         r = ranked[col].values
