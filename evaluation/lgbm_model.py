@@ -130,6 +130,7 @@ def train_lightgbm_optuna(
 
     try:
         best_params = {**_LGBM_FIXED, 'random_state': random_state, **study.best_params}
+        print(f"    [Optuna best] val_auc={study.best_value:.4f}  params={study.best_params}")
     except ValueError:
         # All trials failed — fall back to fixed params
         return train_lightgbm(X_train, y_train, X_test, y_test)
