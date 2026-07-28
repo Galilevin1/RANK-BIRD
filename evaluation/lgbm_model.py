@@ -109,6 +109,10 @@ def train_lightgbm_optuna(
     y_val_arr   = y_val.values.ravel()
     y_test_arr  = y_test.values.ravel()
 
+    if len(np.unique(y_val_arr)) < 2 or len(np.unique(y_train_arr)) < 2:
+        # Single-class train or val — Optuna cannot run; fall back to fixed params
+        return train_lightgbm(X_train, y_train, X_test, y_test)
+
     def objective(trial):
         params = {**_LGBM_FIXED, 'random_state': random_state, **_suggest_params(trial, param_space)}
         train_ds = lgb.Dataset(X_train, label=y_train_arr)
@@ -124,7 +128,11 @@ def train_lightgbm_optuna(
     study   = optuna.create_study(direction='maximize', sampler=sampler)
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
-    best_params = {**_LGBM_FIXED, 'random_state': random_state, **study.best_params}
+    try:
+        best_params = {**_LGBM_FIXED, 'random_state': random_state, **study.best_params}
+    except ValueError:
+        # All trials failed — fall back to fixed params
+        return train_lightgbm(X_train, y_train, X_test, y_test)
     train_ds = lgb.Dataset(X_train, label=y_train_arr)
     val_ds   = lgb.Dataset(X_val,   label=y_val_arr, reference=train_ds)
     model = lgb.train(

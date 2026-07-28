@@ -132,7 +132,23 @@ def lodo_protocol_optuna(
             common = X_train.columns.intersection(X_test.columns)
             metrics = train_lightgbm(X_train[common], y_train, X_test[common], y_test)
         else:
-            val_idx       = (test_idx + 1) % n
+            # Pick val: first candidate after test_idx (round-robin) that has both classes
+            val_idx = None
+            for offset in range(1, n):
+                candidate = (test_idx + offset) % n
+                if len(target_dfs[candidate]["Tag"].unique()) >= 2:
+                    val_idx = candidate
+                    break
+            if val_idx is None:
+                # No valid val dataset — fall back to standard LODO without Optuna
+                train_indices = [i for i in range(n) if i != test_idx]
+                X_train, y_train = combine_datasets(microbiome_dfs, target_dfs, train_indices)
+                X_test,  y_test  = microbiome_dfs[test_idx], target_dfs[test_idx]
+                common = X_train.columns.intersection(X_test.columns)
+                metrics = train_lightgbm(X_train[common], y_train, X_test[common], y_test)
+                results.append({'test_dataset': dataset_names[test_idx], **metrics})
+                print(f"  AUC: {metrics['auc']:.4f}  (no valid val set — fixed params)")
+                continue
             train_indices = [i for i in range(n) if i != test_idx and i != val_idx]
 
             X_train, y_train = combine_datasets(microbiome_dfs, target_dfs, train_indices)
