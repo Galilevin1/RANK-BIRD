@@ -134,16 +134,26 @@ def train_lightgbm_optuna(
     except ValueError:
         # All trials failed — fall back to fixed params
         return train_lightgbm(X_train, y_train, X_test, y_test)
+
+    # Probe run on train→val to get best_iteration; val is never the test set
     train_ds = lgb.Dataset(X_train, label=y_train_arr)
     val_ds   = lgb.Dataset(X_val,   label=y_val_arr, reference=train_ds)
-    model = lgb.train(
+    probe = lgb.train(
         best_params, train_ds, valid_sets=[val_ds],
         num_boost_round=1000,
         callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)],
     )
+    best_iteration = probe.best_iteration
 
-    test_m  = _compute_metrics(y_test_arr,  model.predict(X_test,  num_iteration=model.best_iteration))
-    train_m = _compute_metrics(y_train_arr, model.predict(X_train, num_iteration=model.best_iteration))
+    # Final model: train on all available data (train + val), fixed round count.
+    # For LODO this restores the full N-1 training pool; test is never seen.
+    X_full = pd.concat([X_train, X_val], ignore_index=True)
+    y_full = np.concatenate([y_train_arr, y_val_arr])
+    model  = lgb.train(best_params, lgb.Dataset(X_full, label=y_full),
+                       num_boost_round=best_iteration)
+
+    test_m  = _compute_metrics(y_test_arr,  model.predict(X_test))
+    train_m = _compute_metrics(y_train_arr, model.predict(X_train))
     return {**test_m, **{f"train_{k}": v for k, v in train_m.items()}}
 
 
