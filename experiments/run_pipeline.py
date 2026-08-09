@@ -96,17 +96,17 @@ CONFIG = {
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
      #                   "3","4","5"
-    "use_optuna": False,   # False = fixed params
-                           # True = Optuna per phenotype per fold (per-phenotype train+Optuna)
-                           # "cross_optuna" = Optuna on all phenotypes, final model per-phenotype only
-                           # "cross_train"  = Optuna AND final model on all phenotypes
+    "use_optuna": "cross_optuna",  # False = fixed params
+                                   # True = Optuna per phenotype per fold
+                                   # "cross_optuna" = Optuna on all phenotypes, final model per-phenotype
+                                   # "cross_train"  = Optuna AND final model on all phenotypes
     "n_trials":   30,     # Optuna trials per LGBM fit (ignored when use_optuna=False)
     "run_investigations": ["distribution_approach_ordered_average"],
     #                     "distribution_approach"                 — original order, positional tie-breaking
     #                     "distribution_approach_ordered"         — shuffle fully-ordered datasets, positional tie-breaking
     #                     "distribution_approach_ordered_average" — shuffle fully-ordered datasets, average tie-breaking
     "investigations_plot_only": False,   # True = reload existing CSVs; False = recompute
-    "save_filtered_datasets": False,     # export stability-filtered (un-normalized) CSVs to Data_filtered/
+    "save_filtered_datasets": True,      # export stability-filtered (un-normalized) CSVs to Data_filtered/
     "filtered_output_root": "Data_filtered",
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
     "run_dataset_table": False,          # build per-dataset supplementary table (AUCs, demographics, sparsity)

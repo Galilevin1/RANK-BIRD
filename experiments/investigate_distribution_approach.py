@@ -60,7 +60,8 @@ from src.rankbird.normalization.ranking import (
 )
 from evaluation.data_loading import load_microbiome_datasets_with_targets
 from experiments.run_protocols_global_processing import (
-    _run_protocols_on_group, _run_global_for_dtype, _detect_and_shuffle_ordered,
+    _run_protocols_on_group, _dispatch_protocols,
+    _run_global_for_dtype, _detect_and_shuffle_ordered,
 )
 
 
@@ -306,25 +307,10 @@ def _run_approach_for_dtype(
     n_features = all_microbiome[0].shape[1] if all_microbiome else 0
     aligned_targets = [name_to_target[n] for n in all_names if n in name_to_target]
 
-    # ── Run protocols per phenotype ───────────────────────────────────────────
-    records = []
-    for phenotype_str in set(dataset_to_phenotype.values()):
-        idx = [
-            i for i, n in enumerate(all_names)
-            if dataset_to_phenotype.get(n) == phenotype_str
-        ]
-        if not idx:
-            continue
-        records.append(_run_protocols_on_group(
-            [all_microbiome[i] for i in idx],
-            [aligned_targets[i]  for i in idx],
-            [all_names[i]        for i in idx],
-            phenotype_str,
-            use_optuna=use_optuna,
-            n_trials=n_trials,
-        ))
-
-    return (pd.concat(records, ignore_index=True) if records else pd.DataFrame()), n_features
+    return _dispatch_protocols(
+        all_microbiome, aligned_targets, all_names, dataset_to_phenotype,
+        use_optuna=use_optuna, n_trials=n_trials,
+    ), n_features
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

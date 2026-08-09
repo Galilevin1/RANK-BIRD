@@ -114,6 +114,80 @@ def _run_protocols_on_group(
     return pd.DataFrame(records)
 
 
+def _dispatch_protocols(
+    all_microbiome: list,
+    all_targets: list,
+    all_names: list,
+    dataset_to_phenotype: dict,
+    use_optuna,
+    n_trials: int,
+) -> pd.DataFrame:
+    """Run all three protocols with the correct mode based on use_optuna.
+
+    use_optuna=False          → fixed params, per phenotype
+    use_optuna=True           → Optuna per fold per phenotype
+    use_optuna="cross_optuna" → Optuna on cross-phenotype pool, final model per-phenotype
+    use_optuna="cross_train"  → Optuna AND final model cross-phenotype
+    """
+    _METRICS = ["auc", "accuracy", "precision", "recall", "f1"]
+    records = []
+
+    if use_optuna in ("cross_optuna", "cross_train"):
+        cross_train_flag = (use_optuna == "cross_train")
+
+        lodo_df = lodo_protocol_cross_phenotype(
+            all_microbiome, all_targets, all_names,
+            dataset_to_phenotype, cross_train=cross_train_flag, n_trials=n_trials,
+        )
+        iv_df = internal_validation_protocol_cross_phenotype(
+            all_microbiome, all_targets, all_names,
+            dataset_to_phenotype, cross_train=cross_train_flag, n_trials=n_trials,
+        )
+
+        for protocol_name, df in [("LODO", lodo_df), ("Internal Validation", iv_df)]:
+            for _, row in df.iterrows():
+                test_name = row["test_dataset"]
+                pheno_str = dataset_to_phenotype.get(test_name, "unknown")
+                rec = {"phenotype": pheno_str, "dataset": test_name, "protocol": protocol_name}
+                for m in _METRICS:
+                    rec[m]            = row.get(m,           float("nan"))
+                    rec[f"train_{m}"] = row.get(f"train_{m}", float("nan"))
+                records.append(rec)
+
+        # Within: per-dataset — no cross-phenotype pooling here
+        for pheno_str in sorted(set(dataset_to_phenotype.values())):
+            idx = [i for i, nm in enumerate(all_names) if dataset_to_phenotype[nm] == pheno_str]
+            wdf = within_dataset_protocol_optuna(
+                [all_microbiome[i] for i in idx],
+                [all_targets[i]    for i in idx],
+                [all_names[i]      for i in idx],
+                n_trials=n_trials,
+            )
+            for _, row in wdf.iterrows():
+                rec = {"phenotype": pheno_str, "dataset": row["test_dataset"],
+                       "protocol": "Within Learning"}
+                for m in _METRICS:
+                    rec[m]            = row.get(m,           float("nan"))
+                    rec[f"train_{m}"] = row.get(f"train_{m}", float("nan"))
+                records.append(rec)
+
+    else:
+        for phenotype_str in set(dataset_to_phenotype.values()):
+            idx = [i for i, nm in enumerate(all_names) if dataset_to_phenotype[nm] == phenotype_str]
+            df_grp = _run_protocols_on_group(
+                [all_microbiome[i] for i in idx],
+                [all_targets[i]    for i in idx],
+                [all_names[i]      for i in idx],
+                phenotype_str,
+                use_optuna=use_optuna,
+                n_trials=n_trials,
+            )
+            records.append(df_grp)
+        return pd.concat(records, ignore_index=True) if records else pd.DataFrame()
+
+    return pd.DataFrame(records)
+
+
 _RANKING_NORM_FNS = {
     "rankbird_ranking":     rank_normalize,
     "rankbird_sigmoid":     sigmoid_normalize,
@@ -238,79 +312,10 @@ def _run_global_for_dtype(
     # ----------------------------------
     # 3. Run protocols
     # ----------------------------------
-    _METRICS = ["auc", "accuracy", "precision", "recall", "f1"]
-
-    if use_optuna in ("cross_optuna", "cross_train"):
-        cross_train_flag = (use_optuna == "cross_train")
-
-        lodo_df = lodo_protocol_cross_phenotype(
-            all_microbiome, all_targets, all_dataset_names,
-            dataset_to_phenotype,
-            cross_train=cross_train_flag,
-            n_trials=n_trials,
-        )
-        iv_df = internal_validation_protocol_cross_phenotype(
-            all_microbiome, all_targets, all_dataset_names,
-            dataset_to_phenotype,
-            cross_train=cross_train_flag,
-            n_trials=n_trials,
-        )
-
-        records = []
-
-        for protocol_name, df in [("LODO", lodo_df), ("Internal Validation", iv_df)]:
-            for _, row in df.iterrows():
-                test_name = row["test_dataset"]
-                pheno_str = dataset_to_phenotype.get(test_name, "unknown")
-                rec = {"phenotype": pheno_str, "dataset": test_name, "protocol": protocol_name}
-                for m in _METRICS:
-                    rec[m]            = row.get(m,           float("nan"))
-                    rec[f"train_{m}"] = row.get(f"train_{m}", float("nan"))
-                records.append(rec)
-
-        # Within: per-dataset — no cross-phenotype, run per phenotype group
-        for pheno_str in sorted(set(dataset_to_phenotype.values())):
-            idx = [i for i, nm in enumerate(all_dataset_names)
-                   if dataset_to_phenotype[nm] == pheno_str]
-            wdf = within_dataset_protocol_optuna(
-                [all_microbiome[i]    for i in idx],
-                [all_targets[i]       for i in idx],
-                [all_dataset_names[i] for i in idx],
-                n_trials=n_trials,
-            )
-            for _, row in wdf.iterrows():
-                rec = {"phenotype": pheno_str, "dataset": row["test_dataset"],
-                       "protocol": "Within Learning"}
-                for m in _METRICS:
-                    rec[m]            = row.get(m,           float("nan"))
-                    rec[f"train_{m}"] = row.get(f"train_{m}", float("nan"))
-                records.append(rec)
-
-        return pd.DataFrame(records), n_features
-
-    # ----------------------------------
-    # 3b. Split BACK by phenotype (per-phenotype or no Optuna)
-    # ----------------------------------
-    records = []
-
-    for phenotype_str in set(dataset_to_phenotype.values()):
-        idx = [
-            i for i, name in enumerate(all_dataset_names)
-            if dataset_to_phenotype[name] == phenotype_str
-        ]
-
-        microbiome_grp = [all_microbiome[i] for i in idx]
-        target_grp     = [all_targets[i]    for i in idx]
-        names_grp      = [all_dataset_names[i] for i in idx]
-
-        df_grp = _run_protocols_on_group(
-            microbiome_grp, target_grp, names_grp, phenotype_str,
-            use_optuna=use_optuna,
-            n_trials=n_trials,
-        )
-        records.append(df_grp)
-
-    return pd.concat(records, ignore_index=True), n_features
+    return _dispatch_protocols(
+        all_microbiome, all_targets, all_dataset_names, dataset_to_phenotype,
+        use_optuna=use_optuna, n_trials=n_trials,
+    ), n_features
 
 
 def run_protocol_benchmark_global_preprocessing(
