@@ -2,7 +2,7 @@ import pandas as pd
 from typing import List, Tuple, Dict
 from sklearn.model_selection import train_test_split
 from .data_loading import combine_datasets
-from .lgbm_model import train_lightgbm, train_lightgbm_optuna
+from .lgbm_model import train_lightgbm, train_lightgbm_optuna, train_lightgbm_optuna_cross
 
 def lodo_protocol(microbiome_dfs: List[pd.DataFrame], target_dfs: List[pd.DataFrame],
                         dataset_names: List[str]) -> pd.DataFrame:
@@ -207,6 +207,178 @@ def internal_validation_protocol_optuna(
 
         results.append({'test_dataset': dataset_names[test_idx], **metrics})
         print(f"  AUC: {metrics['auc']:.4f}")
+
+    return pd.DataFrame(results)
+
+
+def lodo_protocol_cross_phenotype(
+    all_microbiome_dfs: List[pd.DataFrame],
+    all_target_dfs:     List[pd.DataFrame],
+    all_dataset_names:  List[str],
+    dataset_to_phenotype: Dict[str, str],
+    cross_train: bool = False,
+    n_trials: int = 30,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """LODO with cross-phenotype Optuna.
+
+    For each test dataset:
+      val          = another dataset from the same phenotype
+      Optuna train = ALL datasets in the dtype except test and val
+      Final train  = same-phenotype datasets only       (cross_train=False)
+                   = same cross-phenotype Optuna pool   (cross_train=True)
+    """
+    mode = "cross_train" if cross_train else "cross_optuna"
+    print(f"\n=== LODO ({mode}) ===")
+    n = len(all_dataset_names)
+    results = []
+
+    for test_idx in range(n):
+        test_name  = all_dataset_names[test_idx]
+        test_pheno = dataset_to_phenotype[test_name]
+
+        same_pheno_others = [
+            i for i, nm in enumerate(all_dataset_names)
+            if dataset_to_phenotype[nm] == test_pheno and i != test_idx
+        ]
+        val_idx = None
+        for i in same_pheno_others:
+            if len(all_target_dfs[i]["Tag"].unique()) >= 2:
+                val_idx = i
+                break
+
+        if val_idx is None:
+            train_idx = same_pheno_others
+            if not train_idx:
+                continue
+            X_tr, y_tr = combine_datasets(all_microbiome_dfs, all_target_dfs, train_idx)
+            X_te, y_te = all_microbiome_dfs[test_idx], all_target_dfs[test_idx]
+            common = X_tr.columns.intersection(X_te.columns)
+            metrics = train_lightgbm(X_tr[common], y_tr, X_te[common], y_te)
+            results.append({'test_dataset': test_name, **metrics})
+            print(f"  {test_name} AUC: {metrics['auc']:.4f}  (no valid val — fixed params)")
+            continue
+
+        optuna_train_idx = [i for i in range(n) if i != test_idx and i != val_idx]
+        pheno_train_idx  = [i for i in same_pheno_others if i != val_idx]
+
+        if cross_train or not pheno_train_idx:
+            final_train_idx = optuna_train_idx
+        else:
+            final_train_idx = pheno_train_idx
+
+        X_optuna_tr, y_optuna_tr = combine_datasets(all_microbiome_dfs, all_target_dfs, optuna_train_idx)
+        X_final_tr,  y_final_tr  = combine_datasets(all_microbiome_dfs, all_target_dfs, final_train_idx)
+        X_val,  y_val  = all_microbiome_dfs[val_idx],  all_target_dfs[val_idx]
+        X_test, y_test = all_microbiome_dfs[test_idx], all_target_dfs[test_idx]
+
+        common = (X_optuna_tr.columns
+                  .intersection(X_final_tr.columns)
+                  .intersection(X_val.columns)
+                  .intersection(X_test.columns))
+        X_optuna_tr = X_optuna_tr[common]
+        X_final_tr  = X_final_tr[common]
+        X_val       = X_val[common]
+        X_test      = X_test[common]
+
+        print(f"  test={test_name}  val={all_dataset_names[val_idx]}  "
+              f"optuna_pool={len(optuna_train_idx)}  final_pool={len(final_train_idx)}")
+        metrics = train_lightgbm_optuna_cross(
+            X_optuna_tr, y_optuna_tr,
+            X_final_tr,  y_final_tr,
+            X_val, y_val, X_test, y_test,
+            n_trials=n_trials, param_space="default", random_state=random_state,
+        )
+
+        results.append({'test_dataset': test_name, **metrics})
+        print(f"  AUC: {metrics['auc']:.4f}")
+
+    return pd.DataFrame(results)
+
+
+def internal_validation_protocol_cross_phenotype(
+    all_microbiome_dfs: List[pd.DataFrame],
+    all_target_dfs:     List[pd.DataFrame],
+    all_dataset_names:  List[str],
+    dataset_to_phenotype: Dict[str, str],
+    cross_train: bool = False,
+    n_trials: int = 30,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Internal validation with cross-phenotype Optuna.
+
+    For each phenotype and each context dataset in that phenotype:
+      Pool          = same-phenotype remaining N-1 datasets → 60/20/20
+      Optuna train  = 60% same-phenotype + ALL other phenotypes in the dtype
+      Final train   = 60% same-phenotype only              (cross_train=False)
+                    = 60% same-phenotype + ALL others       (cross_train=True)
+      Val / Test    = 20% / 20% of same-phenotype pool (no other phenotypes)
+    """
+    mode = "cross_train" if cross_train else "cross_optuna"
+    print(f"\n=== Internal Validation ({mode}) ===")
+    results = []
+
+    for phenotype in sorted(set(dataset_to_phenotype.values())):
+        pheno_indices = [
+            i for i, nm in enumerate(all_dataset_names)
+            if dataset_to_phenotype[nm] == phenotype
+        ]
+        other_indices = [
+            i for i in range(len(all_dataset_names))
+            if dataset_to_phenotype[all_dataset_names[i]] != phenotype
+        ]
+
+        for context_idx in pheno_indices:
+            pool_indices = [i for i in pheno_indices if i != context_idx]
+            if not pool_indices:
+                continue
+
+            X_pool, y_pool = combine_datasets(all_microbiome_dfs, all_target_dfs, pool_indices)
+
+            try:
+                X_tv, X_test, y_tv, y_test = train_test_split(
+                    X_pool, y_pool, test_size=0.20, random_state=random_state, stratify=y_pool,
+                )
+                X_pheno_tr, X_val, y_pheno_tr, y_val = train_test_split(
+                    X_tv, y_tv, test_size=0.25, random_state=random_state, stratify=y_tv,
+                )
+            except ValueError:
+                continue
+
+            if other_indices:
+                X_other, y_other = combine_datasets(all_microbiome_dfs, all_target_dfs, other_indices)
+                common = (X_pheno_tr.columns
+                          .intersection(X_other.columns)
+                          .intersection(X_val.columns)
+                          .intersection(X_test.columns))
+                X_optuna_tr = pd.concat([X_pheno_tr[common], X_other[common]], ignore_index=True)
+                y_optuna_tr = pd.concat([y_pheno_tr,         y_other],         ignore_index=True)
+            else:
+                common = X_pheno_tr.columns.intersection(X_val.columns).intersection(X_test.columns)
+                X_optuna_tr = X_pheno_tr[common]
+                y_optuna_tr = y_pheno_tr
+
+            if cross_train:
+                X_final_tr = X_optuna_tr
+                y_final_tr = y_optuna_tr
+            else:
+                X_final_tr = X_pheno_tr[common]
+                y_final_tr = y_pheno_tr
+
+            X_val  = X_val[common]
+            X_test = X_test[common]
+
+            context_name = all_dataset_names[context_idx]
+            print(f"  Internal ({phenotype} context={context_name})")
+            metrics = train_lightgbm_optuna_cross(
+                X_optuna_tr, y_optuna_tr,
+                X_final_tr,  y_final_tr,
+                X_val, y_val, X_test, y_test,
+                n_trials=n_trials, param_space="default", random_state=random_state,
+            )
+
+            results.append({'test_dataset': context_name, **metrics})
+            print(f"  AUC: {metrics['auc']:.4f}")
 
     return pd.DataFrame(results)
 

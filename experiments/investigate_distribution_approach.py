@@ -54,6 +54,7 @@ from src.rankbird.normalization.pipeline import apply_normalization_pipeline
 from src.rankbird.normalization.taxonomy_filter import filter_to_level
 from src.rankbird.normalization.ranking import (
     rank_normalize, sigmoid_normalize, relu_normalize,
+    clr_normalize, clr_rank_normalize, compute_alpha_diversity_features,
     apply_ranking_pipeline,
     SIGMOID_K, SIGMOID_CENTER, RELU_THRESHOLD,
 )
@@ -68,7 +69,8 @@ DATA_ROOT    = PROJECT_ROOT / "Data"
 
 # ── Approach catalogue ────────────────────────────────────────────────────────
 
-APPROACHES = ["original", "original_filtered", "rankbird", "ranking", "ranking_sig", "ranking_relu"]
+APPROACHES = ["original", "original_filtered", "rankbird", "ranking", "ranking_sig", "ranking_relu",
+              "clr", "clr_ranking", "ranking_alpha", "ranking_pa"]
 
 APPROACH_LABELS = {
     "original":          "Original",
@@ -77,6 +79,10 @@ APPROACH_LABELS = {
     "ranking":           "Rank-Only",
     "ranking_sig":       "Rank+Sigmoid",
     "ranking_relu":      "Rank+Relu",
+    "clr":               "CLR",
+    "clr_ranking":       "CLR+Rank",
+    "ranking_alpha":     "Rank+Diversity",
+    "ranking_pa":        "Rank+PA",
 }
 
 APPROACH_COLORS = {
@@ -86,6 +92,10 @@ APPROACH_COLORS = {
     "ranking":           "#ff7f0e",
     "ranking_sig":       "#2ca02c",
     "ranking_relu":      "#d62728",
+    "clr":               "#17becf",
+    "clr_ranking":       "#e377c2",
+    "ranking_alpha":     "#bcbd22",
+    "ranking_pa":        "#7f7f7f",
 }
 
 PROTOCOLS = ["LODO", "Internal Validation", "Within Learning"]
@@ -222,6 +232,73 @@ def _run_approach_for_dtype(
             random_state=random_state,
             taxonomy_level=taxonomy_level,
         )
+
+    elif approach == "clr":
+        from functools import partial as _partial
+        norm_fn = _partial(clr_normalize, tie_method=rank_tie_method)
+        all_microbiome, all_names = apply_ranking_pipeline(
+            all_microbiome, all_names,
+            stability_percentile=stability_percentile,
+            norm_fn=norm_fn,
+            min_size=min_size,
+            random_state=random_state,
+            taxonomy_level=taxonomy_level,
+        )
+
+    elif approach == "clr_ranking":
+        from functools import partial as _partial
+        norm_fn = _partial(clr_rank_normalize, tie_method=rank_tie_method)
+        all_microbiome, all_names = apply_ranking_pipeline(
+            all_microbiome, all_names,
+            stability_percentile=stability_percentile,
+            norm_fn=norm_fn,
+            min_size=min_size,
+            random_state=random_state,
+            taxonomy_level=taxonomy_level,
+        )
+
+    elif approach == "ranking_alpha":
+        from functools import partial as _partial
+        # Compute alpha diversity from raw data before normalization alters values
+        alpha_by_name = compute_alpha_diversity_features(all_microbiome, all_names)
+        norm_fn = _partial(rank_normalize, tie_method=rank_tie_method)
+        all_microbiome, all_names = apply_ranking_pipeline(
+            all_microbiome, all_names,
+            stability_percentile=stability_percentile,
+            norm_fn=norm_fn,
+            min_size=min_size,
+            random_state=random_state,
+            taxonomy_level=taxonomy_level,
+        )
+        # Append three diversity columns to each normalized dataset
+        all_microbiome = [
+            pd.concat([df, alpha_by_name[name].reindex(df.index)], axis=1)
+            for df, name in zip(all_microbiome, all_names)
+        ]
+
+    elif approach == "ranking_pa":
+        from functools import partial as _partial
+        norm_fn = _partial(rank_normalize, tie_method=rank_tie_method)
+        all_microbiome, all_names = apply_ranking_pipeline(
+            all_microbiome, all_names,
+            stability_percentile=stability_percentile,
+            norm_fn=norm_fn,
+            min_size=min_size,
+            random_state=random_state,
+            taxonomy_level=taxonomy_level,
+        )
+        # Append binary presence/absence columns alongside each ranked feature
+        all_microbiome = [
+            pd.concat([
+                df,
+                pd.DataFrame(
+                    (df.values > 0).astype(float),
+                    index=df.index,
+                    columns=[f'__pa_{c}__' for c in df.columns],
+                ),
+            ], axis=1)
+            for df in all_microbiome
+        ]
 
     else:
         raise ValueError(f"Unknown approach: {approach!r}")
@@ -495,99 +572,103 @@ def compute_normalization_comparison(
     all_results: dict,
     dtypes: list,
     baseline: str = "original",
-    treatment: str = "rankbird",
     alpha: float = 0.05,
 ) -> pd.DataFrame:
-    """
-    For each dtype × protocol compare baseline vs treatment (default: original vs RANK-BIRD).
+    """Compare every non-baseline approach vs the baseline (default: original).
 
-    Per paired dataset:
+    For each panel × protocol × treatment:
       - delta_mean   = mean(treatment) - mean(baseline)
       - delta_median = median(treatment) - median(baseline)
-      - p_ttest      : paired t-test on per-dataset AUC values (tests mean difference)
-      - p_wilcoxon   : Wilcoxon signed-rank test on per-dataset AUC differences (tests median)
+      - p_ttest      : paired t-test on per-dataset AUC values
+      - p_wilcoxon   : Wilcoxon signed-rank test on per-dataset AUC differences
 
+    BH-FDR correction is applied across all (panel × protocol × treatment) comparisons.
     Returns a DataFrame saved as delta_tests.csv in the investigation output dir.
     """
     rows = []
     panels = _build_panels(all_results, dtypes)
+    treatments = [a for a in APPROACHES if a != baseline]
 
     for panel_name, auc_by_approach in panels.items():
-        if baseline not in auc_by_approach or treatment not in auc_by_approach:
+        if baseline not in auc_by_approach:
             continue
 
+        s_base_by_proto: dict = {}
         for protocol in PROTOCOLS:
-            s_base = (auc_by_approach[baseline]
-                      [auc_by_approach[baseline]["protocol"] == protocol]
-                      [["dataset", "auc"]].dropna()
-                      .set_index("dataset")["auc"])
-            s_treat = (auc_by_approach[treatment]
-                       [auc_by_approach[treatment]["protocol"] == protocol]
-                       [["dataset", "auc"]].dropna()
-                       .set_index("dataset")["auc"])
+            s = (auc_by_approach[baseline]
+                 [auc_by_approach[baseline]["protocol"] == protocol]
+                 [["dataset", "auc"]].dropna()
+                 .set_index("dataset")["auc"])
+            s_base_by_proto[protocol] = s
 
-            common = sorted(set(s_base.index) & set(s_treat.index))
-            if len(common) < 3:
+        for treatment in treatments:
+            if treatment not in auc_by_approach:
                 continue
 
-            v_base  = s_base.loc[common].values
-            v_treat = s_treat.loc[common].values
-            diffs   = v_treat - v_base
+            for protocol in PROTOCOLS:
+                s_base  = s_base_by_proto[protocol]
+                s_treat = (auc_by_approach[treatment]
+                           [auc_by_approach[treatment]["protocol"] == protocol]
+                           [["dataset", "auc"]].dropna()
+                           .set_index("dataset")["auc"])
 
-            # ── Means ──────────────────────────────────────────────────────────
-            mean_base  = float(v_base.mean())
-            mean_treat = float(v_treat.mean())
-            delta_mean = mean_treat - mean_base
+                common = sorted(set(s_base.index) & set(s_treat.index))
+                if len(common) < 3:
+                    continue
 
-            # ── Medians ────────────────────────────────────────────────────────
-            median_base  = float(np.median(v_base))
-            median_treat = float(np.median(v_treat))
-            delta_median = median_treat - median_base
+                v_base  = s_base.loc[common].values
+                v_treat = s_treat.loc[common].values
+                diffs   = v_treat - v_base
 
-            # ── Paired t-test (mean difference) ───────────────────────────────
-            try:
-                _, p_ttest = ttest_rel(v_treat, v_base)
-            except Exception:
-                p_ttest = float("nan")
+                mean_base    = float(v_base.mean())
+                mean_treat   = float(v_treat.mean())
+                delta_mean   = mean_treat - mean_base
+                median_base  = float(np.median(v_base))
+                median_treat = float(np.median(v_treat))
+                delta_median = median_treat - median_base
 
-            # ── Wilcoxon signed-rank (median of differences) ──────────────────
-            try:
-                _, p_wilcoxon = wilcoxon(diffs, alternative="two-sided")
-            except Exception:
-                p_wilcoxon = float("nan")
+                try:
+                    _, p_ttest = ttest_rel(v_treat, v_base)
+                except Exception:
+                    p_ttest = float("nan")
 
-            _treat_label = APPROACH_LABELS.get(treatment, treatment).replace(" ", "_")
-            rows.append({
-                "panel":        panel_name,
-                "protocol":     protocol,
-                "n_datasets":   len(common),
-                "mean_original":           round(mean_base,  3),
-                f"mean_{_treat_label}":    round(mean_treat, 3),
-                "delta_mean":              round(delta_mean, 3),
-                "p_ttest":                 round(float(p_ttest), 4),
-                "sig_ttest":               _assign_stars(p_ttest),
-                "median_original":         round(median_base,  3),
-                f"median_{_treat_label}":  round(median_treat, 3),
-                "delta_median":            round(delta_median, 3),
-                "p_wilcoxon":              round(float(p_wilcoxon), 4),
-                "sig_wilcoxon":            _assign_stars(p_wilcoxon),
-            })
+                try:
+                    _, p_wilcoxon = wilcoxon(diffs, alternative="two-sided")
+                except Exception:
+                    p_wilcoxon = float("nan")
+
+                rows.append({
+                    "panel":            panel_name,
+                    "protocol":         protocol,
+                    "treatment":        treatment,
+                    "treatment_label":  APPROACH_LABELS.get(treatment, treatment),
+                    "n_datasets":       len(common),
+                    "mean_original":    round(mean_base,    3),
+                    "mean_treatment":   round(mean_treat,   3),
+                    "delta_mean":       round(delta_mean,   3),
+                    "p_ttest":          round(float(p_ttest), 4),
+                    "sig_ttest":        _assign_stars(p_ttest),
+                    "median_original":  round(median_base,  3),
+                    "median_treatment": round(median_treat, 3),
+                    "delta_median":     round(delta_median, 3),
+                    "p_wilcoxon":       round(float(p_wilcoxon), 4),
+                    "sig_wilcoxon":     _assign_stars(p_wilcoxon),
+                })
 
     result_df = pd.DataFrame(rows)
 
-    # ── Apply BH FDR correction across all comparisons ───────────────────────
     if not result_df.empty:
-        for p_col, sig_col, fdr_col, stars_fdr_col in [
-            ("p_ttest",    "sig_ttest",    "p_ttest_fdr",    "sig_ttest_fdr"),
-            ("p_wilcoxon", "sig_wilcoxon", "p_wilcoxon_fdr", "sig_wilcoxon_fdr"),
+        for p_col, fdr_col, stars_fdr_col in [
+            ("p_ttest",    "p_ttest_fdr",    "sig_ttest_fdr"),
+            ("p_wilcoxon", "p_wilcoxon_fdr", "sig_wilcoxon_fdr"),
         ]:
-            pvals = result_df[p_col].values.astype(float)
-            valid  = ~np.isnan(pvals)
+            pvals    = result_df[p_col].values.astype(float)
+            valid    = ~np.isnan(pvals)
             fdr_vals = np.full(len(pvals), float("nan"))
             if valid.any():
                 fdr_vals[valid] = _fdr_bh(pvals[valid])
-            result_df[fdr_col]     = [round(float(v), 4) if not np.isnan(v) else float("nan")
-                                      for v in fdr_vals]
+            result_df[fdr_col]      = [round(float(v), 4) if not np.isnan(v) else float("nan")
+                                       for v in fdr_vals]
             result_df[stars_fdr_col] = [_assign_stars(v) if not np.isnan(v) else "nan"
                                         for v in fdr_vals]
 
@@ -606,6 +687,10 @@ _BOX_PALETTE = {
     "ranking":           "#F4A36A",
     "ranking_sig":       "#8FD17E",
     "ranking_relu":      "#E87E7E",
+    "clr":               "#9FE4ED",
+    "clr_ranking":       "#F0B8E0",
+    "ranking_alpha":     "#E0E080",
+    "ranking_pa":        "#C0C0C0",
 }
 _STRIP_PALETTE = {
     "original":          "#5a3a7a",
@@ -614,6 +699,10 @@ _STRIP_PALETTE = {
     "ranking":           "#b5581e",
     "ranking_sig":       "#2a7a2a",
     "ranking_relu":      "#8a2a2a",
+    "clr":               "#0d7d8a",
+    "clr_ranking":       "#a0307a",
+    "ranking_alpha":     "#7a7a00",
+    "ranking_pa":        "#505050",
 }
 
 
@@ -1227,7 +1316,14 @@ _APPROACH_TO_NORM = {
     "ranking":           "rankbird_ranking",
     "ranking_sig":       "rankbird_sigmoid",
     "ranking_relu":      "rankbird_relu",
+    "clr":               "rankbird_clr",
+    "clr_ranking":       "rankbird_clr_ranking",
+    # ranking_alpha and ranking_pa require post-normalization augmentation
+    # which is not supported in the Combined (_run_global_for_dtype) path
 }
+
+# Approaches that work only via _run_approach_for_dtype (per-dtype), not Combined
+_COMBINED_UNSUPPORTED = {"ranking_alpha", "ranking_pa"}
 
 
 def run_distribution_investigation(
@@ -1403,6 +1499,9 @@ def run_distribution_investigation(
                 continue
             else:
                 if dtype == "Combined":
+                    if approach in _COMBINED_UNSUPPORTED:
+                        print(f"  [SKIP] {approach} not supported for Combined dtype")
+                        continue
                     # Route directly to _run_global_for_dtype which handles the full
                     # pooled normalization + per-phenotype learning in one shot.
                     results_df, _ = _run_global_for_dtype(
@@ -1468,12 +1567,18 @@ def run_distribution_investigation(
         print(f"\nPost-hoc (Bonferroni + BH-FDR corrected paired t-test + Wilcoxon):")
         print(posthoc_df[show_cols].to_string(index=False))
 
-    # ── Delta + tests: original vs each approach ──────────────────────────────
+    # ── Delta + tests: original vs every other approach ──────────────────────
     delta_df = compute_normalization_comparison(all_results, dtypes)
     if not delta_df.empty:
         delta_df.to_csv(output_dir / "delta_tests.csv", index=False)
-        print("\nOriginal vs RANK-BIRD — delta & statistical tests:")
-        print(delta_df.to_string(index=False))
+        print("\nOriginal vs each normalization method — delta & statistical tests:")
+        show_delta_cols = ["panel", "protocol", "treatment_label", "n_datasets",
+                           "mean_original", "mean_treatment", "delta_mean",
+                           "p_ttest", "sig_ttest", "p_ttest_fdr", "sig_ttest_fdr",
+                           "delta_median", "p_wilcoxon", "sig_wilcoxon",
+                           "p_wilcoxon_fdr", "sig_wilcoxon_fdr"]
+        show_delta_cols = [c for c in show_delta_cols if c in delta_df.columns]
+        print(delta_df[show_delta_cols].to_string(index=False))
 
     _plot_comparison(
         all_results=all_results,
@@ -1573,44 +1678,36 @@ def print_auc_summary_table(output_dir: Path, approaches=("original", "rankbird"
 
     print(sep + "\n")
 
-    # ── Delta table ───────────────────────────────────────────────────────────
+    # ── Delta table (original vs each method) ────────────────────────────────
     delta_path = output_dir / "delta_tests.csv"
     if delta_path.exists():
         delta = pd.read_csv(delta_path)
-        cw = {"panel": 16, "protocol": 22, "n": 4,
+        cw = {"panel": 16, "protocol": 22, "treat": 16, "n": 4,
               "mb": 8, "mt": 8, "dm": 7, "pt": 8, "st": 4,
               "mdb": 8, "mdt": 8, "dmed": 7, "pw": 8, "sw": 4}
         hdr = (f"\n{'Panel':<{cw['panel']}}  {'Protocol':<{cw['protocol']}}"
-               f"  {'N':>{cw['n']}}"
-               f"  {'Mean(O)':>{cw['mb']}}  {'Mean(R)':>{cw['mt']}}  {'ΔMean':>{cw['dm']}}"
-               f"  {'p(t-test)':>{cw['pt']}}  {'':>{cw['st']}}"
-               f"  {'Med(O)':>{cw['mdb']}}  {'Med(R)':>{cw['mdt']}}  {'ΔMedian':>{cw['dmed']}}"
-               f"  {'p(Wilcox)':>{cw['pw']}}  {'':>{cw['sw']}}")
+               f"  {'Method':<{cw['treat']}}  {'N':>{cw['n']}}"
+               f"  {'Mean(O)':>{cw['mb']}}  {'Mean(M)':>{cw['mt']}}  {'ΔMean':>{cw['dm']}}"
+               f"  {'p(t-test)':>{cw['pt']}}  {'FDR':>{cw['st']}}"
+               f"  {'ΔMedian':>{cw['dmed']}}  {'p(Wilcox)':>{cw['pw']}}  {'FDR':>{cw['sw']}}")
         sep2 = "-" * (len(hdr) - 1)
         print(sep2)
         print(hdr)
         print(sep2)
-        # detect dynamic column names (mean_original + mean_<label>)
-        mean_orig_col   = "mean_original"
-        median_orig_col = "median_original"
-        mean_treat_col   = next((c for c in delta.columns if c.startswith("mean_")   and c != mean_orig_col),   None)
-        median_treat_col = next((c for c in delta.columns if c.startswith("median_") and c != median_orig_col), None)
+        label_col = "treatment_label" if "treatment_label" in delta.columns else "treatment"
         prev = None
         for _, r in delta.iterrows():
             if r["panel"] != prev:
                 if prev is not None:
                     print()
                 prev = r["panel"]
-            mean_o   = r[mean_orig_col]   if mean_orig_col   in r.index else float("nan")
-            mean_t   = r[mean_treat_col]  if mean_treat_col  else float("nan")
-            med_o    = r[median_orig_col] if median_orig_col in r.index else float("nan")
-            med_t    = r[median_treat_col] if median_treat_col else float("nan")
+            fdr_t = r.get("p_ttest_fdr",    float("nan"))
+            fdr_w = r.get("p_wilcoxon_fdr", float("nan"))
             print(f"{r['panel']:<{cw['panel']}}  {r['protocol']:<{cw['protocol']}}"
-                  f"  {int(r['n_datasets']):>{cw['n']}}"
-                  f"  {mean_o:>{cw['mb']}.3f}  {mean_t:>{cw['mt']}.3f}"
+                  f"  {str(r[label_col]):<{cw['treat']}}  {int(r['n_datasets']):>{cw['n']}}"
+                  f"  {r['mean_original']:>{cw['mb']}.3f}  {r['mean_treatment']:>{cw['mt']}.3f}"
                   f"  {r['delta_mean']:>+{cw['dm']}.3f}  {r['p_ttest']:>{cw['pt']}.4f}"
-                  f"  {str(r['sig_ttest']):<{cw['st']}}"
-                  f"  {med_o:>{cw['mdb']}.3f}  {med_t:>{cw['mdt']}.3f}"
+                  f"  {_assign_stars(fdr_t) if not (isinstance(fdr_t, float) and np.isnan(fdr_t)) else 'nan':<{cw['st']}}"
                   f"  {r['delta_median']:>+{cw['dmed']}.3f}  {r['p_wilcoxon']:>{cw['pw']}.4f}"
-                  f"  {str(r['sig_wilcoxon']):<{cw['sw']}}")
+                  f"  {_assign_stars(fdr_w) if not (isinstance(fdr_w, float) and np.isnan(fdr_w)) else 'nan':<{cw['sw']}}")
         print(sep2 + "\n")

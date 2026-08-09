@@ -9,6 +9,7 @@ from src.rankbird.normalization.stability import (
 from src.rankbird.normalization.taxonomy_filter import filter_to_level
 from src.rankbird.normalization.ranking import (
     rank_normalize, sigmoid_normalize, relu_normalize,
+    clr_normalize, clr_rank_normalize,
     apply_ranking_pipeline,
     SIGMOID_K, SIGMOID_CENTER, RELU_THRESHOLD,
 )
@@ -17,6 +18,7 @@ from evaluation.data_loading import load_microbiome_datasets_with_targets
 from evaluation.learning_protocols import (
     lodo_protocol, internal_validation_protocol, within_dataset_protocol,
     lodo_protocol_optuna, internal_validation_protocol_optuna, within_dataset_protocol_optuna,
+    lodo_protocol_cross_phenotype, internal_validation_protocol_cross_phenotype,
 )
 
 
@@ -113,9 +115,11 @@ def _run_protocols_on_group(
 
 
 _RANKING_NORM_FNS = {
-    "rankbird_ranking":  rank_normalize,
-    "rankbird_sigmoid":  sigmoid_normalize,
-    "rankbird_relu":     relu_normalize,
+    "rankbird_ranking":     rank_normalize,
+    "rankbird_sigmoid":     sigmoid_normalize,
+    "rankbird_relu":        relu_normalize,
+    "rankbird_clr":         clr_normalize,
+    "rankbird_clr_ranking": clr_rank_normalize,
 }
 
 
@@ -232,7 +236,60 @@ def _run_global_for_dtype(
         n_features = all_microbiome[0].shape[1] if all_microbiome else 0
 
     # ----------------------------------
-    # 3. Split BACK by phenotype
+    # 3. Run protocols
+    # ----------------------------------
+    _METRICS = ["auc", "accuracy", "precision", "recall", "f1"]
+
+    if use_optuna in ("cross_optuna", "cross_train"):
+        cross_train_flag = (use_optuna == "cross_train")
+
+        lodo_df = lodo_protocol_cross_phenotype(
+            all_microbiome, all_targets, all_dataset_names,
+            dataset_to_phenotype,
+            cross_train=cross_train_flag,
+            n_trials=n_trials,
+        )
+        iv_df = internal_validation_protocol_cross_phenotype(
+            all_microbiome, all_targets, all_dataset_names,
+            dataset_to_phenotype,
+            cross_train=cross_train_flag,
+            n_trials=n_trials,
+        )
+
+        records = []
+
+        for protocol_name, df in [("LODO", lodo_df), ("Internal Validation", iv_df)]:
+            for _, row in df.iterrows():
+                test_name = row["test_dataset"]
+                pheno_str = dataset_to_phenotype.get(test_name, "unknown")
+                rec = {"phenotype": pheno_str, "dataset": test_name, "protocol": protocol_name}
+                for m in _METRICS:
+                    rec[m]            = row.get(m,           float("nan"))
+                    rec[f"train_{m}"] = row.get(f"train_{m}", float("nan"))
+                records.append(rec)
+
+        # Within: per-dataset — no cross-phenotype, run per phenotype group
+        for pheno_str in sorted(set(dataset_to_phenotype.values())):
+            idx = [i for i, nm in enumerate(all_dataset_names)
+                   if dataset_to_phenotype[nm] == pheno_str]
+            wdf = within_dataset_protocol_optuna(
+                [all_microbiome[i]    for i in idx],
+                [all_targets[i]       for i in idx],
+                [all_dataset_names[i] for i in idx],
+                n_trials=n_trials,
+            )
+            for _, row in wdf.iterrows():
+                rec = {"phenotype": pheno_str, "dataset": row["test_dataset"],
+                       "protocol": "Within Learning"}
+                for m in _METRICS:
+                    rec[m]            = row.get(m,           float("nan"))
+                    rec[f"train_{m}"] = row.get(f"train_{m}", float("nan"))
+                records.append(rec)
+
+        return pd.DataFrame(records), n_features
+
+    # ----------------------------------
+    # 3b. Split BACK by phenotype (per-phenotype or no Optuna)
     # ----------------------------------
     records = []
 
@@ -243,18 +300,14 @@ def _run_global_for_dtype(
         ]
 
         microbiome_grp = [all_microbiome[i] for i in idx]
-        target_grp = [all_targets[i] for i in idx]
-        names_grp = [all_dataset_names[i] for i in idx]
+        target_grp     = [all_targets[i]    for i in idx]
+        names_grp      = [all_dataset_names[i] for i in idx]
 
         df_grp = _run_protocols_on_group(
-            microbiome_grp,
-            target_grp,
-            names_grp,
-            phenotype_str,
+            microbiome_grp, target_grp, names_grp, phenotype_str,
             use_optuna=use_optuna,
             n_trials=n_trials,
         )
-
         records.append(df_grp)
 
     return pd.concat(records, ignore_index=True), n_features

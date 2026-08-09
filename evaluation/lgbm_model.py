@@ -59,7 +59,7 @@ def _compute_metrics(y_true, proba) -> dict:
 
 def train_lightgbm(X_train: pd.DataFrame, y_train: pd.DataFrame,
                    X_test: pd.DataFrame, y_test: pd.DataFrame) -> dict:
-    """Train LightGBM model and return test + train metrics."""
+    """Train LightGBM with fixed hyperparameters, no early stopping."""
     params = {
         'objective': 'binary',
         'metric': 'auc',
@@ -70,24 +70,16 @@ def train_lightgbm(X_train: pd.DataFrame, y_train: pd.DataFrame,
         'bagging_fraction': 0.8,
         'bagging_freq': 5,
         'verbose': -1,
-        'random_state': 42
+        'random_state': 42,
     }
 
-    train_data = lgb.Dataset(X_train, label=y_train.values.ravel())
-    valid_data = lgb.Dataset(X_test, label=y_test.values.ravel())
+    model = lgb.train(params, lgb.Dataset(X_train, label=y_train.values.ravel()),
+                      num_boost_round=200, callbacks=[lgb.log_evaluation(0)])
 
-    model = lgb.train(params, train_data, valid_sets=[valid_data],
-                      num_boost_round=1000, callbacks=[lgb.early_stopping(100), lgb.log_evaluation(0)])
+    train_m = _compute_metrics(y_train.values.ravel(), model.predict(X_train))
+    test_m  = _compute_metrics(y_test.values.ravel(),  model.predict(X_test))
 
-    train_m = _compute_metrics(y_train.values.ravel(),
-                               model.predict(X_train, num_iteration=model.best_iteration))
-    test_m  = _compute_metrics(y_test.values.ravel(),
-                               model.predict(X_test,  num_iteration=model.best_iteration))
-
-    return {
-        **test_m,
-        **{f"train_{k}": v for k, v in train_m.items()},
-    }
+    return {**test_m, **{f"train_{k}": v for k, v in train_m.items()}}
 
 
 def train_lightgbm_optuna(
@@ -135,25 +127,102 @@ def train_lightgbm_optuna(
         # All trials failed — fall back to fixed params
         return train_lightgbm(X_train, y_train, X_test, y_test)
 
-    # Probe run on train→val to get best_iteration; val is never the test set
-    train_ds = lgb.Dataset(X_train, label=y_train_arr)
-    val_ds   = lgb.Dataset(X_val,   label=y_val_arr, reference=train_ds)
-    probe = lgb.train(
-        best_params, train_ds, valid_sets=[val_ds],
+    # Final model: train on all available data (train + val).
+    # For LODO this restores the full N-1 training pool; test is never seen.
+    # Use a small internal split of the combined data for early stopping so
+    # the iteration count is calibrated on the actual N-1 training pool size.
+    X_full = pd.concat([X_train, X_val], ignore_index=True)
+    y_full = np.concatenate([y_train_arr, y_val_arr])
+
+    from sklearn.model_selection import train_test_split as _tts
+    X_f_tr, X_f_val, y_f_tr, y_f_val = _tts(
+        X_full, y_full, test_size=0.15, random_state=random_state,
+        stratify=y_full if len(np.unique(y_full)) >= 2 else None,
+    )
+    full_tr_ds  = lgb.Dataset(X_f_tr,  label=y_f_tr)
+    full_val_ds = lgb.Dataset(X_f_val, label=y_f_val, reference=full_tr_ds)
+    model = lgb.train(
+        best_params, full_tr_ds, valid_sets=[full_val_ds],
         num_boost_round=1000,
         callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)],
     )
-    best_iteration = probe.best_iteration
-
-    # Final model: train on all available data (train + val), fixed round count.
-    # For LODO this restores the full N-1 training pool; test is never seen.
-    X_full = pd.concat([X_train, X_val], ignore_index=True)
-    y_full = np.concatenate([y_train_arr, y_val_arr])
-    model  = lgb.train(best_params, lgb.Dataset(X_full, label=y_full),
-                       num_boost_round=best_iteration)
+    # Refit on the full combined set at the iteration found above
+    best_iteration = model.best_iteration
+    model = lgb.train(best_params, lgb.Dataset(X_full, label=y_full),
+                      num_boost_round=best_iteration)
 
     test_m  = _compute_metrics(y_test_arr,  model.predict(X_test))
     train_m = _compute_metrics(y_train_arr, model.predict(X_train))
+    return {**test_m, **{f"train_{k}": v for k, v in train_m.items()}}
+
+
+def train_lightgbm_optuna_cross(
+    X_optuna_train: pd.DataFrame, y_optuna_train: pd.DataFrame,
+    X_final_train:  pd.DataFrame, y_final_train:  pd.DataFrame,
+    X_val:          pd.DataFrame, y_val:          pd.DataFrame,
+    X_test:         pd.DataFrame, y_test:         pd.DataFrame,
+    n_trials: int = 30,
+    param_space: str = "default",
+    random_state: int = 42,
+) -> dict:
+    """Optuna search on cross-phenotype pool; final model on a (possibly different) training set.
+
+    X_optuna_train : large cross-phenotype pool used for HP search
+    X_final_train  : training data for the final model
+                     (per-phenotype subset for cross_optuna, full pool for cross_train)
+    X_val          : same-phenotype validation set (Optuna objective + calibration split)
+    X_test         : held-out test set, never seen during HP search
+    """
+    y_optuna_arr = y_optuna_train.values.ravel()
+    y_final_arr  = y_final_train.values.ravel()
+    y_val_arr    = y_val.values.ravel()
+    y_test_arr   = y_test.values.ravel()
+
+    if len(np.unique(y_val_arr)) < 2 or len(np.unique(y_optuna_arr)) < 2:
+        return train_lightgbm(X_final_train, y_final_train, X_test, y_test)
+
+    def objective(trial):
+        params = {**_LGBM_FIXED, 'random_state': random_state, **_suggest_params(trial, param_space)}
+        train_ds = lgb.Dataset(X_optuna_train, label=y_optuna_arr)
+        val_ds   = lgb.Dataset(X_val,          label=y_val_arr, reference=train_ds)
+        model = lgb.train(
+            params, train_ds, valid_sets=[val_ds], num_boost_round=1000,
+            callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)],
+        )
+        return roc_auc_score(y_val_arr, model.predict(X_val, num_iteration=model.best_iteration))
+
+    sampler = optuna.samplers.TPESampler(seed=random_state)
+    study   = optuna.create_study(direction='maximize', sampler=sampler)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    try:
+        best_params = {**_LGBM_FIXED, 'random_state': random_state, **study.best_params}
+        print(f"    [Optuna best] val_auc={study.best_value:.4f}  params={study.best_params}")
+    except ValueError:
+        return train_lightgbm(X_final_train, y_final_train, X_test, y_test)
+
+    # Final model: X_final_train + X_val (N-1 of the final training pool).
+    # Calibrate best_iteration via internal 85/15 split.
+    X_full = pd.concat([X_final_train, X_val], ignore_index=True)
+    y_full = np.concatenate([y_final_arr, y_val_arr])
+
+    from sklearn.model_selection import train_test_split as _tts
+    X_f_tr, X_f_val, y_f_tr, y_f_val = _tts(
+        X_full, y_full, test_size=0.15, random_state=random_state,
+        stratify=y_full if len(np.unique(y_full)) >= 2 else None,
+    )
+    full_tr_ds  = lgb.Dataset(X_f_tr,  label=y_f_tr)
+    full_val_ds = lgb.Dataset(X_f_val, label=y_f_val, reference=full_tr_ds)
+    model = lgb.train(
+        best_params, full_tr_ds, valid_sets=[full_val_ds], num_boost_round=1000,
+        callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)],
+    )
+    best_iteration = model.best_iteration
+    model = lgb.train(best_params, lgb.Dataset(X_full, label=y_full),
+                      num_boost_round=best_iteration)
+
+    test_m  = _compute_metrics(y_test_arr,  model.predict(X_test))
+    train_m = _compute_metrics(y_final_arr, model.predict(X_final_train))
     return {**test_m, **{f"train_{k}": v for k, v in train_m.items()}}
 
 
@@ -174,14 +243,10 @@ def train_lightgbm_with_shap(X_train: pd.DataFrame, y_train: pd.DataFrame,
         'random_state': 42
     }
 
-    train_data = lgb.Dataset(X_train, label=y_train.values.ravel())
-    valid_data = lgb.Dataset(X_test, label=y_test.values.ravel())
+    model = lgb.train(params, lgb.Dataset(X_train, label=y_train.values.ravel()),
+                      num_boost_round=200, callbacks=[lgb.log_evaluation(0)])
 
-    model = lgb.train(params, train_data, valid_sets=[valid_data],
-                      num_boost_round=1000,
-                      callbacks=[lgb.early_stopping(100), lgb.log_evaluation(0)])
-
-    y_pred_proba = model.predict(X_test, num_iteration=model.best_iteration)
+    y_pred_proba = model.predict(X_test)
     y_pred = (y_pred_proba > 0.5).astype(int)
 
     metrics = {

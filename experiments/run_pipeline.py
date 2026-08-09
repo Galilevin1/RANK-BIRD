@@ -32,6 +32,7 @@ from experiments.investigate_distribution_approach import (
     run_distribution_investigation, print_auc_summary_table,
     make_distribution_summary_figure,
 )
+from experiments.save_filtered_datasets import save_filtered_datasets
 from evaluation.data_loading import build_papers_auc_df, load_microbiome_datasets_with_targets
 from evaluation.dataset_analysis import run_dataset_analysis
 from evaluation.dataset_quality import run_quality_report
@@ -95,13 +96,18 @@ CONFIG = {
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
      #                   "3","4","5"
-    "use_optuna": True,   # True = Optuna tuning per protocol; False = fixed params
+    "use_optuna": False,   # False = fixed params
+                           # True = Optuna per phenotype per fold (per-phenotype train+Optuna)
+                           # "cross_optuna" = Optuna on all phenotypes, final model per-phenotype only
+                           # "cross_train"  = Optuna AND final model on all phenotypes
     "n_trials":   30,     # Optuna trials per LGBM fit (ignored when use_optuna=False)
     "run_investigations": ["distribution_approach_ordered_average"],
     #                     "distribution_approach"                 — original order, positional tie-breaking
     #                     "distribution_approach_ordered"         — shuffle fully-ordered datasets, positional tie-breaking
     #                     "distribution_approach_ordered_average" — shuffle fully-ordered datasets, average tie-breaking
     "investigations_plot_only": False,   # True = reload existing CSVs; False = recompute
+    "save_filtered_datasets": False,     # export stability-filtered (un-normalized) CSVs to Data_filtered/
+    "filtered_output_root": "Data_filtered",
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
     "run_dataset_table": False,          # build per-dataset supplementary table (AUCs, demographics, sparsity)
     "phenotypes": phenotypes_pipeline,  # phenotypes_pipeline, phenotypes_papers
@@ -209,6 +215,20 @@ def main():
     # ================================
     # STEP 0: Dataset quality report
     # ================================
+    if CONFIG.get("save_filtered_datasets"):
+        save_filtered_datasets(
+            phenotypes=phenotypes,
+            output_root=CONFIG.get("filtered_output_root", "Data_filtered"),
+            stability_percentile_metagenomics=CONFIG.get("stability_percentile_global_metagenomics", 0.05),
+            stability_percentile_amplicon=CONFIG.get("stability_percentile_global_amplicon", 0.15),
+            stability_percentile_combined=CONFIG.get("stability_percentile_global_combined", 0.10),
+            taxonomy_level_metagenomics=CONFIG.get("taxonomy_level_metagenomics"),
+            taxonomy_level_amplicon=CONFIG.get("taxonomy_level_amplicon"),
+            taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
+            cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
+            data_root=CONFIG.get("data_folder", "Data"),
+        )
+
     if CONFIG.get("run_quality_report"):
         run_quality_report(
             phenotypes=phenotypes,

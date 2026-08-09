@@ -29,6 +29,7 @@ from .taxonomy_filter import filter_to_level
 SIGMOID_K      = 20.0   # steepness; higher → sharper present/absent boundary
 SIGMOID_CENTER = 0.5    # rank fraction at which σ = 0.5
 RELU_THRESHOLD = 0.5    # fraction to keep (0.5 → top 50 % kept)
+CLR_PSEUDOCOUNT = 1e-6  # added before log to handle exact zeros
 
 
 # ── Column-wise normalization functions ───────────────────────────────────────
@@ -95,6 +96,72 @@ def relu_normalize(
     for col in X.columns:
         r = ranked[col].values
         result[col] = np.where(r >= threshold, X[col].values, 0.0)
+    return result
+
+
+def clr_normalize(
+    X: pd.DataFrame,
+    pseudocount: float = CLR_PSEUDOCOUNT,
+    tie_method: str = "first",   # accepted for API compatibility, unused
+) -> pd.DataFrame:
+    """
+    Centered Log-Ratio normalization for compositional microbiome data.
+
+    CLR(x_i) = log(x_i + ε) − mean_j[log(x_j + ε)]
+
+    Each sample is normalized by its own log geometric mean, capturing
+    within-sample taxon ratios rather than absolute abundances.
+    tie_method is accepted for API compatibility with other norm functions.
+    """
+    vals = X.values.astype(float) + pseudocount
+    log_vals = np.log(vals)
+    geomean_log = log_vals.mean(axis=1, keepdims=True)
+    return pd.DataFrame(log_vals - geomean_log, index=X.index, columns=X.columns)
+
+
+def clr_rank_normalize(
+    X: pd.DataFrame,
+    pseudocount: float = CLR_PSEUDOCOUNT,
+    tie_method: str = "first",
+) -> pd.DataFrame:
+    """
+    CLR followed by rank normalization.
+
+    CLR removes the compositional constraint and captures log-ratio biology;
+    rank normalization then maps each feature to [0, 1] so distributions are
+    comparable across datasets.
+    """
+    return rank_normalize(clr_normalize(X, pseudocount=pseudocount), tie_method=tie_method)
+
+
+def compute_alpha_diversity_features(
+    microbiome_dfs: list,
+    dataset_names: list,
+) -> dict:
+    """
+    Compute per-sample alpha diversity from raw abundance data.
+
+    Returns
+    -------
+    dict : {dataset_name: DataFrame with columns __shannon__, __simpson__, __richness__}
+           Indexed identically to the input DataFrames.
+    """
+    result = {}
+    for df, name in zip(microbiome_dfs, dataset_names):
+        vals = df.values.astype(float)
+        row_sums = vals.sum(axis=1, keepdims=True)
+        row_sums = np.where(row_sums == 0, 1.0, row_sums)
+        props = vals / row_sums
+
+        log_props = np.where(props > 0, np.log(props), 0.0)
+        shannon  = -(props * log_props).sum(axis=1)
+        simpson  = 1.0 - (props ** 2).sum(axis=1)
+        richness = (vals > 0).sum(axis=1).astype(float)
+
+        result[name] = pd.DataFrame(
+            {'__shannon__': shannon, '__simpson__': simpson, '__richness__': richness},
+            index=df.index,
+        )
     return result
 
 
