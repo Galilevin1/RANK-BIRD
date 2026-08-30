@@ -2,7 +2,7 @@ import pandas as pd
 from typing import List, Tuple, Dict
 from sklearn.model_selection import train_test_split
 from .data_loading import combine_datasets
-from .lgbm_model import train_lightgbm, train_lightgbm_optuna, train_lightgbm_optuna_cross
+from .lgbm_model import train_lightgbm, train_lightgbm_optuna, train_lightgbm_optuna_cross, train_logistic_regression
 
 def lodo_protocol(microbiome_dfs: List[pd.DataFrame], target_dfs: List[pd.DataFrame],
                         dataset_names: List[str]) -> pd.DataFrame:
@@ -102,6 +102,76 @@ def within_dataset_protocol(microbiome_dfs: List[pd.DataFrame], target_dfs: List
         results.append(result)
         print(f"  AUC: {metrics['auc']:.4f}")
 
+    return pd.DataFrame(results)
+
+
+# ── Logistic Regression variants (CLR + StandardScaler preprocessing) ─────────
+
+def lodo_protocol_lr(
+    microbiome_dfs: List[pd.DataFrame],
+    target_dfs:     List[pd.DataFrame],
+    dataset_names:  List[str],
+    apply_clr:      bool = True,
+) -> pd.DataFrame:
+    results = []
+    for test_idx in range(len(dataset_names)):
+        train_indices = [i for i in range(len(dataset_names)) if i != test_idx]
+        X_train, y_train = combine_datasets(microbiome_dfs, target_dfs, train_indices)
+        X_test,  y_test  = microbiome_dfs[test_idx], target_dfs[test_idx]
+        common = X_train.columns.intersection(X_test.columns)
+        X_train, X_test  = X_train[common], X_test[common]
+        metrics = train_logistic_regression(X_train, y_train, X_test, y_test, apply_clr=apply_clr)
+        results.append({
+            'step': 'Step1_LODO', 'test_dataset': dataset_names[test_idx],
+            'train_datasets': ','.join([dataset_names[i] for i in train_indices]),
+            **metrics,
+        })
+    return pd.DataFrame(results)
+
+
+def internal_validation_protocol_lr(
+    microbiome_dfs: List[pd.DataFrame],
+    target_dfs:     List[pd.DataFrame],
+    dataset_names:  List[str],
+    apply_clr:      bool = True,
+) -> pd.DataFrame:
+    results = []
+    for test_idx in range(len(dataset_names)):
+        train_indices = [i for i in range(len(dataset_names)) if i != test_idx]
+        X_combined, y_combined = combine_datasets(microbiome_dfs, target_dfs, train_indices)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_combined, y_combined, test_size=0.2, random_state=42, stratify=y_combined,
+        )
+        train_dataset_names = [dataset_names[i] for i in train_indices]
+        metrics = train_logistic_regression(X_train, y_train, X_test, y_test, apply_clr=apply_clr)
+        results.append({
+            'step': 'Step2_Internal', 'test_dataset': dataset_names[test_idx],
+            'train_datasets': ','.join(train_dataset_names),
+            **metrics,
+        })
+    return pd.DataFrame(results)
+
+
+def within_dataset_protocol_lr(
+    microbiome_dfs: List[pd.DataFrame],
+    target_dfs:     List[pd.DataFrame],
+    dataset_names:  List[str],
+    apply_clr:      bool = True,
+) -> pd.DataFrame:
+    results = []
+    for idx, dataset_name in enumerate(dataset_names):
+        X, y = microbiome_dfs[idx], target_dfs[idx]
+        if len(y.value_counts()) < 2:
+            continue
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y,
+        )
+        metrics = train_logistic_regression(X_train, y_train, X_test, y_test, apply_clr=apply_clr)
+        results.append({
+            'step': 'Step4_Within', 'test_dataset': dataset_name,
+            'train_datasets': dataset_name,
+            **metrics,
+        })
     return pd.DataFrame(results)
 
 

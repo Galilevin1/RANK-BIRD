@@ -123,6 +123,9 @@ def run_stability_sweep(  # noqa: E302
     level=None,
     filter_only: bool = False,
     normalization_approach: str = "rankbird_wasserstein",
+    shuffle_ordered: bool = False,
+    rank_tie_method: str = "first",
+    run_lr: bool = False,
 ) -> tuple:
     """
     Sweep stability percentiles, running all protocols at each step.
@@ -139,8 +142,29 @@ def run_stability_sweep(  # noqa: E302
     if not pheno_subset:
         raise ValueError(f"No phenotypes for dtype='{dtype}'")
 
-    agg_rows = []
-    raw_rows = []
+    agg_rows    = []
+    raw_rows    = []
+    lr_agg_rows = []
+    lr_raw_rows = []
+
+    def _agg_for(df, rows, raw_list, pct):
+        if df.empty:
+            return
+        pct_col = df.copy()
+        pct_col.insert(0, "percentile", pct)
+        raw_list.append(pct_col)
+        for protocol in PROTOCOLS:
+            sub = df[df["protocol"] == protocol]["auc"].dropna()
+            if sub.empty:
+                continue
+            rows.append({
+                "percentile":   pct,
+                "protocol":     protocol,
+                "mean_auc":     sub.mean(),
+                "median_auc":   sub.median(),
+                "std_auc":      sub.std(ddof=1),
+                "n_phenotypes": df[df["protocol"] == protocol]["phenotype"].nunique(),
+            })
 
     for pct in PERCENTILES:
         print(f"  [{dtype}] pct={pct:.2f}  level={level}  filter_only={filter_only} ...")
@@ -151,6 +175,9 @@ def run_stability_sweep(  # noqa: E302
                 pheno_subset,
                 normalization_approach=norm_approach,
                 stability_percentile_global=pct,
+                shuffle_ordered=shuffle_ordered,
+                rank_tie_method=rank_tie_method,
+                run_lr=run_lr,
             )
         else:
             results_df = _run_global_for_dtype_filtered(
@@ -162,30 +189,22 @@ def run_stability_sweep(  # noqa: E302
 
         results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
 
-        # Raw: attach percentile and accumulate
-        pct_col = results_df.copy()
-        pct_col.insert(0, "percentile", pct)
-        raw_rows.append(pct_col)
+        # Split LGBM vs LR if both present
+        if "model" in results_df.columns:
+            lgbm_df = results_df[results_df["model"] == "LGBM"]
+            lr_df   = results_df[results_df["model"] == "LR"]
+        else:
+            lgbm_df = results_df
+            lr_df   = pd.DataFrame()
 
-        # Aggregated summary
-        for protocol in PROTOCOLS:
-            sub = results_df[results_df["protocol"] == protocol]["auc"].dropna()
-            if sub.empty:
-                continue
-            agg_rows.append({
-                "percentile":   pct,
-                "protocol":     protocol,
-                "mean_auc":     sub.mean(),
-                "median_auc":   sub.median(),
-                "std_auc":      sub.std(ddof=1),
-                "n_phenotypes": results_df[
-                    results_df["protocol"] == protocol
-                ]["phenotype"].nunique(),
-            })
+        _agg_for(lgbm_df, agg_rows,    raw_rows,    pct)
+        _agg_for(lr_df,   lr_agg_rows, lr_raw_rows, pct)
 
-    agg_df = pd.DataFrame(agg_rows)
-    raw_df = pd.concat(raw_rows, ignore_index=True) if raw_rows else pd.DataFrame()
-    return agg_df, raw_df
+    agg_df    = pd.DataFrame(agg_rows)
+    raw_df    = pd.concat(raw_rows,    ignore_index=True) if raw_rows    else pd.DataFrame()
+    lr_agg_df = pd.DataFrame(lr_agg_rows)
+    lr_raw_df = pd.concat(lr_raw_rows, ignore_index=True) if lr_raw_rows else pd.DataFrame()
+    return agg_df, raw_df, lr_agg_df, lr_raw_df
 
 
 def _run_global_for_dtype_filtered(
@@ -510,6 +529,9 @@ def run_stability_investigation(
     stability_percentile_global_combined: float = 0.6,
     taxonomy_level_combined=None,
     figures_dir: Path = None,
+    shuffle_ordered: bool = False,
+    rank_tie_method: str = "first",
+    run_lr: bool = False,
 ):
     """
     Runs the full (dtype × level) sweep and saves CSVs + figure(s) per mode.
@@ -633,14 +655,20 @@ def run_stability_investigation(
                         raw_store[(level, dtype)] = pd.read_csv(load_path)
                     elif should_compute:
                         print(f"  Computing {'filter-only' if filter_only else 'full normalization'} sweep ...")
-                        sweep_df, raw_df = run_stability_sweep(
+                        sweep_df, raw_df, lr_sweep_df, lr_raw_df = run_stability_sweep(
                             phenotypes, dtype, level=level,
                             filter_only=filter_only,
                             normalization_approach=normalization_approach,
+                            shuffle_ordered=shuffle_ordered,
+                            rank_tie_method=rank_tie_method,
+                            run_lr=run_lr,
                         )
                         sweep_df.to_csv(sweep_path, index=False)
                         raw_df.to_csv(raw_path, index=False)
                         raw_store[(level, dtype)] = raw_df
+                        if not lr_sweep_df.empty:
+                            lr_sweep_df.to_csv(sweep_path.with_name(sweep_path.stem + "_lr.csv"), index=False)
+                            lr_raw_df.to_csv(raw_path.with_name(raw_path.stem + "_lr.csv"), index=False)
                     else:
                         continue
 
@@ -651,12 +679,18 @@ def run_stability_investigation(
                             fo_raw_store[(level, dtype)] = pd.read_csv(fo_raw_path)
                         elif should_compute:
                             print(f"  Computing filter-only sweep ...")
-                            fo_df, fo_raw_df = run_stability_sweep(
+                            fo_df, fo_raw_df, fo_lr_df, fo_lr_raw_df = run_stability_sweep(
                                 phenotypes, dtype, level=level, filter_only=True,
+                                shuffle_ordered=shuffle_ordered,
+                                rank_tie_method=rank_tie_method,
+                                run_lr=run_lr,
                             )
                             fo_df.to_csv(sweep_fo_path, index=False)
                             fo_raw_df.to_csv(fo_raw_path, index=False)
                             fo_raw_store[(level, dtype)] = fo_raw_df
+                            if not fo_lr_df.empty:
+                                fo_lr_df.to_csv(sweep_fo_path.with_name(sweep_fo_path.stem + "_lr.csv"), index=False)
+                                fo_lr_raw_df.to_csv(fo_raw_path.with_name(fo_raw_path.stem + "_lr.csv"), index=False)
 
         # ── Build display panel_data (always 3 columns) ───────────────────────
         panel_data = {}  # (level, display_dtype) → (sweep_df, count_df, orig_auc, fo_df)

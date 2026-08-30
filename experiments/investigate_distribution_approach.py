@@ -59,6 +59,9 @@ from src.rankbird.normalization.ranking import (
     SIGMOID_K, SIGMOID_CENTER, RELU_THRESHOLD,
 )
 from evaluation.data_loading import load_microbiome_datasets_with_targets
+from evaluation.learning_protocols import (
+    lodo_protocol_lr, internal_validation_protocol_lr, within_dataset_protocol_lr,
+)
 from experiments.run_protocols_global_processing import (
     _run_protocols_on_group, _dispatch_protocols,
     _run_global_for_dtype, _detect_and_shuffle_ordered,
@@ -139,6 +142,7 @@ def _run_approach_for_dtype(
     rank_tie_method: str = "first",
     use_optuna: bool = False,
     n_trials: int = 30,
+    run_lr: bool = True,
 ) -> pd.DataFrame:
     """
     Load all datasets for `dtype`, apply `approach`, run all protocols.
@@ -171,11 +175,7 @@ def _run_approach_for_dtype(
 
     # ── Apply normalization approach ──────────────────────────────────────────
     if approach == "original":
-        return _run_global_for_dtype(phenotypes, normalization_approach=None,
-                                     taxonomy_level=taxonomy_level,
-                                     shuffle_ordered=shuffle_ordered,
-                                     random_state=random_state,
-                                     rank_tie_method=rank_tie_method)
+        all_microbiome = filter_to_level(all_microbiome, taxonomy_level)
 
     elif approach == "original_filtered":
         all_microbiome = filter_to_level(all_microbiome, taxonomy_level)
@@ -307,10 +307,42 @@ def _run_approach_for_dtype(
     n_features = all_microbiome[0].shape[1] if all_microbiome else 0
     aligned_targets = [name_to_target[n] for n in all_names if n in name_to_target]
 
-    return _dispatch_protocols(
+    lgbm_df = _dispatch_protocols(
         all_microbiome, aligned_targets, all_names, dataset_to_phenotype,
         use_optuna=use_optuna, n_trials=n_trials,
-    ), n_features
+    )
+    lgbm_df["model"] = "LGBM"
+
+    if not run_lr:
+        return lgbm_df.drop(columns="model"), n_features
+
+    # LR protocols — CLR is skipped for approaches that already embed it
+    _apply_clr = approach not in ("clr", "clr_ranking")
+    _lr_results = []
+    for pheno_str in set(dataset_to_phenotype.values()):
+        idx = [i for i, nm in enumerate(all_names) if dataset_to_phenotype[nm] == pheno_str]
+        _mb  = [all_microbiome[i]   for i in idx]
+        _tgt = [aligned_targets[i]  for i in idx]
+        _nm  = [all_names[i]        for i in idx]
+        _METRICS = ["auc", "accuracy", "precision", "recall", "f1"]
+        for protocol_name, lr_fn in [
+            ("LODO",                lodo_protocol_lr),
+            ("Internal Validation", internal_validation_protocol_lr),
+            ("Within Learning",     within_dataset_protocol_lr),
+        ]:
+            df = lr_fn(_mb, _tgt, _nm, apply_clr=_apply_clr)
+            for _, row in df.iterrows():
+                rec = {"phenotype": pheno_str, "dataset": row["test_dataset"],
+                       "protocol": protocol_name, "model": "LR"}
+                for m in _METRICS:
+                    rec[m]            = row.get(m,           float("nan"))
+                    rec[f"train_{m}"] = row.get(f"train_{m}", float("nan"))
+                _lr_results.append(rec)
+
+    lr_df = pd.DataFrame(_lr_results)
+    combined = pd.concat([lgbm_df, lr_df], ignore_index=True)
+
+    return combined, n_features
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1330,6 +1362,7 @@ def run_distribution_investigation(
     rank_tie_method: str = "first",
     use_optuna: bool = False,
     n_trials: int = 30,
+    run_lr: bool = True,
 ):
     """
     Compare distribution-adjustment approaches on all phenotypes/dtypes.
@@ -1463,7 +1496,8 @@ def run_distribution_investigation(
         print(f"\nSaved: {output_dir / 'feature_counts.csv'}")
         print(feat_df.to_string(index=False))
 
-    all_results: dict = {}    # {(dtype, approach): full results_df}
+    all_results:    dict = {}    # {(dtype, approach): LGBM results_df}
+    all_results_lr: dict = {}    # {(dtype, approach): LR results_df}
 
     for dtype in dtypes:
         pheno_subset = phenotypes if dtype == "Combined" else [(p, t) for p, t in phenotypes if t == dtype]
@@ -1472,14 +1506,20 @@ def run_distribution_investigation(
 
         for approach in APPROACHES:
             tag      = f"{dtype.lower()}_{approach}"
-            csv_path = output_dir / f"results_{tag}.csv"
-            agg_path = output_dir / f"agg_{tag}.csv"
+            csv_path    = output_dir / f"results_{tag}.csv"
+            lr_csv_path = output_dir / f"results_lr_{tag}.csv"
+            agg_path    = output_dir / f"agg_{tag}.csv"
 
             print(f"\n=== {dtype}  |  {APPROACH_LABELS[approach]} ===")
 
-            if csv_path.exists():
+            lgbm_cached = csv_path.exists()
+            lr_cached   = lr_csv_path.exists()
+            fully_cached = lgbm_cached and (not run_lr or lr_cached)
+
+            if fully_cached:
                 print(f"  [LOAD] {csv_path.name}")
                 results_df = pd.read_csv(csv_path)
+                lr_df = pd.read_csv(lr_csv_path) if lr_cached else pd.DataFrame()
             elif plot_only:
                 print(f"  [SKIP] Missing {csv_path.name} — run without plot_only first.")
                 continue
@@ -1490,7 +1530,7 @@ def run_distribution_investigation(
                         continue
                     # Route directly to _run_global_for_dtype which handles the full
                     # pooled normalization + per-phenotype learning in one shot.
-                    results_df, _ = _run_global_for_dtype(
+                    combined_df, _ = _run_global_for_dtype(
                         pheno_subset,
                         normalization_approach=_APPROACH_TO_NORM[approach],
                         min_samples_per_dataset=min_size,
@@ -1500,9 +1540,16 @@ def run_distribution_investigation(
                         rank_tie_method=rank_tie_method,
                         use_optuna=use_optuna,
                         n_trials=n_trials,
+                        run_lr=run_lr,
                     )
+                    if "model" in combined_df.columns:
+                        results_df = combined_df[combined_df["model"] == "LGBM"].drop(columns="model")
+                        lr_df      = combined_df[combined_df["model"] == "LR"  ].drop(columns="model")
+                    else:
+                        results_df = combined_df
+                        lr_df = pd.DataFrame()
                 else:
-                    results_df, _ = _run_approach_for_dtype(
+                    combined_df, _ = _run_approach_for_dtype(
                         phenotypes=pheno_subset,
                         dtype=dtype,
                         approach=approach,
@@ -1516,16 +1563,30 @@ def run_distribution_investigation(
                         rank_tie_method=rank_tie_method,
                         use_optuna=use_optuna,
                         n_trials=n_trials,
+                        run_lr=run_lr,
                     )
+                    # Split LGBM and LR — existing pipeline only sees LGBM rows
+                    if "model" in combined_df.columns:
+                        results_df = combined_df[combined_df["model"] == "LGBM"].drop(columns="model")
+                        lr_df      = combined_df[combined_df["model"] == "LR"  ].drop(columns="model")
+                    else:
+                        results_df = combined_df
+                        lr_df = pd.DataFrame()
+
                 # Filter single-class datasets before saving
                 results_df = _drop_single_class(results_df, single_class_names)
                 results_df.to_csv(csv_path, index=False)
+                if not lr_df.empty:
+                    lr_df = _drop_single_class(lr_df, single_class_names)
+                    lr_df.to_csv(lr_csv_path, index=False)
 
-            # Aggregation
+            # Aggregation (LGBM only — preserves existing behaviour)
             agg_df = _aggregate_auc(results_df)
             agg_df.to_csv(agg_path, index=False)
 
-            all_results[(dtype, approach)] = results_df
+            all_results[(dtype, approach)]    = results_df
+            if not lr_df.empty:
+                all_results_lr[(dtype, approach)] = lr_df
 
     # ── Statistical tests ─────────────────────────────────────────────────────
     print("\nRunning statistical tests (ANOVA + pairwise paired t-test + Wilcoxon / Bonferroni + FDR) ...")
@@ -1586,6 +1647,73 @@ def run_distribution_investigation(
         all_results=all_results,
         dtypes=dtypes,
         output_path=output_dir / "distribution_approach_train_test_delta.png",
+    )
+
+    # ── LR summary: mean AUC per (dtype, approach, protocol) ─────────────────
+    if all_results_lr:
+        _summarise_lr(all_results_lr, output_dir, dtypes,
+                      sigmoid_k, sigmoid_center, relu_threshold)
+
+
+def _summarise_lr(
+    all_results_lr: dict,
+    output_dir: Path,
+    dtypes: list,
+    sigmoid_k: float = SIGMOID_K,
+    sigmoid_center: float = SIGMOID_CENTER,
+    relu_threshold: float = RELU_THRESHOLD,
+):
+    """Save mean-AUC CSV and generate the three comparison plots for LR results."""
+    rows = []
+    for (dtype, approach), df in all_results_lr.items():
+        if df.empty or "auc" not in df.columns:
+            continue
+        df = df.copy()
+        df["auc"] = pd.to_numeric(df["auc"], errors="coerce")
+        for protocol in PROTOCOLS:
+            sub = df[df["protocol"] == protocol]["auc"].dropna()
+            if sub.empty:
+                continue
+            rows.append({
+                "dtype":          dtype,
+                "approach":       approach,
+                "approach_label": APPROACH_LABELS.get(approach, approach),
+                "protocol":       protocol,
+                "mean_auc":       round(sub.mean(),   3),
+                "median_auc":     round(sub.median(), 3),
+                "std_auc":        round(sub.std(ddof=1) if len(sub) > 1 else 0.0, 3),
+                "n_datasets":     len(sub),
+            })
+
+    if not rows:
+        return
+
+    lr_summary = pd.DataFrame(rows)
+    lr_summary.to_csv(output_dir / "lr_summary.csv", index=False)
+    print("\n── LR (CLR + StandardScaler) mean AUC ──")
+    print(lr_summary.to_string(index=False))
+
+    # Same three plots as LGBM, saved with _lr suffix — completely separate files
+    _plot_comparison(
+        all_results=all_results_lr,
+        dtypes=dtypes,
+        output_path=output_dir / "distribution_approach_comparison_lr.png",
+        sigmoid_k=sigmoid_k,
+        sigmoid_center=sigmoid_center,
+        relu_threshold=relu_threshold,
+    )
+    _plot_delta_comparison(
+        all_results=all_results_lr,
+        dtypes=dtypes,
+        output_path=output_dir / "distribution_approach_delta_lr.png",
+        sigmoid_k=sigmoid_k,
+        sigmoid_center=sigmoid_center,
+        relu_threshold=relu_threshold,
+    )
+    _plot_train_test_delta(
+        all_results=all_results_lr,
+        dtypes=dtypes,
+        output_path=output_dir / "distribution_approach_train_test_delta_lr.png",
     )
 
 

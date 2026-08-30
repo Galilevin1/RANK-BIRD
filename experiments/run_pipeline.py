@@ -96,16 +96,17 @@ CONFIG = {
      #                   "2e_optional" (Jaccard vs LODO AUC, cross-phenotype aggregation)
      #                   "2d_ks_lodo" (KS batch-effect distance vs LODO AUC correlation)
      #                   "3","4","5"
-    "use_optuna": "cross_optuna",  # False = fixed params
+    "use_optuna": False,           # False = fixed params
                                    # True = Optuna per phenotype per fold
                                    # "cross_optuna" = Optuna on all phenotypes, final model per-phenotype
                                    # "cross_train"  = Optuna AND final model on all phenotypes
     "n_trials":   30,     # Optuna trials per LGBM fit (ignored when use_optuna=False)
-    "run_investigations": ["distribution_approach_ordered_average"],
+    "run_investigations": ["stability_threshold"],
     #                     "distribution_approach"                 — original order, positional tie-breaking
     #                     "distribution_approach_ordered"         — shuffle fully-ordered datasets, positional tie-breaking
     #                     "distribution_approach_ordered_average" — shuffle fully-ordered datasets, average tie-breaking
     "investigations_plot_only": False,   # True = reload existing CSVs; False = recompute
+    "run_lr": True,                      # True = also run LR alongside LGBM in distribution investigations
     "save_filtered_datasets": True,      # export stability-filtered (un-normalized) CSVs to Data_filtered/
     "filtered_output_root": "Data_filtered",
     "run_quality_report": False,         # compute per-dataset quality metrics (unique microbes, reads, entropy, Simpson)
@@ -135,9 +136,9 @@ CONFIG = {
     # -----------------------
     "min_samples_per_dataset": 550,
     "z_thresh": 3.0,
-    "stability_percentile_local": 0.15,
-    "stability_percentile_global_metagenomics": 0.05,
-    "stability_percentile_global_amplicon":     0.15,
+    "stability_percentile_local": 0.3,
+    "stability_percentile_global_metagenomics": 0.1,
+    "stability_percentile_global_amplicon":     0.5,
     "taxonomy_level_metagenomics": "gs",    # None = all, "g" = genus only, "gs" = genus+species
     "taxonomy_level_amplicon":     "gs",
     "decompose_method": "PCA",
@@ -908,6 +909,9 @@ def main():
             cross_dtype_normalization=CONFIG.get("cross_dtype_normalization", False),
             stability_percentile_global_combined=CONFIG.get("stability_percentile_global_combined", 0.6),
             taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
+            shuffle_ordered=True,
+            rank_tie_method="average",
+            run_lr=CONFIG.get("run_lr", True),
         )
 
     if "stability_characterization" in CONFIG["run_investigations"]:
@@ -938,6 +942,7 @@ def main():
         taxonomy_level_combined=CONFIG.get("taxonomy_level_combined"),
         use_optuna=CONFIG.get("use_optuna", False),
         n_trials=CONFIG.get("n_trials", 30),
+        run_lr=CONFIG.get("run_lr", True),
     )
 
     if "distribution_approach" in CONFIG["run_investigations"]:

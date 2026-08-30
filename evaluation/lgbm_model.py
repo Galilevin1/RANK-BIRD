@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import shap
 from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score, f1_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
 import lightgbm as lgb
 import optuna
 
@@ -80,6 +82,41 @@ def train_lightgbm(X_train: pd.DataFrame, y_train: pd.DataFrame,
     test_m  = _compute_metrics(y_test.values.ravel(),  model.predict(X_test))
 
     return {**test_m, **{f"train_{k}": v for k, v in train_m.items()}}
+
+
+def _clr_transform(X: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+    log_x = np.log(X + eps)
+    return log_x - log_x.mean(axis=1, keepdims=True)
+
+
+def train_logistic_regression(
+    X_train: pd.DataFrame, y_train: pd.DataFrame,
+    X_test:  pd.DataFrame, y_test:  pd.DataFrame,
+    apply_clr: bool = True,
+) -> dict:
+    """Logistic regression with CLR + StandardScaler preprocessing."""
+    X_tr = X_train.values if hasattr(X_train, "values") else np.asarray(X_train)
+    X_te = X_test.values  if hasattr(X_test,  "values") else np.asarray(X_test)
+    y_tr = y_train.values.ravel() if hasattr(y_train, "values") else np.asarray(y_train).ravel()
+    y_te = y_test.values.ravel()  if hasattr(y_test,  "values") else np.asarray(y_test).ravel()
+
+    if apply_clr:
+        X_tr = _clr_transform(X_tr)
+        X_te = _clr_transform(X_te)
+
+    scaler = StandardScaler()
+    X_tr = scaler.fit_transform(X_tr)
+    X_te = scaler.transform(X_te)
+
+    clf = LogisticRegression(penalty="elasticnet", C=0.1, l1_ratio=0.5,
+                             solver="saga", max_iter=2000, random_state=42)
+    clf.fit(X_tr, y_tr)
+
+    train_m = _compute_metrics(y_tr, clf.predict_proba(X_tr)[:, 1])
+    test_m  = _compute_metrics(y_te, clf.predict_proba(X_te)[:, 1])
+
+    return {**test_m, **{f"train_{k}": v for k, v in train_m.items()}}
+
 
 
 def train_lightgbm_optuna(

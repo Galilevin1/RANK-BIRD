@@ -1,0 +1,155 @@
+ID,Tag,Country,Age,BMI,Sex,Disease,Name,Sample Source ID,Organism,Target Condition,Unnamed: 11,Body Site,Tumor Staging AJCC,Primary Tumor Location,Study name,Study condition
+ERR688358,Case,Austria,64,29.4,Male,colorectal carcinoma,31004,SID31004,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688359,Study Control,Austria,68,32.0,Male,Control,31009,SID31009,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688360,Study Control,Austria,60,22.1,Female,Control,31021,SID31021,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688361,Case,Austria,70,34.1,Male,Adenoma,31030,SID31030,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688362,Study Control,Austria,68,23.5,Male,Control,31071,SID31071,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688363,Study Control,Austria,66,30.3,Male,Control,31112,SID31112,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688364,Study Control,Austria,73,29.7,Male,Control,31129,SID31129,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688365,Case,Austria,67,27.1,Male,Adenoma,31137,SID31137,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688366,Case,Austria,73,18.0,Male,colorectal carcinoma,31159,SID31159,Homo sapiens,colorectal carcinoma,,feces,II,left_sided,Public_study__FengQ_2015,CRC
+ERR688367,Study Control,Austria,67,30.0,Female,Control,31160,SID31160,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688368,Case,Austria,65,28.0,Male,colorectal carcinoma,31188,SID31188,Homo sapiens,colorectal carcinoma,,feces,CRC_stage_unlabelled,left_sided,Public_study__FengQ_2015,CRC
+ERR688369,Study Control,Austria,74,28.3,Female,Control,31219,SID31219,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688370,Case,Austria,65,23.3,Female,colorectal carcinoma,31223,SID31223,Homo sapiens,colorectal carcinoma,,feces,II,left_sided,Public_study__FengQ_2015,CRC
+ERR688372,Case,Austria,62,26.9,Male,Adenoma,31233,SID31233,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688373,Study Control,Austria,65,29.1,Male,Control,31236,SID31236,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688374,Case,Austria,67,29.4,Male,colorectal carcinoma,31237,SID31237,Homo sapiens,colorectal carcinoma,,feces,II,right_sided,Public_study__FengQ_2015,CRC
+ERR688375,Case,Austria,69,24.1,Female,Adenoma,31256,SID31256,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688376,Study Control,Austria,67,22.8,Male,Control,31267,SID31267,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688377,Case,Austria,62,30.1,Male,Adenoma,31275,SID31275,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688378,Case,Austria,82,30.5,Male,colorectal carcinoma,31276,SID31276,Homo sapiens,colorectal carcinoma,,feces,0,right_sided,Public_study__FengQ_2015,CRC
+ERR688379,Case,Austria,63,34.1,Male,Adenoma,31282,SID31282,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688380,Case,Austria,84,27.3,Male,colorectal carcinoma,31285,SID31285,Homo sapiens,colorectal carcinoma,,feces,II,left_sided,Public_study__FengQ_2015,CRC
+ERR688381,Study Control,Austria,68,21.7,Female,Control,31300,SID31300,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688382,Study Control,Austria,63,30.9,Male,Control,31328,SID31328,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688383,Study Control,Austria,68,22.2,Male,Control,31333,SID31333,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688384,Case,Austria,62,35.4,Male,Adenoma,31337,SID31337,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688385,Study Control,Austria,72,29.0,Male,Control,31343,SID31343,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688386,Study Control,Austria,71,29.0,Male,Control,31360,SID31360,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688387,Case,Austria,86,20.5,Female,colorectal carcinoma,31367,SID31367,Homo sapiens,colorectal carcinoma,,feces,I,right_sided,Public_study__FengQ_2015,CRC
+ERR688388,Study Control,Austria,63,30.4,Male,Control,31379,SID31379,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688389,Case,Austria,68,34.0,Female,Adenoma,31398,SID31398,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688390,Study Control,Austria,72,31.8,Male,Control,31416,SID31416,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688391,Case,Austria,68,24.8,Female,Adenoma,31424,SID31424,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688392,Study Control,Austria,69,30.0,Female,Control,31428,SID31428,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688393,Case,Austria,71,27.0,Male,Adenoma,31431,SID31431,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688394,Case,Austria,84,31.2,Female,colorectal carcinoma,31446,SID31446,Homo sapiens,colorectal carcinoma,,feces,0,right_sided,Public_study__FengQ_2015,CRC
+ERR688395,Case,Austria,63,30.8,Male,Adenoma,31449,SID31449,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688396,Study Control,Austria,67,23.1,Male,Control,31450,SID31450,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688397,Study Control,Austria,66,21.7,Female,Control,31452,SID31452,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688398,Case,Austria,72,27.4,Female,Adenoma,31455,SID31455,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688399,Case,Austria,78,31.2,Female,Adenoma,31477,SID31477,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688400,Case,Austria,60,26.6,Male,colorectal carcinoma,31489,SID31489,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688401,Case,Austria,68,32.3,Male,colorectal carcinoma,31493,SID31493,Homo sapiens,colorectal carcinoma,,feces,0,left_sided,Public_study__FengQ_2015,CRC
+ERR688402,Case,Austria,69,24.4,Female,Adenoma,31501,SID31501,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688403,Study Control,Austria,64,29.3,Male,Control,31512,SID31512,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688404,Study Control,Austria,65,28.9,Male,Control,31519,SID31519,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688405,Study Control,Austria,70,31.0,Female,Control,31537,SID31537,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688406,Case,Austria,84,27.8,Female,colorectal carcinoma,31549,SID31549,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688407,Study Control,Austria,74,28.5,Female,Control,31557,SID31557,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688408,Case,Austria,77,25.7,Male,Adenoma,31582,SID31582,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688410,Study Control,Austria,66,30.0,Male,Control,31637,SID31637,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688411,Case,Austria,74,26.4,Male,colorectal carcinoma,31685,SID31685,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688412,Study Control,Austria,72,28.7,Female,Control,31700,SID31700,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688413,Case,Austria,84,24.7,Female,Adenoma,31705,SID31705,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688414,Study Control,Austria,66,30.0,Male,Control,31711,SID31711,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688415,Study Control,Austria,69,28.3,Female,Control,31714,SID31714,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688416,Study Control,Austria,69,22.4,Female,Control,31723,SID31723,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688417,Study Control,Austria,70,31.3,Male,Control,31749,SID31749,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688418,Study Control,Austria,66,34.0,Male,Control,31750,SID31750,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688419,Study Control,Austria,73,32.0,Female,Control,31766,SID31766,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688421,Case,Austria,55,23.3,Female,colorectal carcinoma,31865,SID31865,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688422,Case,Austria,73,29.8,Female,colorectal carcinoma,31866,SID31866,Homo sapiens,colorectal carcinoma,,feces,II,left_sided,Public_study__FengQ_2015,CRC
+ERR688423,Case,Austria,64,24.1,Female,colorectal carcinoma,31868,SID31868,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688424,Case,Austria,63,25.9,Male,colorectal carcinoma,31870,SID31870,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688425,Case,Austria,72,28.4,Male,colorectal carcinoma,31871,SID31871,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688426,Case,Austria,46,30.9,Male,colorectal carcinoma,31872,SID31872,Homo sapiens,colorectal carcinoma,,feces,0,left_sided,Public_study__FengQ_2015,CRC
+ERR688427,Case,Austria,73,24.8,Male,colorectal carcinoma,31873,SID31873,Homo sapiens,colorectal carcinoma,,feces,II,left_sided,Public_study__FengQ_2015,CRC
+ERR688428,Case,Austria,74,29.2,Female,colorectal carcinoma,31874,SID31874,Homo sapiens,colorectal carcinoma,,feces,IV,left_sided,Public_study__FengQ_2015,CRC
+ERR688429,Case,Austria,58,27.8,Male,colorectal carcinoma,31875,SID31875,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688430,Case,Austria,56,20.1,Female,colorectal carcinoma,31876,SID31876,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688431,Case,Austria,72,26.7,Female,colorectal carcinoma,31877,SID31877,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688432,Case,Austria,52,27.1,Female,colorectal carcinoma,31878,SID31878,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688433,Case,Austria,71,29.7,Male,colorectal carcinoma,31879,SID31879,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688434,Case,Austria,74,24.3,Male,colorectal carcinoma,31880,SID31880,Homo sapiens,colorectal carcinoma,,feces,III,right_sided,Public_study__FengQ_2015,CRC
+ERR688435,Case,Austria,60,30.1,Female,colorectal carcinoma,31881,SID31881,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688436,Case,Austria,43,22.7,Male,colorectal carcinoma,31883,SID31883,Homo sapiens,colorectal carcinoma,,feces,II,left_sided,Public_study__FengQ_2015,CRC
+ERR688420,Case,Austria,54,27.3,Male,colorectal carcinoma,31884,SID31884,Homo sapiens,colorectal carcinoma,,feces,0,left_sided,Public_study__FengQ_2015,CRC
+ERR688440,Case,Austria,60,30.0,Female,Adenoma,530002,SID530002,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688437,Case,Austria,56,29.4,Male,Adenoma,530018,SID530018,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688438,Case,Austria,83,21.9,Female,Adenoma,530026,SID530026,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688439,Case,Austria,67,33.2,Male,Adenoma,530028,SID530028,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688441,Case,Austria,67,28.3,Male,Adenoma,530039,SID530039,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688442,Case,Austria,69,21.5,Male,Adenoma,530041,SID530041,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688443,Study Control,Austria,71,29.0,Female,Control,530050,SID530050,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688444,Study Control,Austria,64,29.4,Male,Control,530052,SID530052,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688445,Case,Austria,64,20.5,Female,Adenoma,530054,SID530054,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688446,Study Control,Austria,64,22.8,Male,Control,530055,SID530055,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688447,Study Control,Austria,68,22.1,Female,Control,530074,SID530074,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688448,Study Control,Austria,63,34.1,Male,Control,530075,SID530075,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688449,Study Control,Austria,70,31.6,Male,Control,530119,SID530119,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688450,Case,Austria,61,22.8,Female,Adenoma,530142,SID530142,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688451,Study Control,Austria,74,28.5,Female,Control,530154,SID530154,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688452,Study Control,Austria,63,30.4,Male,Control,530163,SID530163,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688453,Study Control,Austria,72,30.0,Female,Control,530167,SID530167,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688454,Case,Austria,62,32.8,Female,Adenoma,530168,SID530168,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688455,Case,Austria,63,27.4,Male,Adenoma,530172,SID530172,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688456,Study Control,Austria,71,29.0,Female,Control,530177,SID530177,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688457,Case,Austria,52,32.8,Female,Adenoma,530185,SID530185,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688458,Study Control,Austria,65,31.2,Male,Control,530215,SID530215,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688459,Study Control,Austria,68,22.4,Female,Control,530227,SID530227,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688460,Study Control,Austria,72,31.8,Male,Control,530251,SID530251,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688461,Study Control,Austria,65,22.0,Male,Control,530258,SID530258,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688462,Case,Austria,64,29.3,Male,Adenoma,530262,SID530262,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688463,Study Control,Austria,70,22.7,Female,Control,530295,SID530295,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688464,Case,Austria,78,24.0,Female,Adenoma,530297,SID530297,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688465,Study Control,Austria,75,31.0,Female,Control,530315,SID530315,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688466,Case,Austria,71,24.8,Male,Adenoma,530323,SID530323,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688467,Study Control,Austria,70,23.7,Male,Control,530331,SID530331,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688468,Case,Austria,58,21.7,Male,Adenoma,530348,SID530348,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688469,Study Control,Austria,63,31.2,Male,Control,530364,SID530364,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688470,Study Control,Austria,70,22.8,Female,Control,530368,SID530368,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688471,Case,Austria,47,25.8,Female,colorectal carcinoma,530373,SID530373,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688472,Study Control,Austria,67,22.6,Female,Control,530394,SID530394,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688473,Case,Austria,80,26.5,Male,Adenoma,530398,SID530398,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688474,Case,Austria,75,30.1,Female,Adenoma,530403,SID530403,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688475,Study Control,Austria,62,22.1,Female,Control,530444,SID530444,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688476,Case,Austria,48,25.6,Male,Adenoma,530450,SID530450,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688477,Study Control,Austria,68,29.8,Male,Control,530451,SID530451,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688478,Case,Austria,56,22.8,Female,Adenoma,530558,SID530558,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688479,Case,Austria,70,25.2,Female,Adenoma,530600,SID530600,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688480,Case,Austria,62,24.3,Male,Adenoma,530623,SID530623,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688481,Case,Austria,63,30.5,Female,Adenoma,530697,SID530697,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688482,Case,Austria,77,37.6,Male,Adenoma,530705,SID530705,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688483,Case,Austria,66,22.7,Female,Adenoma,530743,SID530743,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688484,Case,Austria,70,29.4,Female,Adenoma,530756,SID530756,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688485,Case,Austria,74,24.1,Female,Adenoma,530840,SID530840,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688486,Case,Austria,58,27.0,Male,Adenoma,530867,SID530867,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688487,Case,Austria,77,29.4,Male,colorectal carcinoma,530890,SID530890,Homo sapiens,colorectal carcinoma,,feces,0,left_sided,Public_study__FengQ_2015,CRC
+ERR688488,Case,Austria,52,25.7,Male,colorectal carcinoma,531128,SID531128,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688489,Case,Austria,72,24.2,Female,colorectal carcinoma,531155,SID531155,Homo sapiens,colorectal carcinoma,,feces,I,right_sided,Public_study__FengQ_2015,CRC
+ERR688490,Case,Austria,79,26.3,Male,colorectal carcinoma,531248,SID531248,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688491,Case,Austria,77,19.2,Male,colorectal carcinoma,531274,SID531274,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688492,Case,Austria,64,29.1,Male,colorectal carcinoma,531277,SID531277,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688493,Case,Austria,72,27.1,Female,colorectal carcinoma,531281,SID531281,Homo sapiens,colorectal carcinoma,,feces,0,left_sided,Public_study__FengQ_2015,CRC
+ERR688494,Case,Austria,69,29.9,Male,colorectal carcinoma,531333,SID531333,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688495,Case,Austria,66,22.6,Male,colorectal carcinoma,531352,SID531352,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688496,Case,Austria,72,23.8,Female,colorectal carcinoma,531361,SID531361,Homo sapiens,colorectal carcinoma,,feces,III,left_sided,Public_study__FengQ_2015,CRC
+ERR688497,Case,Austria,65,29.7,Male,colorectal carcinoma,531382,SID531382,Homo sapiens,colorectal carcinoma,,feces,II,left_sided,Public_study__FengQ_2015,CRC
+ERR688498,Case,Austria,59,29.2,Female,Adenoma,531403,SID531403,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688499,Study Control,Austria,46,23.2,Male,Control,531414,SID531414,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688500,Case,Austria,63,33.6,Male,colorectal carcinoma,531416,SID531416,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR688501,Study Control,Austria,46,28.7,Male,Control,531424,SID531424,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR688502,Case,Austria,45,22.2,Female,colorectal carcinoma,531469,SID531469,Homo sapiens,colorectal carcinoma,,feces,I,left_sided,Public_study__FengQ_2015,CRC
+ERR710415,Case,Austria,63,25.7,Male,Adenoma,531663,SID531663,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR688503,Case,Austria,72,24.3,Male,colorectal carcinoma,531766,SID531766,Homo sapiens,colorectal carcinoma,,feces,I,right_sided,Public_study__FengQ_2015,CRC
+ERR688504,Case,Austria,77,23.5,Female,colorectal carcinoma,531775,SID531775,Homo sapiens,colorectal carcinoma,,feces,II,right_sided,Public_study__FengQ_2015,CRC
+ERR710416,Case,Austria,56,43.6,Female,Adenoma,532305,SID532305,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR710417,Study Control,Austria,55,27.8,Male,Control,532749,SID532749,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR710418,Study Control,Austria,70,28.7,Male,Control,532779,SID532779,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR710419,Study Control,Austria,73,26.6,Female,Control,532796,SID532796,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR710420,Study Control,Austria,68,23.5,Male,Control,532802,SID532802,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR710421,Study Control,Austria,78,31.2,Male,Control,532826,SID532826,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control
+ERR710422,Case,Austria,68,27.6,Female,Adenoma,532832,SID532832,Homo sapiens,Adenoma,,feces,,nd,Public_study__FengQ_2015,Adenoma
+ERR710423,Study Control,Austria,43,22.7,Female,Control,532915,SID532915,Homo sapiens,Control,,feces,,nd,Public_study__FengQ_2015,Control

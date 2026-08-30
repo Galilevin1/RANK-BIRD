@@ -19,6 +19,7 @@ from evaluation.learning_protocols import (
     lodo_protocol, internal_validation_protocol, within_dataset_protocol,
     lodo_protocol_optuna, internal_validation_protocol_optuna, within_dataset_protocol_optuna,
     lodo_protocol_cross_phenotype, internal_validation_protocol_cross_phenotype,
+    lodo_protocol_lr, internal_validation_protocol_lr, within_dataset_protocol_lr,
 )
 
 
@@ -214,6 +215,7 @@ def _run_global_for_dtype(
     rank_tie_method: str = "first",
     use_optuna: bool = False,
     n_trials: int = 30,
+    run_lr: bool = False,
 ):
     """
     normalization_approach options
@@ -312,10 +314,40 @@ def _run_global_for_dtype(
     # ----------------------------------
     # 3. Run protocols
     # ----------------------------------
-    return _dispatch_protocols(
+    lgbm_df = _dispatch_protocols(
         all_microbiome, all_targets, all_dataset_names, dataset_to_phenotype,
         use_optuna=use_optuna, n_trials=n_trials,
-    ), n_features
+    )
+
+    if not run_lr:
+        return lgbm_df, n_features
+
+    lgbm_df["model"] = "LGBM"
+
+    _METRICS = ["auc", "accuracy", "precision", "recall", "f1"]
+    _apply_clr = normalization_approach not in ("rankbird_clr", "rankbird_clr_ranking")
+    _lr_results = []
+    for pheno_str in set(dataset_to_phenotype.values()):
+        idx  = [i for i, nm in enumerate(all_dataset_names) if dataset_to_phenotype[nm] == pheno_str]
+        _mb  = [all_microbiome[i] for i in idx]
+        _tgt = [all_targets[i]    for i in idx]
+        _nm  = [all_dataset_names[i] for i in idx]
+        for protocol_name, lr_fn in [
+            ("LODO",                lodo_protocol_lr),
+            ("Internal Validation", internal_validation_protocol_lr),
+            ("Within Learning",     within_dataset_protocol_lr),
+        ]:
+            df = lr_fn(_mb, _tgt, _nm, apply_clr=_apply_clr)
+            for _, row in df.iterrows():
+                rec = {"phenotype": pheno_str, "dataset": row["test_dataset"],
+                       "protocol": protocol_name, "model": "LR"}
+                for m in _METRICS:
+                    rec[m]            = row.get(m,           float("nan"))
+                    rec[f"train_{m}"] = row.get(f"train_{m}", float("nan"))
+                _lr_results.append(rec)
+
+    lr_df = pd.DataFrame(_lr_results)
+    return pd.concat([lgbm_df, lr_df], ignore_index=True), n_features
 
 
 def run_protocol_benchmark_global_preprocessing(
