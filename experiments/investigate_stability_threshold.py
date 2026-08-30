@@ -23,6 +23,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend — avoids tkinter threading errors
 import matplotlib.pyplot as plt
+from joblib import Parallel, delayed
 
 from src.rankbird.normalization.stability import (
     union_microbes, nonzero_percent_by_dataset, auto_stability_filter,
@@ -40,7 +41,7 @@ from src.rankbird.normalization.ranking import apply_ranking_pipeline
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT    = PROJECT_ROOT / "Data"
 
-PERCENTILES = [round(p, 2) for p in np.arange(0.02, 1.0, 0.02)]
+PERCENTILES = [round(p, 2) for p in np.arange(0.05, 1.0, 0.05)]
 PROTOCOLS   = ["LODO", "Internal Validation", "Within Learning"]
 PROTOCOL_COLORS = {
     "LODO":                "#1f77b4",
@@ -117,6 +118,36 @@ def count_kept_microbes_sweep(
 
 # ── AUC sweep ─────────────────────────────────────────────────────────────────
 
+def _sweep_worker(
+    pct, pheno_subset, level, norm_approach,
+    shuffle_ordered, rank_tie_method, run_lr,
+    lgbm_num_threads=0,
+):
+    """Compute one percentile step — called in parallel by run_stability_sweep."""
+    import os
+    if lgbm_num_threads > 0:
+        os.environ["OMP_NUM_THREADS"] = str(lgbm_num_threads)
+
+    if level is None:
+        results_df, _ = _run_global_for_dtype(
+            pheno_subset,
+            normalization_approach=norm_approach,
+            stability_percentile_global=pct,
+            shuffle_ordered=shuffle_ordered,
+            rank_tie_method=rank_tie_method,
+            run_lr=run_lr,
+        )
+    else:
+        results_df = _run_global_for_dtype_filtered(
+            pheno_subset,
+            level=level,
+            stability_percentile_global=pct,
+            normalization_approach=norm_approach,
+        )
+    results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
+    return pct, results_df
+
+
 def run_stability_sweep(  # noqa: E302
     phenotypes: list,
     dtype: str,
@@ -126,6 +157,8 @@ def run_stability_sweep(  # noqa: E302
     shuffle_ordered: bool = False,
     rank_tie_method: str = "first",
     run_lr: bool = False,
+    n_jobs: int = 1,
+    lgbm_num_threads: int = 0,
 ) -> tuple:
     """
     Sweep stability percentiles, running all protocols at each step.
@@ -166,29 +199,19 @@ def run_stability_sweep(  # noqa: E302
                 "n_phenotypes": df[df["protocol"] == protocol]["phenotype"].nunique(),
             })
 
-    for pct in PERCENTILES:
-        print(f"  [{dtype}] pct={pct:.2f}  level={level}  filter_only={filter_only} ...")
+    norm_approach = "filter_only" if filter_only else normalization_approach
+    print(f"  [{dtype}] level={level}  filter_only={filter_only}  n_jobs={n_jobs}  n_pct={len(PERCENTILES)}")
 
-        norm_approach = "filter_only" if filter_only else normalization_approach
-        if level is None:
-            results_df, _ = _run_global_for_dtype(
-                pheno_subset,
-                normalization_approach=norm_approach,
-                stability_percentile_global=pct,
-                shuffle_ordered=shuffle_ordered,
-                rank_tie_method=rank_tie_method,
-                run_lr=run_lr,
-            )
-        else:
-            results_df = _run_global_for_dtype_filtered(
-                pheno_subset,
-                level=level,
-                stability_percentile_global=pct,
-                normalization_approach=norm_approach,
-            )
+    pct_results = Parallel(n_jobs=n_jobs, backend="loky", verbose=5)(
+        delayed(_sweep_worker)(
+            pct, pheno_subset, level, norm_approach,
+            shuffle_ordered, rank_tie_method, run_lr,
+            lgbm_num_threads,
+        )
+        for pct in PERCENTILES
+    )
 
-        results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
-
+    for pct, results_df in sorted(pct_results, key=lambda x: x[0]):
         # Split LGBM vs LR if both present
         if "model" in results_df.columns:
             lgbm_df = results_df[results_df["model"] == "LGBM"]
@@ -513,6 +536,38 @@ def _merge_orig_aucs(orig_dicts: list) -> dict:
     return {p: sums[p] / counts[p] for p in sums if counts[p] > 0}
 
 
+# ── Intermediate / per-sweep figure helper ───────────────────────────────────
+
+def _save_interim_figure(
+    level, level_label, dtype, raw_df, count_df, orig_auc, fo_raw_df,
+    figures_dir, mode_suffix, plot_modes, mode_meta, model_label="LGBM",
+):
+    """Save a single-panel figure right after one (level, dtype) sweep completes."""
+    if raw_df is None or raw_df.empty:
+        return
+    sweep_df = raw_df if 'mean_auc' in raw_df.columns else _aggregate_raw_to_sweep(raw_df)
+    if sweep_df.empty:
+        return
+    fo_df = None
+    if fo_raw_df is not None and not fo_raw_df.empty:
+        fo_df = fo_raw_df if 'mean_auc' in fo_raw_df.columns else _aggregate_raw_to_sweep(fo_raw_df)
+    level_str = level or "all"
+    for pm in plot_modes:
+        _, stat_suffix = mode_meta.get(pm, (pm, f"_{pm}"))
+        fig, ax = plt.subplots(1, 1, figsize=(14, 7))
+        _plot_sweep_panel(
+            ax, sweep_df, count_df,
+            title=f"{dtype} — {level_label} [{model_label}]",
+            original_auc=orig_auc or {},
+            filter_only_df=fo_df,
+            plot_mode=pm,
+        )
+        out_path = figures_dir / f"interim_{dtype.lower()}_{level_str}{mode_suffix}{stat_suffix}_{model_label.lower()}.png"
+        fig.savefig(out_path, dpi=100, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  [interim] {out_path.name}")
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def run_stability_investigation(
@@ -532,6 +587,8 @@ def run_stability_investigation(
     shuffle_ordered: bool = False,
     rank_tie_method: str = "first",
     run_lr: bool = False,
+    n_jobs: int = 1,
+    lgbm_num_threads: int = 0,
 ):
     """
     Runs the full (dtype × level) sweep and saves CSVs + figure(s) per mode.
@@ -590,14 +647,18 @@ def run_stability_investigation(
             "full+filter_only": "Full normalization + Filter-only",
         }.get(norm_mode, norm_mode)
 
-        # raw_store[(level, dtype)]    → raw per-dataset sweep DataFrame
-        # fo_raw_store[(level, dtype)] → raw filter-only sweep DataFrame
-        # count_store[(level, dd)]     → count sweep DataFrame (always per actual dtype)
-        # orig_store[(level, dd)]      → orig_auc dict (always per actual dtype)
-        raw_store    = {}
-        fo_raw_store = {}
-        count_store  = {}
-        orig_store   = {}
+        # raw_store[(level, dtype)]       → LGBM raw sweep DataFrame
+        # fo_raw_store[(level, dtype)]    → LGBM filter-only raw sweep DataFrame
+        # lr_raw_store[(level, dtype)]    → LR raw sweep DataFrame
+        # lr_fo_raw_store[(level, dtype)] → LR filter-only raw sweep DataFrame
+        # count_store[(level, dd)]        → microbe count sweep DataFrame
+        # orig_store[(level, dd)]         → orig_auc dict
+        raw_store       = {}
+        fo_raw_store    = {}
+        lr_raw_store    = {}
+        lr_fo_raw_store = {}
+        count_store     = {}
+        orig_store      = {}
 
         for level, level_label in LEVELS:
             should_compute = compute_levels is None or level in compute_levels
@@ -643,16 +704,25 @@ def run_stability_investigation(
                         raw_store[(level, dtype)] = pd.read_csv(load_path)
                     else:
                         print(f"  [SKIP] CSV missing ({sweep_path.name}) — recompute without plot_only.")
+                    lr_raw_path = raw_path.with_name(raw_path.stem + "_lr.csv")
+                    if lr_raw_path.exists():
+                        lr_raw_store[(level, dtype)] = pd.read_csv(lr_raw_path)
                     if combined_mode:
                         fo_raw_path = sweep_fo_path.with_name(sweep_fo_path.stem + "_raw.csv")
                         fo_load_path = fo_raw_path if fo_raw_path.exists() else sweep_fo_path
                         if fo_load_path.exists():
                             fo_raw_store[(level, dtype)] = pd.read_csv(fo_load_path)
+                        fo_lr_raw_path = fo_raw_path.with_name(fo_raw_path.stem + "_lr.csv")
+                        if fo_lr_raw_path.exists():
+                            lr_fo_raw_store[(level, dtype)] = pd.read_csv(fo_lr_raw_path)
                 else:
                     if sweep_path.exists():
                         print(f"  [LOAD] {sweep_path.name}")
                         load_path = raw_path if raw_path.exists() else sweep_path
                         raw_store[(level, dtype)] = pd.read_csv(load_path)
+                        lr_raw_path = raw_path.with_name(raw_path.stem + "_lr.csv")
+                        if lr_raw_path.exists():
+                            lr_raw_store[(level, dtype)] = pd.read_csv(lr_raw_path)
                     elif should_compute:
                         print(f"  Computing {'filter-only' if filter_only else 'full normalization'} sweep ...")
                         sweep_df, raw_df, lr_sweep_df, lr_raw_df = run_stability_sweep(
@@ -662,6 +732,8 @@ def run_stability_investigation(
                             shuffle_ordered=shuffle_ordered,
                             rank_tie_method=rank_tie_method,
                             run_lr=run_lr,
+                            n_jobs=n_jobs,
+                            lgbm_num_threads=lgbm_num_threads,
                         )
                         sweep_df.to_csv(sweep_path, index=False)
                         raw_df.to_csv(raw_path, index=False)
@@ -669,6 +741,7 @@ def run_stability_investigation(
                         if not lr_sweep_df.empty:
                             lr_sweep_df.to_csv(sweep_path.with_name(sweep_path.stem + "_lr.csv"), index=False)
                             lr_raw_df.to_csv(raw_path.with_name(raw_path.stem + "_lr.csv"), index=False)
+                            lr_raw_store[(level, dtype)] = lr_raw_df
                     else:
                         continue
 
@@ -677,6 +750,9 @@ def run_stability_investigation(
                         if sweep_fo_path.exists() and fo_raw_path.exists():
                             print(f"  [LOAD] {sweep_fo_path.name}")
                             fo_raw_store[(level, dtype)] = pd.read_csv(fo_raw_path)
+                            fo_lr_raw_path = fo_raw_path.with_name(fo_raw_path.stem + "_lr.csv")
+                            if fo_lr_raw_path.exists():
+                                lr_fo_raw_store[(level, dtype)] = pd.read_csv(fo_lr_raw_path)
                         elif should_compute:
                             print(f"  Computing filter-only sweep ...")
                             fo_df, fo_raw_df, fo_lr_df, fo_lr_raw_df = run_stability_sweep(
@@ -684,6 +760,8 @@ def run_stability_investigation(
                                 shuffle_ordered=shuffle_ordered,
                                 rank_tie_method=rank_tie_method,
                                 run_lr=run_lr,
+                                n_jobs=n_jobs,
+                                lgbm_num_threads=lgbm_num_threads,
                             )
                             fo_df.to_csv(sweep_fo_path, index=False)
                             fo_raw_df.to_csv(fo_raw_path, index=False)
@@ -691,6 +769,26 @@ def run_stability_investigation(
                             if not fo_lr_df.empty:
                                 fo_lr_df.to_csv(sweep_fo_path.with_name(sweep_fo_path.stem + "_lr.csv"), index=False)
                                 fo_lr_raw_df.to_csv(fo_raw_path.with_name(fo_raw_path.stem + "_lr.csv"), index=False)
+                                lr_fo_raw_store[(level, dtype)] = fo_lr_raw_df
+
+                # ── Intermediate figure for this (level, dtype) ───────────────
+                _save_interim_figure(
+                    level, level_label, dtype,
+                    raw_store.get((level, dtype)),
+                    count_store.get((level, dtype)),
+                    orig_store.get((level, dtype), {}),
+                    fo_raw_store.get((level, dtype)),
+                    figures_dir, mode_suffix, plot_modes, _mode_meta, "LGBM",
+                )
+                if (level, dtype) in lr_raw_store:
+                    _save_interim_figure(
+                        level, level_label, dtype,
+                        lr_raw_store.get((level, dtype)),
+                        count_store.get((level, dtype)),
+                        orig_store.get((level, dtype), {}),
+                        lr_fo_raw_store.get((level, dtype)),
+                        figures_dir, mode_suffix, plot_modes, _mode_meta, "LR",
+                    )
 
         # ── Build display panel_data (always 3 columns) ───────────────────────
         panel_data = {}  # (level, display_dtype) → (sweep_df, count_df, orig_auc, fo_df)
@@ -804,6 +902,96 @@ def run_stability_investigation(
             fig.savefig(out_path, dpi=150, bbox_inches="tight")
             plt.close(fig)
             print(f"Saved: {out_path}")
+
+        # ── LR grid figure (same layout, separate file) ───────────────────────
+        if lr_raw_store:
+            lr_panel_data = {}
+            for level, level_label in LEVELS:
+                all_lr_raws    = [df for (l, d), df in lr_raw_store.items()
+                                  if l == level and df is not None and not df.empty]
+                all_lr_fo_raws = [df for (l, d), df in lr_fo_raw_store.items()
+                                  if l == level and df is not None and not df.empty]
+                all_lr_raw    = pd.concat(all_lr_raws,    ignore_index=True) if all_lr_raws    else pd.DataFrame()
+                all_lr_fo_raw = pd.concat(all_lr_fo_raws, ignore_index=True) if all_lr_fo_raws else pd.DataFrame()
+
+                for display_dtype in DISPLAY_DTYPES:
+                    if display_dtype == "All datasets":
+                        if all_lr_raw.empty:
+                            lr_panel_data[(level, display_dtype)] = None
+                            continue
+                        sweep_df = _merge_sweep_dfs(all_lr_raw) if 'mean_auc' in all_lr_raw.columns else _aggregate_raw_to_sweep(all_lr_raw)
+                        count_dfs = [df for (l, d), df in count_store.items() if l == level]
+                        count_df  = _sum_count_dfs(count_dfs) if count_dfs else None
+                        orig_dcts = [d for (l, dd), d in orig_store.items() if l == level]
+                        orig_auc  = _merge_orig_aucs(orig_dcts) if orig_dcts else {}
+                        fo_df     = (_merge_sweep_dfs(all_lr_fo_raw) if 'mean_auc' in all_lr_fo_raw.columns
+                                     else _aggregate_raw_to_sweep(all_lr_fo_raw)) if (not all_lr_fo_raw.empty and combined_mode) else None
+                    else:
+                        if cross_dtype_normalization:
+                            raw_src    = all_lr_raw
+                            fo_raw_src = all_lr_fo_raw
+                            filt       = display_dtype
+                        else:
+                            raw_src    = lr_raw_store.get((level, display_dtype), pd.DataFrame())
+                            fo_raw_src = lr_fo_raw_store.get((level, display_dtype), pd.DataFrame())
+                            filt       = None
+                        if raw_src is None or (hasattr(raw_src, 'empty') and raw_src.empty):
+                            lr_panel_data[(level, display_dtype)] = None
+                            continue
+                        sweep_df = raw_src if 'mean_auc' in raw_src.columns else _aggregate_raw_to_sweep(raw_src, dtype_filter=filt)
+                        if sweep_df.empty:
+                            lr_panel_data[(level, display_dtype)] = None
+                            continue
+                        count_df = count_store.get((level, display_dtype))
+                        orig_auc = orig_store.get((level, display_dtype), {})
+                        fo_df    = None
+                        if combined_mode and fo_raw_src is not None and not (hasattr(fo_raw_src, 'empty') and fo_raw_src.empty):
+                            fo_df = fo_raw_src if 'mean_auc' in fo_raw_src.columns else _aggregate_raw_to_sweep(fo_raw_src, dtype_filter=filt)
+                        if count_df is None:
+                            lr_panel_data[(level, display_dtype)] = None
+                            continue
+                    lr_panel_data[(level, display_dtype)] = (sweep_df, count_df, orig_auc, fo_df)
+
+            for pm in plot_modes:
+                stat_title, stat_suffix = _mode_meta.get(pm, (pm, f"_{pm}"))
+                fig, axes = plt.subplots(
+                    len(levels_to_plot), len(DISPLAY_DTYPES),
+                    figsize=(14 * len(DISPLAY_DTYPES), 7 * len(levels_to_plot)),
+                    squeeze=False,
+                )
+                _legend_lines, _legend_labels = [], []
+                for row_idx, (level, level_label) in enumerate(levels_to_plot):
+                    for col_idx, display_dtype in enumerate(DISPLAY_DTYPES):
+                        ax   = axes[row_idx][col_idx]
+                        data = lr_panel_data.get((level, display_dtype))
+                        if data is None:
+                            ax.set_visible(False)
+                            continue
+                        sweep_df, count_df, orig_auc, fo_df = data
+                        _thresh = _BEST_THRESHOLDS.get(display_dtype)
+                        result = _plot_sweep_panel(ax, sweep_df, count_df,
+                                          title=f"{display_dtype} — {level_label} [LR]",
+                                          original_auc=orig_auc,
+                                          filter_only_df=fo_df,
+                                          plot_mode=pm,
+                                          threshold_percentile=_thresh)
+                        if not _legend_lines and result:
+                            _legend_lines, _legend_labels = result
+                plt.tight_layout(rect=[0, 0, 0.82, 1])
+                if _legend_lines:
+                    fig.legend(
+                        _legend_lines, _legend_labels,
+                        loc="center right",
+                        bbox_to_anchor=(0.99, 0.5),
+                        fontsize=14,
+                        framealpha=0.9,
+                        title="Legend",
+                        title_fontsize=15,
+                    )
+                out_path = figures_dir / f"stability_threshold_investigation{mode_suffix}{stat_suffix}_lr.png"
+                fig.savefig(out_path, dpi=150, bbox_inches="tight")
+                plt.close(fig)
+                print(f"Saved: {out_path}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

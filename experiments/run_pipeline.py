@@ -125,6 +125,8 @@ CONFIG = {
     "stability_plot_mode":           ["mean", "median"],        # "mean", "median", "combined", or list e.g. ["mean", "median"]
     "stability_compute_levels":      [None, "g", "gs"],               # None = compute all levels; e.g. [None, "g"] to compute only those
     "stability_plot_levels":         [None], # None = plot all levels; e.g. ["g", "fg", "ofg"] for a subset
+    "stability_n_jobs":              19,    # parallel workers for percentile sweep (set to n_percentiles; 1 = sequential)
+    "stability_lgbm_threads":        5,     # OpenMP threads per LightGBM worker (n_jobs × lgbm_threads ≤ total cores)
 
     # -----------------------
     # Papers CSV (for figure 1_supp)
@@ -912,6 +914,8 @@ def main():
             shuffle_ordered=True,
             rank_tie_method="average",
             run_lr=CONFIG.get("run_lr", True),
+            n_jobs=CONFIG.get("stability_n_jobs", 1),
+            lgbm_num_threads=CONFIG.get("stability_lgbm_threads", 0),
         )
 
     if "stability_characterization" in CONFIG["run_investigations"]:
