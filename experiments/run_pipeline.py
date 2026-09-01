@@ -124,7 +124,7 @@ CONFIG = {
     "stability_normalization_modes": ["full+filter_only"],  # "full", "filter_only", "full+filter_only" (both on same plot), or e.g. ["full", "filter_only"] for separate figures
     "stability_plot_mode":           ["mean", "median"],        # "mean", "median", "combined", or list e.g. ["mean", "median"]
     "stability_compute_levels":      [None, "g", "gs"],               # None = compute all levels; e.g. [None, "g"] to compute only those
-    "stability_plot_levels":         [None], # None = plot all levels; e.g. ["g", "fg", "ofg"] for a subset
+    "stability_plot_levels":         [None, "g", "gs"], # None = plot all levels; e.g. ["g", "fg", "ofg"] for a subset
     "stability_n_jobs":              19,    # parallel workers for percentile sweep (set to n_percentiles; 1 = sequential)
     "stability_lgbm_threads":        5,     # OpenMP threads per LightGBM worker (n_jobs × lgbm_threads ≤ total cores)
 

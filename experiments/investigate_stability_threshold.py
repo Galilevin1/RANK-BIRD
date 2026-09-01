@@ -41,7 +41,7 @@ from src.rankbird.normalization.ranking import apply_ranking_pipeline
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT    = PROJECT_ROOT / "Data"
 
-PERCENTILES = [round(p, 2) for p in np.arange(0.05, 1.0, 0.05)]
+PERCENTILES = [round(p, 2) for p in np.arange(0.05, 1.0, 0.05)] + [1.0]
 PROTOCOLS   = ["LODO", "Internal Validation", "Within Learning"]
 PROTOCOL_COLORS = {
     "LODO":                "#1f77b4",
@@ -159,6 +159,7 @@ def run_stability_sweep(  # noqa: E302
     run_lr: bool = False,
     n_jobs: int = 1,
     lgbm_num_threads: int = 0,
+    percentiles: list = None,
 ) -> tuple:
     """
     Sweep stability percentiles, running all protocols at each step.
@@ -199,8 +200,9 @@ def run_stability_sweep(  # noqa: E302
                 "n_phenotypes": df[df["protocol"] == protocol]["phenotype"].nunique(),
             })
 
+    pct_list = percentiles if percentiles is not None else PERCENTILES
     norm_approach = "filter_only" if filter_only else normalization_approach
-    print(f"  [{dtype}] level={level}  filter_only={filter_only}  n_jobs={n_jobs}  n_pct={len(PERCENTILES)}")
+    print(f"  [{dtype}] level={level}  filter_only={filter_only}  n_jobs={n_jobs}  n_pct={len(pct_list)}")
 
     pct_results = Parallel(n_jobs=n_jobs, backend="loky", verbose=5)(
         delayed(_sweep_worker)(
@@ -208,7 +210,7 @@ def run_stability_sweep(  # noqa: E302
             shuffle_ordered, rank_tie_method, run_lr,
             lgbm_num_threads,
         )
-        for pct in PERCENTILES
+        for pct in pct_list
     )
 
     for pct, results_df in sorted(pct_results, key=lambda x: x[0]):
@@ -536,6 +538,69 @@ def _merge_orig_aucs(orig_dicts: list) -> dict:
     return {p: sums[p] / counts[p] for p in sums if counts[p] > 0}
 
 
+# ── Fill-missing-percentiles helper ──────────────────────────────────────────
+
+def _fill_missing_percentiles(
+    existing_raw: pd.DataFrame,
+    sweep_path: "Path",
+    raw_path: "Path",
+    phenotypes: list,
+    dtype: str,
+    level,
+    filter_only: bool,
+    normalization_approach: str,
+    shuffle_ordered: bool,
+    rank_tie_method: str,
+    run_lr: bool,
+    n_jobs: int,
+    lgbm_num_threads: int,
+):
+    """
+    Check whether any PERCENTILES are absent from existing_raw.
+    If so, compute only those and merge into the CSVs in-place.
+    Returns (updated_lgbm_raw, updated_lr_raw_or_None).
+    """
+    existing_pcts = set(round(float(p), 10) for p in existing_raw["percentile"].unique()) \
+        if "percentile" in existing_raw.columns else set()
+    missing = [p for p in PERCENTILES if round(float(p), 10) not in existing_pcts]
+    if not missing:
+        return existing_raw, None
+
+    print(f"  [FILL] {len(missing)} missing percentile(s): {missing}")
+    new_agg, new_raw, new_lr_agg, new_lr_raw = run_stability_sweep(
+        phenotypes, dtype, level=level,
+        filter_only=filter_only,
+        normalization_approach=normalization_approach,
+        shuffle_ordered=shuffle_ordered,
+        rank_tie_method=rank_tie_method,
+        run_lr=run_lr,
+        n_jobs=min(n_jobs, len(missing)),
+        lgbm_num_threads=lgbm_num_threads,
+        percentiles=missing,
+    )
+
+    merged_raw = pd.concat([existing_raw, new_raw], ignore_index=True).sort_values("percentile")
+    merged_raw.to_csv(raw_path, index=False)
+
+    # Re-aggregate and overwrite the summary CSV
+    merged_agg = _aggregate_raw_to_sweep(merged_raw)
+    merged_agg.to_csv(sweep_path, index=False)
+
+    merged_lr_raw = None
+    lr_raw_path = raw_path.with_name(raw_path.stem + "_lr.csv")
+    if not new_lr_raw.empty:
+        if lr_raw_path.exists():
+            existing_lr = pd.read_csv(lr_raw_path)
+            merged_lr_raw = pd.concat([existing_lr, new_lr_raw], ignore_index=True).sort_values("percentile")
+        else:
+            merged_lr_raw = new_lr_raw
+        merged_lr_raw.to_csv(lr_raw_path, index=False)
+        lr_agg_path = sweep_path.with_name(sweep_path.stem + "_lr.csv")
+        _aggregate_raw_to_sweep(merged_lr_raw).to_csv(lr_agg_path, index=False)
+
+    return merged_raw, merged_lr_raw
+
+
 # ── Intermediate / per-sweep figure helper ───────────────────────────────────
 
 def _save_interim_figure(
@@ -719,9 +784,21 @@ def run_stability_investigation(
                     if sweep_path.exists():
                         print(f"  [LOAD] {sweep_path.name}")
                         load_path = raw_path if raw_path.exists() else sweep_path
-                        raw_store[(level, dtype)] = pd.read_csv(load_path)
+                        loaded_raw = pd.read_csv(load_path)
+                        # Fill any percentiles added since this CSV was created
+                        if should_compute:
+                            loaded_raw, filled_lr = _fill_missing_percentiles(
+                                loaded_raw, sweep_path, raw_path,
+                                phenotypes, dtype, level,
+                                filter_only, normalization_approach,
+                                shuffle_ordered, rank_tie_method, run_lr,
+                                n_jobs, lgbm_num_threads,
+                            )
+                            if filled_lr is not None:
+                                lr_raw_store[(level, dtype)] = filled_lr
+                        raw_store[(level, dtype)] = loaded_raw
                         lr_raw_path = raw_path.with_name(raw_path.stem + "_lr.csv")
-                        if lr_raw_path.exists():
+                        if lr_raw_path.exists() and (level, dtype) not in lr_raw_store:
                             lr_raw_store[(level, dtype)] = pd.read_csv(lr_raw_path)
                     elif should_compute:
                         print(f"  Computing {'filter-only' if filter_only else 'full normalization'} sweep ...")
@@ -749,9 +826,20 @@ def run_stability_investigation(
                         fo_raw_path = sweep_fo_path.with_name(sweep_fo_path.stem + "_raw.csv")
                         if sweep_fo_path.exists() and fo_raw_path.exists():
                             print(f"  [LOAD] {sweep_fo_path.name}")
-                            fo_raw_store[(level, dtype)] = pd.read_csv(fo_raw_path)
+                            loaded_fo_raw = pd.read_csv(fo_raw_path)
+                            if should_compute:
+                                loaded_fo_raw, filled_fo_lr = _fill_missing_percentiles(
+                                    loaded_fo_raw, sweep_fo_path, fo_raw_path,
+                                    phenotypes, dtype, level,
+                                    True, normalization_approach,
+                                    shuffle_ordered, rank_tie_method, run_lr,
+                                    n_jobs, lgbm_num_threads,
+                                )
+                                if filled_fo_lr is not None:
+                                    lr_fo_raw_store[(level, dtype)] = filled_fo_lr
+                            fo_raw_store[(level, dtype)] = loaded_fo_raw
                             fo_lr_raw_path = fo_raw_path.with_name(fo_raw_path.stem + "_lr.csv")
-                            if fo_lr_raw_path.exists():
+                            if fo_lr_raw_path.exists() and (level, dtype) not in lr_fo_raw_store:
                                 lr_fo_raw_store[(level, dtype)] = pd.read_csv(fo_lr_raw_path)
                         elif should_compute:
                             print(f"  Computing filter-only sweep ...")

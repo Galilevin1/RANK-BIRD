@@ -300,6 +300,17 @@ def _run_global_for_dtype(
     else:
         # None — no normalization, apply taxonomy filter only
         all_microbiome = filter_to_level(all_microbiome, taxonomy_level)
+        # Remove features that are all-zero in every sample of every dataset.
+        # These are reference-taxonomy ghost species — never detected anywhere —
+        # that enter the union column set only because a bioinformatics pipeline
+        # listed them. They contribute zero signal and would make the "original"
+        # baseline inconsistent with filter_only at pct=1.0 (which drops them via
+        # auto_stability_filter's .dropna()).
+        _all_microbes = union_microbes(all_microbiome)
+        _nz = nonzero_percent_by_dataset(all_microbiome, all_dataset_names, _all_microbes)
+        _ever_observed = _nz.mean(axis=0) > 0
+        _kept = _ever_observed[_ever_observed].index.tolist()
+        all_microbiome = [df.reindex(columns=_kept, fill_value=0.0) for df in all_microbiome]
 
     if apply_decompose:
         all_microbiome, _, _ = apply_bias_SPDR(all_microbiome, decompose_method, rank=decompose_rank)
