@@ -35,6 +35,11 @@ from experiments.run_protocols_global_processing import (
     _run_global_for_dtype,
     _RANKING_NORM_FNS,
 )
+from evaluation.learning_protocols import (
+    lodo_protocol_lr,
+    internal_validation_protocol_lr,
+    within_dataset_protocol_lr,
+)
 from src.rankbird.normalization.pipeline import apply_normalization_pipeline
 from src.rankbird.normalization.ranking import apply_ranking_pipeline
 
@@ -143,6 +148,7 @@ def _sweep_worker(
             level=level,
             stability_percentile_global=pct,
             normalization_approach=norm_approach,
+            run_lr=run_lr,
         )
     results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
     return pct, results_df
@@ -238,6 +244,7 @@ def _run_global_for_dtype_filtered(
     stability_percentile_global: float = 0.5,
     min_samples_per_dataset: int = 550,
     normalization_approach: str = "rankbird_wasserstein",
+    run_lr: bool = False,
 ) -> pd.DataFrame:
     """_run_global_for_dtype with column-level taxonomic filtering applied first."""
     all_microbiome, all_targets, all_names = [], [], []
@@ -313,7 +320,37 @@ def _run_global_for_dtype_filtered(
             phenotype_str,
         ))
 
-    return pd.concat(records, ignore_index=True) if records else pd.DataFrame()
+    lgbm_df = pd.concat(records, ignore_index=True) if records else pd.DataFrame()
+
+    if not run_lr or lgbm_df.empty:
+        return lgbm_df
+
+    lgbm_df["model"] = "LGBM"
+
+    _METRICS = ["auc", "accuracy", "precision", "recall", "f1"]
+    _apply_clr = normalization_approach not in ("rankbird_clr", "rankbird_clr_ranking")
+    _lr_results = []
+    for pheno_str in set(dataset_to_phenotype.values()):
+        idx  = [i for i, nm in enumerate(all_names) if dataset_to_phenotype.get(nm) == pheno_str]
+        _mb  = [all_microbiome[i] for i in idx]
+        _tgt = [aligned_targets[i] for i in idx]
+        _nm  = [all_names[i] for i in idx]
+        for protocol_name, lr_fn in [
+            ("LODO",                lodo_protocol_lr),
+            ("Internal Validation", internal_validation_protocol_lr),
+            ("Within Learning",     within_dataset_protocol_lr),
+        ]:
+            df = lr_fn(_mb, _tgt, _nm, apply_clr=_apply_clr)
+            for _, row in df.iterrows():
+                rec = {"phenotype": pheno_str, "dataset": row["test_dataset"],
+                       "protocol": protocol_name, "model": "LR"}
+                for m in _METRICS:
+                    rec[m]            = row.get(m,            float("nan"))
+                    rec[f"train_{m}"] = row.get(f"train_{m}", float("nan"))
+                _lr_results.append(rec)
+
+    lr_df = pd.DataFrame(_lr_results)
+    return pd.concat([lgbm_df, lr_df], ignore_index=True)
 
 
 def get_original_mean_auc(
