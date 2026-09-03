@@ -368,22 +368,26 @@ def get_original_mean_auc(
     phenotypes: list,
     dtype: str,
     level=None,
+    run_lr: bool = False,
 ) -> dict:
     """
     Run protocols on raw (non-normalized) data, optionally filtered to a
     taxonomic level.  Returns {protocol: mean_auc} for use as reference lines.
+    If run_lr=True, returns LR protocol means instead of LGBM.
     """
     pheno_subset = phenotypes if dtype == "Combined" else [(p, t) for p, t in phenotypes if t == dtype]
     if not pheno_subset:
         return {}
 
     if level is None:
-        results_df, _ = _run_global_for_dtype(
-            pheno_subset, normalization_approach=None
+        combined_df, _ = _run_global_for_dtype(
+            pheno_subset, normalization_approach=None, run_lr=run_lr
         )
+        results_df = combined_df[combined_df["model"] == "LR"] if run_lr else combined_df
     else:
         results_df = _run_global_for_dtype_filtered(
-            pheno_subset, level=level, normalization_approach=None
+            pheno_subset, level=level, normalization_approach=None,
+            run_lgbm=not run_lr, run_lr=run_lr,
         )
 
     results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
@@ -816,6 +820,7 @@ def run_stability_investigation(
         lr_fo_raw_store = {}
         count_store     = {}
         orig_store      = {}
+        lr_orig_store   = {}
 
         for level, level_label in LEVELS:
             should_compute = compute_levels is None or level in compute_levels
@@ -844,6 +849,15 @@ def run_stability_investigation(
                     oa = get_original_mean_auc(phenotypes, dd, level=level)
                     pd.DataFrame([oa]).to_csv(orig_path_dd, index=False)
                     orig_store[(level, dd)] = oa
+
+                lr_orig_path_dd = output_dir / f"original_auc_{base_dd}_lr.csv"
+                if lr_orig_path_dd.exists():
+                    lr_orig_store[(level, dd)] = pd.read_csv(lr_orig_path_dd).iloc[0].to_dict()
+                elif should_compute and not plot_only:
+                    oa_lr = get_original_mean_auc(phenotypes, dd, level=level, run_lr=True)
+                    if oa_lr:
+                        pd.DataFrame([oa_lr]).to_csv(lr_orig_path_dd, index=False)
+                        lr_orig_store[(level, dd)] = oa_lr
 
             # ── Compute / load sweep for each computation dtype ────────────────
             for dtype in dtypes:
@@ -965,7 +979,7 @@ def run_stability_investigation(
                         level, level_label, dtype,
                         lr_raw_store.get((level, dtype)),
                         count_store.get((level, dtype)),
-                        orig_store.get((level, dtype), {}),
+                        lr_orig_store.get((level, dtype), {}),
                         lr_fo_raw_store.get((level, dtype)),
                         figures_dir, mode_suffix, plot_modes, _mode_meta, "LR",
                     )
@@ -1102,7 +1116,7 @@ def run_stability_investigation(
                         sweep_df = _merge_sweep_dfs(all_lr_raw) if 'mean_auc' in all_lr_raw.columns else _aggregate_raw_to_sweep(all_lr_raw)
                         count_dfs = [df for (l, d), df in count_store.items() if l == level]
                         count_df  = _sum_count_dfs(count_dfs) if count_dfs else None
-                        orig_dcts = [d for (l, dd), d in orig_store.items() if l == level]
+                        orig_dcts = [d for (l, dd), d in lr_orig_store.items() if l == level]
                         orig_auc  = _merge_orig_aucs(orig_dcts) if orig_dcts else {}
                         fo_df     = (_merge_sweep_dfs(all_lr_fo_raw) if 'mean_auc' in all_lr_fo_raw.columns
                                      else _aggregate_raw_to_sweep(all_lr_fo_raw)) if (not all_lr_fo_raw.empty and combined_mode) else None
@@ -1123,7 +1137,7 @@ def run_stability_investigation(
                             lr_panel_data[(level, display_dtype)] = None
                             continue
                         count_df = count_store.get((level, display_dtype))
-                        orig_auc = orig_store.get((level, display_dtype), {})
+                        orig_auc = lr_orig_store.get((level, display_dtype), {})
                         fo_df    = None
                         if combined_mode and fo_raw_src is not None and not (hasattr(fo_raw_src, 'empty') and fo_raw_src.empty):
                             fo_df = fo_raw_src if 'mean_auc' in fo_raw_src.columns else _aggregate_raw_to_sweep(fo_raw_src, dtype_filter=filt)
