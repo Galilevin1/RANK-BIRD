@@ -126,7 +126,7 @@ def count_kept_microbes_sweep(
 def _sweep_worker(
     pct, pheno_subset, level, norm_approach,
     shuffle_ordered, rank_tie_method, run_lr,
-    lgbm_num_threads=0,
+    lgbm_num_threads=0, run_lgbm=True,
 ):
     """Compute one percentile step — called in parallel by run_stability_sweep."""
     import os
@@ -149,6 +149,7 @@ def _sweep_worker(
             stability_percentile_global=pct,
             normalization_approach=norm_approach,
             run_lr=run_lr,
+            run_lgbm=run_lgbm,
         )
     results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
     return pct, results_df
@@ -163,6 +164,7 @@ def run_stability_sweep(  # noqa: E302
     shuffle_ordered: bool = False,
     rank_tie_method: str = "first",
     run_lr: bool = False,
+    run_lgbm: bool = True,
     n_jobs: int = 1,
     lgbm_num_threads: int = 0,
     percentiles: list = None,
@@ -214,7 +216,7 @@ def run_stability_sweep(  # noqa: E302
         delayed(_sweep_worker)(
             pct, pheno_subset, level, norm_approach,
             shuffle_ordered, rank_tie_method, run_lr,
-            lgbm_num_threads,
+            lgbm_num_threads, run_lgbm,
         )
         for pct in pct_list
     )
@@ -245,6 +247,7 @@ def _run_global_for_dtype_filtered(
     min_samples_per_dataset: int = 550,
     normalization_approach: str = "rankbird_wasserstein",
     run_lr: bool = False,
+    run_lgbm: bool = True,
 ) -> pd.DataFrame:
     """_run_global_for_dtype with column-level taxonomic filtering applied first."""
     all_microbiome, all_targets, all_names = [], [], []
@@ -306,26 +309,27 @@ def _run_global_for_dtype_filtered(
 
     # Split back by phenotype and run protocols
     records = []
-    for phenotype_str in set(dataset_to_phenotype.values()):
-        idx = [
-            i for i, name in enumerate(all_names)
-            if dataset_to_phenotype.get(name) == phenotype_str
-        ]
-        if not idx:
-            continue
-        records.append(_run_protocols_on_group(
-            [all_microbiome[i] for i in idx],
-            [aligned_targets[i] for i in idx],
-            [all_names[i] for i in idx],
-            phenotype_str,
-        ))
+    if run_lgbm:
+        for phenotype_str in set(dataset_to_phenotype.values()):
+            idx = [
+                i for i, name in enumerate(all_names)
+                if dataset_to_phenotype.get(name) == phenotype_str
+            ]
+            if not idx:
+                continue
+            records.append(_run_protocols_on_group(
+                [all_microbiome[i] for i in idx],
+                [aligned_targets[i] for i in idx],
+                [all_names[i] for i in idx],
+                phenotype_str,
+            ))
 
     lgbm_df = pd.concat(records, ignore_index=True) if records else pd.DataFrame()
+    if run_lgbm and not lgbm_df.empty:
+        lgbm_df["model"] = "LGBM"
 
-    if not run_lr or lgbm_df.empty:
+    if not run_lr:
         return lgbm_df
-
-    lgbm_df["model"] = "LGBM"
 
     _METRICS = ["auc", "accuracy", "precision", "recall", "f1"]
     _apply_clr = normalization_approach not in ("rankbird_clr", "rankbird_clr_ranking")
@@ -599,43 +603,87 @@ def _fill_missing_percentiles(
     """
     existing_pcts = set(round(float(p), 10) for p in existing_raw["percentile"].unique()) \
         if "percentile" in existing_raw.columns else set()
-    missing = [p for p in PERCENTILES if round(float(p), 10) not in existing_pcts]
-    if not missing:
-        return existing_raw, None
+    lgbm_missing = [p for p in PERCENTILES if round(float(p), 10) not in existing_pcts]
 
-    print(f"  [FILL] {len(missing)} missing percentile(s): {missing}")
-    new_agg, new_raw, new_lr_agg, new_lr_raw = run_stability_sweep(
-        phenotypes, dtype, level=level,
-        filter_only=filter_only,
-        normalization_approach=normalization_approach,
-        shuffle_ordered=shuffle_ordered,
-        rank_tie_method=rank_tie_method,
-        run_lr=run_lr,
-        n_jobs=min(n_jobs, len(missing)),
-        lgbm_num_threads=lgbm_num_threads,
-        percentiles=missing,
-    )
-
-    merged_raw = pd.concat([existing_raw, new_raw], ignore_index=True).sort_values("percentile")
-    merged_raw.to_csv(raw_path, index=False)
-
-    # Re-aggregate and overwrite the summary CSV
-    merged_agg = _aggregate_raw_to_sweep(merged_raw)
-    merged_agg.to_csv(sweep_path, index=False)
-
-    merged_lr_raw = None
+    # Also check which percentiles are missing from the LR CSV (when run_lr=True).
     lr_raw_path = raw_path.with_name(raw_path.stem + "_lr.csv")
-    if not new_lr_raw.empty:
+    lr_missing: list = []
+    existing_lr_raw: pd.DataFrame = pd.DataFrame()
+    if run_lr:
         if lr_raw_path.exists():
-            existing_lr = pd.read_csv(lr_raw_path)
-            merged_lr_raw = pd.concat([existing_lr, new_lr_raw], ignore_index=True).sort_values("percentile")
+            existing_lr_raw = pd.read_csv(lr_raw_path)
+            existing_lr_pcts = set(round(float(p), 10) for p in existing_lr_raw["percentile"].unique()) \
+                if "percentile" in existing_lr_raw.columns else set()
+            lr_missing = [p for p in PERCENTILES if round(float(p), 10) not in existing_lr_pcts]
         else:
-            merged_lr_raw = new_lr_raw
+            lr_missing = list(PERCENTILES)
+
+    # Percentiles that need both LGBM and LR recomputed vs LR only.
+    lgbm_missing_set = set(round(float(p), 10) for p in lgbm_missing)
+    lr_only_missing = [p for p in lr_missing if round(float(p), 10) not in lgbm_missing_set]
+
+    if not lgbm_missing and not lr_missing:
+        return existing_raw, existing_lr_raw if not existing_lr_raw.empty else None
+
+    print(f"  [FILL] LGBM+LR missing={lgbm_missing}, LR-only missing={lr_only_missing}")
+
+    all_new_lr_parts: list = []
+
+    # ── Pass 1: compute LGBM (and LR) for percentiles missing from LGBM CSV ───
+    if lgbm_missing:
+        _, new_raw, _, new_lr_raw = run_stability_sweep(
+            phenotypes, dtype, level=level,
+            filter_only=filter_only,
+            normalization_approach=normalization_approach,
+            shuffle_ordered=shuffle_ordered,
+            rank_tie_method=rank_tie_method,
+            run_lr=run_lr,
+            run_lgbm=True,
+            n_jobs=min(n_jobs, len(lgbm_missing)),
+            lgbm_num_threads=lgbm_num_threads,
+            percentiles=lgbm_missing,
+        )
+        existing_raw = pd.concat([existing_raw, new_raw], ignore_index=True).sort_values("percentile")
+        if not new_lr_raw.empty:
+            all_new_lr_parts.append(new_lr_raw)
+
+    existing_raw.to_csv(raw_path, index=False)
+    _aggregate_raw_to_sweep(existing_raw).to_csv(sweep_path, index=False)
+
+    # ── Pass 2: compute LR only for percentiles where LGBM already exists ─────
+    if lr_only_missing:
+        _, _, _, new_lr_raw2 = run_stability_sweep(
+            phenotypes, dtype, level=level,
+            filter_only=filter_only,
+            normalization_approach=normalization_approach,
+            shuffle_ordered=shuffle_ordered,
+            rank_tie_method=rank_tie_method,
+            run_lr=True,
+            run_lgbm=False,
+            n_jobs=min(n_jobs, len(lr_only_missing)),
+            lgbm_num_threads=lgbm_num_threads,
+            percentiles=lr_only_missing,
+        )
+        if not new_lr_raw2.empty:
+            all_new_lr_parts.append(new_lr_raw2)
+
+    # ── Merge all new LR results with whatever was already on disk ─────────────
+    merged_lr_raw = None
+    if all_new_lr_parts:
+        new_lr_combined = pd.concat(all_new_lr_parts, ignore_index=True)
+        if not existing_lr_raw.empty:
+            recomputed_pcts = set(round(float(p), 10) for p in new_lr_combined["percentile"].unique())
+            existing_lr_clean = existing_lr_raw[~existing_lr_raw["percentile"].apply(
+                lambda p: round(float(p), 10) in recomputed_pcts
+            )]
+            merged_lr_raw = pd.concat([existing_lr_clean, new_lr_combined], ignore_index=True).sort_values("percentile")
+        else:
+            merged_lr_raw = new_lr_combined
         merged_lr_raw.to_csv(lr_raw_path, index=False)
         lr_agg_path = sweep_path.with_name(sweep_path.stem + "_lr.csv")
         _aggregate_raw_to_sweep(merged_lr_raw).to_csv(lr_agg_path, index=False)
 
-    return merged_raw, merged_lr_raw
+    return existing_raw, merged_lr_raw
 
 
 # ── Intermediate / per-sweep figure helper ───────────────────────────────────
