@@ -303,7 +303,14 @@ def _run_global_for_dtype_filtered(
             min_size=min_samples_per_dataset,
         )
 
-    # None → no normalization, data passes through as-is
+    elif normalization_approach is None:
+        # Remove features that are all-zero in every sample of every dataset
+        # (reference-taxonomy ghost species — never detected anywhere).
+        # This matches what auto_stability_filter drops at pct=1.0 via .dropna().
+        _all_microbes = union_microbes(all_microbiome)
+        _nz = nonzero_percent_by_dataset(all_microbiome, all_names, _all_microbes)
+        _kept = _nz.columns[_nz.mean(axis=0) > 0].tolist()
+        all_microbiome = [df.reindex(columns=_kept, fill_value=0.0) for df in all_microbiome]
 
     aligned_targets = [name_to_target[n] for n in all_names if n in name_to_target]
 
