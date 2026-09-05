@@ -391,10 +391,12 @@ def get_original_mean_auc(
         )
 
     results_df["auc"] = pd.to_numeric(results_df["auc"], errors="coerce")
-    return {
-        protocol: results_df[results_df["protocol"] == protocol]["auc"].dropna().mean()
-        for protocol in PROTOCOLS
-    }
+    out = {}
+    for protocol in PROTOCOLS:
+        vals = results_df[results_df["protocol"] == protocol]["auc"].dropna()
+        out[protocol] = vals.mean()
+        out[f"{protocol}__median"] = vals.median()
+    return out
 
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
@@ -449,9 +451,17 @@ def _plot_sweep_panel(
         color = PROTOCOL_COLORS[protocol]
 
         # 1. Original baseline — horizontal dashed line
-        if original_auc and protocol in original_auc:
+        # Use mean for mean/combined plots, median for median plots.
+        _orig_median_key = f"{protocol}__median"
+        if plot_mode == "median" and original_auc and _orig_median_key in original_auc:
+            _orig_val = original_auc[_orig_median_key]
+        elif original_auc and protocol in original_auc:
+            _orig_val = original_auc[protocol]
+        else:
+            _orig_val = None
+        if _orig_val is not None:
             ax.axhline(
-                original_auc[protocol],
+                _orig_val,
                 color=color, linestyle="--", linewidth=3.5, alpha=0.85,
                 label=f"{protocol} (original)",
             )
