@@ -396,7 +396,7 @@ def get_original_mean_auc(
         vals = results_df[results_df["protocol"] == protocol]["auc"].dropna()
         out[protocol] = vals.mean()
         out[f"{protocol}__median"] = vals.median()
-    return out
+    return out, results_df[["phenotype", "dataset", "protocol", "auc"]].copy()
 
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
@@ -598,6 +598,22 @@ def _merge_orig_aucs(orig_dicts: list) -> dict:
                 sums[protocol] += float(val)
                 counts[protocol] += 1
     return {p: sums[p] / counts[p] for p in sums if counts[p] > 0}
+
+
+def _joint_orig_auc_from_raw(raw_dfs: list) -> dict:
+    """Compute joint mean and median across all per-dataset original AUC rows."""
+    if not raw_dfs:
+        return {}
+    combined = pd.concat(raw_dfs, ignore_index=True)
+    combined["auc"] = pd.to_numeric(combined["auc"], errors="coerce")
+    out = {}
+    for protocol in PROTOCOLS:
+        vals = combined[combined["protocol"] == protocol]["auc"].dropna()
+        if vals.empty:
+            continue
+        out[protocol] = vals.mean()
+        out[f"{protocol}__median"] = vals.median()
+    return out
 
 
 # ── Fill-missing-percentiles helper ──────────────────────────────────────────
@@ -831,6 +847,8 @@ def run_stability_investigation(
         count_store     = {}
         orig_store      = {}
         lr_orig_store   = {}
+        orig_raw_store    = {}
+        lr_orig_raw_store = {}
 
         for level, level_label in LEVELS:
             should_compute = compute_levels is None or level in compute_levels
@@ -852,22 +870,32 @@ def run_stability_investigation(
                     cdf.to_csv(count_path_dd, index=False)
                     count_store[(level, dd)] = cdf
 
-                orig_path_dd = output_dir / f"original_auc_{base_dd}.csv"
+                orig_path_dd     = output_dir / f"original_auc_{base_dd}.csv"
+                orig_raw_path_dd = output_dir / f"original_auc_{base_dd}_raw.csv"
                 if orig_path_dd.exists():
                     orig_store[(level, dd)] = pd.read_csv(orig_path_dd).iloc[0].to_dict()
+                    if orig_raw_path_dd.exists():
+                        orig_raw_store[(level, dd)] = pd.read_csv(orig_raw_path_dd)
                 elif should_compute and not plot_only:
-                    oa = get_original_mean_auc(phenotypes, dd, level=level)
+                    oa, oa_raw = get_original_mean_auc(phenotypes, dd, level=level)
                     pd.DataFrame([oa]).to_csv(orig_path_dd, index=False)
+                    oa_raw.to_csv(orig_raw_path_dd, index=False)
                     orig_store[(level, dd)] = oa
+                    orig_raw_store[(level, dd)] = oa_raw
 
-                lr_orig_path_dd = output_dir / f"original_auc_{base_dd}_lr.csv"
+                lr_orig_path_dd     = output_dir / f"original_auc_{base_dd}_lr.csv"
+                lr_orig_raw_path_dd = output_dir / f"original_auc_{base_dd}_lr_raw.csv"
                 if lr_orig_path_dd.exists():
                     lr_orig_store[(level, dd)] = pd.read_csv(lr_orig_path_dd).iloc[0].to_dict()
+                    if lr_orig_raw_path_dd.exists():
+                        lr_orig_raw_store[(level, dd)] = pd.read_csv(lr_orig_raw_path_dd)
                 elif should_compute and not plot_only:
-                    oa_lr = get_original_mean_auc(phenotypes, dd, level=level, run_lr=True)
+                    oa_lr, oa_lr_raw = get_original_mean_auc(phenotypes, dd, level=level, run_lr=True)
                     if oa_lr:
                         pd.DataFrame([oa_lr]).to_csv(lr_orig_path_dd, index=False)
+                        oa_lr_raw.to_csv(lr_orig_raw_path_dd, index=False)
                         lr_orig_store[(level, dd)] = oa_lr
+                        lr_orig_raw_store[(level, dd)] = oa_lr_raw
 
             # ── Compute / load sweep for each computation dtype ────────────────
             for dtype in dtypes:
@@ -1017,8 +1045,10 @@ def run_stability_investigation(
                         sweep_df = _aggregate_raw_to_sweep(all_raw)
                     count_dfs = [df for (l, d), df in count_store.items() if l == level]
                     count_df  = _sum_count_dfs(count_dfs) if count_dfs else None
-                    orig_dcts = [d for (l, dd), d in orig_store.items() if l == level]
-                    orig_auc  = _merge_orig_aucs(orig_dcts) if orig_dcts else {}
+                    orig_raw_dfs = [df for (l, dd), df in orig_raw_store.items() if l == level]
+                    orig_auc = _joint_orig_auc_from_raw(orig_raw_dfs) if orig_raw_dfs else (
+                        _merge_orig_aucs([d for (l, dd), d in orig_store.items() if l == level]) or {}
+                    )
                     if not all_fo_raw.empty and combined_mode:
                         fo_df = _merge_sweep_dfs(all_fo_raw) if 'mean_auc' in all_fo_raw.columns else _aggregate_raw_to_sweep(all_fo_raw)
                     else:
@@ -1126,8 +1156,10 @@ def run_stability_investigation(
                         sweep_df = _merge_sweep_dfs(all_lr_raw) if 'mean_auc' in all_lr_raw.columns else _aggregate_raw_to_sweep(all_lr_raw)
                         count_dfs = [df for (l, d), df in count_store.items() if l == level]
                         count_df  = _sum_count_dfs(count_dfs) if count_dfs else None
-                        orig_dcts = [d for (l, dd), d in lr_orig_store.items() if l == level]
-                        orig_auc  = _merge_orig_aucs(orig_dcts) if orig_dcts else {}
+                        lr_orig_raw_dfs = [df for (l, dd), df in lr_orig_raw_store.items() if l == level]
+                        orig_auc = _joint_orig_auc_from_raw(lr_orig_raw_dfs) if lr_orig_raw_dfs else (
+                            _merge_orig_aucs([d for (l, dd), d in lr_orig_store.items() if l == level]) or {}
+                        )
                         fo_df     = (_merge_sweep_dfs(all_lr_fo_raw) if 'mean_auc' in all_lr_fo_raw.columns
                                      else _aggregate_raw_to_sweep(all_lr_fo_raw)) if (not all_lr_fo_raw.empty and combined_mode) else None
                     else:
