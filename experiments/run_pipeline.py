@@ -140,9 +140,9 @@ CONFIG = {
     "z_thresh": 3.0,
     "stability_percentile_local": 0.3,
     "stability_percentile_global_metagenomics": 0.1,
-    "stability_percentile_global_amplicon":     0.5,
-    "taxonomy_level_metagenomics": "gs",    # None = all, "g" = genus only, "gs" = genus+species
-    "taxonomy_level_amplicon":     "gs",
+    "stability_percentile_global_amplicon":     0.35,
+    "taxonomy_level_metagenomics": "g",    # None = all, "g" = genus only, "gs" = genus+species
+    "taxonomy_level_amplicon":     "g",
     "decompose_method": "PCA",
     "decompose_rank": 300,
     # -----------------------
@@ -150,7 +150,7 @@ CONFIG = {
     # When True: pool Amplicon + Metagenomics datasets together for stability
     # filtering and distribution normalization (learning stays per phenotype).
     # -----------------------
-    "cross_dtype_normalization":           False,
+    "cross_dtype_normalization":           True,
     "stability_percentile_global_combined": 0.1,
     "taxonomy_level_combined":              "gs",
 }
